@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const dns = require("dns");
 const childProcess = require("child_process");
 const { EventEmitter } = require("events");
+const { Readable } = require("stream");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -477,5 +478,179 @@ test("maybeUpdateYtDlp with an already-aborted signal resolves promptly and kill
   } finally {
     childProcess.spawn = origSpawn;
     cleanup();
+  }
+});
+
+// --- downloadViaProxy: redirect handling regression ---
+//
+// Electron requires request.followRedirect()/request.abort() to be invoked
+// synchronously from inside the "redirect" event. downloadViaProxy instead
+// aborts and rejects with a REDIRECT_RESTART sentinel, then recurses on the
+// redirect URL (re-running assertPublicHost). These fakes emit their events
+// from inside request.end(), which runs after all request.on() listeners are
+// attached in the source, matching real net.request() ordering.
+
+function makeFakeProxyRequest() {
+  const req = new EventEmitter();
+  req.abortCalled = false;
+  req.followRedirectCalled = false;
+  req.abort = () => { req.abortCalled = true; };
+  req.followRedirect = () => { req.followRedirectCalled = true; };
+  req.end = () => {};
+  return req;
+}
+
+function makeAudioResponse(body) {
+  const response = Readable.from([Buffer.from(body)]);
+  response.statusCode = 200;
+  response.headers = { "content-type": "audio/mpeg", "content-length": String(body.length) };
+  return response;
+}
+
+test("downloadViaProxy restarts on redirect via abort, never calls followRedirect, and ignores a late error", async () => {
+  const requests = [];
+  const fakeNet = {
+    request(options) {
+      const req = makeFakeProxyRequest();
+      req.url = options.url;
+      requests.push(req);
+      req.end = () => {
+        if (requests.length === 1) {
+          req.emit("redirect", 302, "GET", "https://93.184.216.34/real.mp3");
+          // Late error after the abort must be a no-op: the promise already settled.
+          req.emit("error", new Error("stale socket error"));
+        } else {
+          req.emit("response", makeAudioResponse("audiodata"));
+        }
+      };
+      return req;
+    },
+  };
+
+  downloader._setElectronNetForTests(fakeNet);
+  let tempPath;
+  try {
+    const result = await downloader.downloadViaProxy("https://93.184.216.34/file.mp3", null, null);
+    tempPath = result.tempPath;
+    assert.equal(fs.readFileSync(tempPath, "utf8"), "audiodata");
+    assert.equal(requests.length, 2, "must restart with a fresh request, not follow in place");
+    assert.equal(requests[0].url, "https://93.184.216.34/file.mp3");
+    assert.equal(requests[1].url, "https://93.184.216.34/real.mp3", "restart must target the redirect URL");
+    assert.equal(requests[0].abortCalled, true);
+    assert.equal(requests[0].followRedirectCalled, false);
+    assert.equal(requests[1].followRedirectCalled, false);
+  } finally {
+    downloader._setElectronNetForTests(null);
+    if (tempPath) { try { fs.unlinkSync(tempPath); } catch {} }
+  }
+});
+
+test("downloadViaProxy rejects a redirect to a private IP with SSRF_BLOCKED", async () => {
+  const requests = [];
+  const fakeNet = {
+    request(options) {
+      const req = makeFakeProxyRequest();
+      req.url = options.url;
+      requests.push(req);
+      req.end = () => {
+        req.emit("redirect", 302, "GET", "https://127.0.0.1/x.mp3");
+      };
+      return req;
+    },
+  };
+
+  downloader._setElectronNetForTests(fakeNet);
+  try {
+    await assert.rejects(
+      downloader.downloadViaProxy("https://93.184.216.34/file.mp3", null, null),
+      { code: "SSRF_BLOCKED" }
+    );
+    assert.equal(requests.length, 1, "must not re-request a redirect target rejected by assertPublicHost");
+  } finally {
+    downloader._setElectronNetForTests(null);
+  }
+});
+
+test("downloadViaProxy rejects a non-https redirect with INVALID_URL", async () => {
+  const requests = [];
+  const fakeNet = {
+    request(options) {
+      const req = makeFakeProxyRequest();
+      req.url = options.url;
+      requests.push(req);
+      req.end = () => {
+        req.emit("redirect", 302, "GET", "http://93.184.216.34/x.mp3");
+      };
+      return req;
+    },
+  };
+
+  downloader._setElectronNetForTests(fakeNet);
+  try {
+    await assert.rejects(
+      downloader.downloadViaProxy("https://93.184.216.34/file.mp3", null, null),
+      { code: "INVALID_URL" }
+    );
+    assert.equal(requests.length, 1);
+  } finally {
+    downloader._setElectronNetForTests(null);
+  }
+});
+
+test("downloadViaProxy fails with DOWNLOAD_FAILED after exceeding MAX_REDIRECTS", async () => {
+  const requests = [];
+  const fakeNet = {
+    request(options) {
+      const req = makeFakeProxyRequest();
+      req.url = options.url;
+      requests.push(req);
+      req.end = () => {
+        req.emit("redirect", 302, "GET", "https://93.184.216.34/next.mp3");
+      };
+      return req;
+    },
+  };
+
+  downloader._setElectronNetForTests(fakeNet);
+  try {
+    await assert.rejects(
+      downloader.downloadViaProxy("https://93.184.216.34/file.mp3", null, null),
+      (err) => {
+        assert.equal(err.code, "DOWNLOAD_FAILED");
+        assert.match(err.message, /Too many redirects/);
+        return true;
+      }
+    );
+    // MAX_REDIRECTS is 3 in urlAudioDownloader.js; the 4th redirect trips the limit.
+    assert.equal(requests.length, 4);
+  } finally {
+    downloader._setElectronNetForTests(null);
+  }
+});
+
+test("downloadViaProxy rejects with DOWNLOAD_CANCELLED on mid-flight abort", async () => {
+  const requests = [];
+  const fakeNet = {
+    // A request that emits nothing: no redirect, no response, no error. abort()
+    // only records the call, matching ClientRequest.abort() (never emits 'error').
+    request(options) {
+      const req = makeFakeProxyRequest();
+      req.url = options.url;
+      requests.push(req);
+      return req;
+    },
+  };
+
+  downloader._setElectronNetForTests(fakeNet);
+  const ac = new AbortController();
+  try {
+    const promise = downloader.downloadViaProxy("https://93.184.216.34/file.mp3", null, ac.signal);
+    // Abort after the synchronous setup (assertPublicHost + request.end()) has run.
+    setImmediate(() => ac.abort());
+    await assert.rejects(promise, { code: "DOWNLOAD_CANCELLED" });
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].abortCalled, true, "abort() must be called on the in-flight request");
+  } finally {
+    downloader._setElectronNetForTests(null);
   }
 });

@@ -33,7 +33,7 @@ function mergeSpeakersWithText(segments, text, durationSeconds) {
     return [{ speaker: segments[0].speaker, text, start: segments[0].start, end: segments[segments.length - 1].end }];
   }
 
-  const totalDuration = durationSeconds || segments[segments.length - 1].end || 1;
+  const totalDuration = durationSeconds || segments.reduce((max, s) => Math.max(max, s.end || 0), 0) || 1;
   const totalChars = sentences.reduce((sum, s) => sum + s.length, 0);
 
   const assigned = [];

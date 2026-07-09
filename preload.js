@@ -136,7 +136,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getFileSize: (filePath) => ipcRenderer.invoke("get-file-size", filePath),
   transcribeAudioFile: (filePath, options) =>
     ipcRenderer.invoke("transcribe-audio-file", filePath, options),
-  getPathForFile: (file) => webUtils.getPathForFile(file),
+  getPathForFile: (file) => {
+    const filePath = webUtils.getPathForFile(file);
+    // Register real dropped-file paths so the main-process audio allowlist accepts them.
+    if (filePath) ipcRenderer.send("approve-audio-path", filePath);
+    return filePath;
+  },
 
   // URL audio download
   downloadUrlAudio: (url) => ipcRenderer.invoke("download-url-audio", url),

@@ -1,7 +1,8 @@
-import { it, expect } from "vitest";
-import { mergeSpeakersWithText, formatSpeakerTranscript } from "../../src/helpers/speakerMerge";
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const { mergeSpeakersWithText, formatSpeakerTranscript } = require("../../src/helpers/speakerMerge");
 
-it("mergeSpeakersWithText assigns sentences to speakers by time proportion", () => {
+test("mergeSpeakersWithText assigns sentences to speakers by time proportion", () => {
   const segments = [
     { start: 0, end: 10, speaker: "speaker_0" },
     { start: 10, end: 20, speaker: "speaker_1" },
@@ -10,32 +11,40 @@ it("mergeSpeakersWithText assigns sentences to speakers by time proportion", () 
   const duration = 20;
 
   const result = mergeSpeakersWithText(segments, text, duration);
-  expect(result.length).toBe(2);
-  expect(result[0].speaker).toBe("speaker_0");
-  expect(result[1].speaker).toBe("speaker_1");
+  assert.equal(result.length, 2);
+  assert.equal(result[0].speaker, "speaker_0");
+  assert.ok(result[0].text.includes("first part"));
+  assert.equal(result[0].start, 0);
+  assert.equal(result[0].end, 10);
+  assert.equal(result[1].speaker, "speaker_1");
+  assert.ok(result[1].text.includes("second part"));
+  assert.equal(result[1].start, 10);
+  assert.equal(result[1].end, 20);
 });
 
-it("mergeSpeakersWithText handles single speaker", () => {
-  const segments = [
-    { start: 0, end: 30, speaker: "speaker_0" },
-  ];
+test("mergeSpeakersWithText handles single speaker", () => {
+  const segments = [{ start: 0, end: 30, speaker: "speaker_0" }];
   const text = "All of this text belongs to one speaker.";
   const duration = 30;
 
   const result = mergeSpeakersWithText(segments, text, duration);
-  expect(result.length).toBe(1);
-  expect(result[0].speaker).toBe("speaker_0");
-  expect(result[0].text).toContain("All of this text");
+  assert.equal(result.length, 1);
+  assert.equal(result[0].speaker, "speaker_0");
+  assert.ok(result[0].text.includes("All of this text"));
+  assert.equal(result[0].start, 0);
+  assert.equal(result[0].end, 30);
 });
 
-it("mergeSpeakersWithText returns text as-is when no segments", () => {
+test("mergeSpeakersWithText returns text as-is when no segments", () => {
   const result = mergeSpeakersWithText([], "Some text here.", 10);
-  expect(result.length).toBe(1);
-  expect(result[0].speaker).toBe("speaker_0");
-  expect(result[0].text).toBe("Some text here.");
+  assert.equal(result.length, 1);
+  assert.equal(result[0].speaker, "speaker_0");
+  assert.equal(result[0].text, "Some text here.");
+  assert.equal(result[0].start, 0);
+  assert.equal(result[0].end, 10);
 });
 
-it("mergeSpeakersWithText consolidates adjacent same-speaker segments", () => {
+test("mergeSpeakersWithText consolidates adjacent same-speaker segments", () => {
   const segments = [
     { start: 0, end: 5, speaker: "speaker_0" },
     { start: 5, end: 10, speaker: "speaker_0" },
@@ -45,51 +54,96 @@ it("mergeSpeakersWithText consolidates adjacent same-speaker segments", () => {
   const duration = 20;
 
   const result = mergeSpeakersWithText(segments, text, duration);
-  expect(result.length).toBeLessThanOrEqual(2);
+  assert.equal(result.length, 2);
+  assert.equal(result[0].speaker, "speaker_0");
+  assert.ok(result[0].text.includes("First sentence"));
+  assert.ok(result[0].text.includes("Second sentence"));
+  assert.equal(result[0].start, 0);
+  assert.equal(result[0].end, 10);
+  assert.equal(result[1].speaker, "speaker_1");
+  assert.ok(result[1].text.includes("Third sentence here"));
+  assert.equal(result[1].start, 10);
+  assert.equal(result[1].end, 20);
 });
 
-it("formatSpeakerTranscript formats with labels and timestamps", () => {
+test("formatSpeakerTranscript formats with labels and timestamps", () => {
   const merged = [
     { speaker: "speaker_0", text: "Hello there.", start: 0, end: 10 },
     { speaker: "speaker_1", text: "Hi back.", start: 10, end: 20 },
   ];
 
   const output = formatSpeakerTranscript(merged);
-  expect(output).toContain("[Speaker 1]");
-  expect(output).toContain("[Speaker 2]");
-  expect(output).toContain("0:00");
-  expect(output).toContain("Hello there.");
+  assert.equal(output, "[Speaker 1] 0:00 - 0:10\nHello there.\n\n[Speaker 2] 0:10 - 0:20\nHi back.");
 });
 
-it("mergeSpeakersWithText handles duration=0 with segments", () => {
-  const segments = [
-    { start: 0, end: 5, speaker: "speaker_0" },
-  ];
+test("mergeSpeakersWithText handles duration=0 with segments", () => {
+  const segments = [{ start: 0, end: 5, speaker: "speaker_0" }];
   const text = "Short clip text.";
   const result = mergeSpeakersWithText(segments, text, 0);
-  expect(result.length).toBeGreaterThanOrEqual(1);
-  expect(result[0].text).toContain("Short clip text");
+  assert.equal(result.length, 1);
+  assert.ok(result[0].text.includes("Short clip text"));
+  assert.equal(result[0].start, 0);
+  assert.equal(result[0].end, 5);
 });
 
-it("mergeSpeakersWithText handles zero-duration segment", () => {
-  const segments = [
-    { start: 0, end: 0, speaker: "speaker_0" },
-  ];
+test("mergeSpeakersWithText handles zero-duration segment", () => {
+  const segments = [{ start: 0, end: 0, speaker: "speaker_0" }];
   const text = "Some text.";
   const result = mergeSpeakersWithText(segments, text, 10);
-  expect(result.length).toBeGreaterThanOrEqual(1);
-  expect(result[0].text).toContain("Some text");
+  assert.equal(result.length, 1);
+  assert.ok(result[0].text.includes("Some text"));
+  assert.equal(result[0].start, 0);
+  assert.equal(result[0].end, 0);
 });
 
-it("formatSpeakerTranscript returns empty string for empty input", () => {
-  expect(formatSpeakerTranscript([])).toBe("");
+test("formatSpeakerTranscript returns empty string for empty input", () => {
+  assert.equal(formatSpeakerTranscript([]), "");
 });
 
-it("formatSpeakerTranscript formats minutes and seconds correctly", () => {
-  const merged = [
-    { speaker: "speaker_0", text: "Long segment.", start: 0, end: 125 },
-  ];
+test("formatSpeakerTranscript formats minutes and seconds correctly", () => {
+  const merged = [{ speaker: "speaker_0", text: "Long segment.", start: 0, end: 125 }];
 
   const output = formatSpeakerTranscript(merged);
-  expect(output).toContain("2:05");
+  assert.equal(output, "[Speaker 1] 0:00 - 2:05\nLong segment.");
+});
+
+// Regression: the totalDuration fallback used to take segments[segments.length - 1].end,
+// which assumes sorted input. Unsorted segments produced a wrong duration and collapsed
+// every sentence onto one speaker.
+test("mergeSpeakersWithText assigns correct speakers with unsorted segments and no duration", () => {
+  const segments = [
+    { start: 10, end: 20, speaker: "speaker_1" },
+    { start: 0, end: 10, speaker: "speaker_0" },
+  ];
+  const text = "Alpha comes first. Beta comes second.";
+
+  const result = mergeSpeakersWithText(segments, text);
+  assert.equal(result.length, 2);
+  assert.equal(result[0].speaker, "speaker_0");
+  assert.ok(result[0].text.includes("Alpha comes first"));
+  assert.equal(result[0].start, 0);
+  assert.equal(result[0].end, 10);
+  assert.equal(result[1].speaker, "speaker_1");
+  assert.ok(result[1].text.includes("Beta comes second"));
+  assert.equal(result[1].start, 10);
+  assert.equal(result[1].end, 20);
+});
+
+test("mergeSpeakersWithText fallback duration matches sorted-input behavior when segments are already ordered", () => {
+  const segments = [
+    { start: 0, end: 10, speaker: "speaker_0" },
+    { start: 10, end: 20, speaker: "speaker_1" },
+  ];
+  const text = "Alpha comes first. Beta comes second.";
+
+  const result = mergeSpeakersWithText(segments, text);
+  assert.equal(result.length, 2);
+  assert.equal(result[0].speaker, "speaker_0");
+  assert.ok(result[0].text.includes("Alpha comes first"));
+  assert.equal(result[0].start, 0);
+  assert.equal(result[0].end, 10);
+  assert.equal(result[1].speaker, "speaker_1");
+  assert.ok(result[1].text.includes("Beta comes second"));
+  assert.equal(result[1].start, 10);
+  assert.equal(result[1].end, 20);
 });

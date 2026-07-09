@@ -1,4 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import { transcribeFile } from "../services/fileTranscription";
+import type { FileTranscriptionConfig } from "../services/fileTranscription";
 
 export type QueueItemStatus =
   | "queued"
@@ -22,16 +24,11 @@ export interface QueueItem {
 }
 
 export interface TranscribeOptions {
-  useLocalWhisper: boolean;
-  localTranscriptionProvider: string;
-  whisperModel: string;
-  parakeetModel: string;
-  isOpenWhisprCloud: boolean;
-  getActiveApiKey: () => string;
-  cloudTranscriptionProvider: string;
-  cloudTranscriptionBaseUrl: string;
-  cloudTranscriptionModel: string;
+  transcription: FileTranscriptionConfig;
   folderId: number | null;
+  // Returns an i18n key under notes.upload.* when the file exceeds the
+  // mode-aware size limit, null when acceptable.
+  validateSize?: (sizeBytes: number) => string | null;
 }
 
 export interface DiarizationOptions {
@@ -136,12 +133,18 @@ export function useBatchQueue() {
       cancelledRef.current = false;
       setIsProcessing(true);
 
-      const snapshotApiKey = transcribeOpts.getActiveApiKey();
+      const snapshotApiKey = transcribeOpts.transcription.getApiKey();
+      const transcription: FileTranscriptionConfig = {
+        ...transcribeOpts.transcription,
+        getApiKey: () => snapshotApiKey,
+      };
 
       const processItem = async (item: QueueItem) => {
         setCurrentItemId(item.id);
         let filePath = item.path;
         let tempPath: string | undefined;
+        let noteName = item.name;
+        let sizeBytes = item.sizeBytes;
 
         try {
           if (item.source === "url" && item.url) {
@@ -164,10 +167,12 @@ export function useBatchQueue() {
               }
               filePath = res.tempPath;
               tempPath = res.tempPath;
+              noteName = res.title || item.name;
+              sizeBytes = res.sizeBytes;
               updateItem(item.id, {
                 path: res.tempPath,
                 tempPath: res.tempPath,
-                name: res.title || item.name,
+                name: noteName,
                 sizeBytes: res.sizeBytes,
               });
             } finally {
@@ -177,38 +182,22 @@ export function useBatchQueue() {
 
           if (cancelledRef.current) return;
 
+          const sizeError = transcribeOpts.validateSize?.(sizeBytes) ?? null;
+          if (sizeError) {
+            updateItem(item.id, { status: "error", error: sizeError });
+            return;
+          }
+
           updateItem(item.id, { status: "transcribing", progress: 0 });
 
           const byokUseDiarize = computeByokDiarize({
             diarizationEnabled: diarizationOpts.enabled,
-            useLocalWhisper: transcribeOpts.useLocalWhisper,
-            isOpenWhisprCloud: transcribeOpts.isOpenWhisprCloud,
-            cloudTranscriptionProvider: transcribeOpts.cloudTranscriptionProvider,
+            useLocalWhisper: transcription.useLocalWhisper,
+            isOpenWhisprCloud: transcription.isOpenWhisprCloud,
+            cloudTranscriptionProvider: transcription.cloudTranscriptionProvider,
           });
 
-          const transcribePromise = (async () => {
-            if (transcribeOpts.isOpenWhisprCloud) {
-              return window.electronAPI.transcribeAudioFileCloud!(filePath);
-            } else if (transcribeOpts.useLocalWhisper) {
-              return window.electronAPI.transcribeAudioFile(filePath, {
-                provider: transcribeOpts.localTranscriptionProvider as
-                  | "whisper"
-                  | "nvidia",
-                model:
-                  transcribeOpts.localTranscriptionProvider === "nvidia"
-                    ? transcribeOpts.parakeetModel
-                    : transcribeOpts.whisperModel,
-              });
-            } else {
-              return window.electronAPI.transcribeAudioFileByok!({
-                filePath,
-                apiKey: snapshotApiKey,
-                baseUrl: transcribeOpts.cloudTranscriptionBaseUrl || "",
-                model: transcribeOpts.cloudTranscriptionModel,
-                diarize: byokUseDiarize || undefined,
-              });
-            }
-          })();
+          const transcribePromise = transcribeFile(filePath, transcription, byokUseDiarize);
 
           const diarizePromise = diarizationOpts.enabled && filePath && !byokUseDiarize
             ? window.electronAPI.diarizeAudioFile?.(filePath, {
@@ -248,10 +237,10 @@ export function useBatchQueue() {
           }
 
           const noteRes = await window.electronAPI.saveNote(
-            item.name,
+            noteName,
             finalText,
             "upload",
-            item.name,
+            noteName,
             null,
             transcribeOpts.folderId
           );

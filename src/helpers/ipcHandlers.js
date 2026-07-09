@@ -141,9 +141,25 @@ function getCanonicalAllowedAudioDirs() {
   });
 }
 
+// User-picked paths (OS file dialog, real drag-dropped files) may live outside the
+// static dirs (external volumes, /mnt, D:\) and are approved individually.
+const approvedAudioPaths = new Set();
+
+function approveAudioPath(filePath) {
+  if (typeof filePath !== "string" || !filePath) return;
+  try {
+    approvedAudioPaths.add(fs.realpathSync(path.resolve(filePath)));
+  } catch {
+    // File vanished or unreadable; nothing to approve.
+  }
+}
+
 // Returns the realpath'd file path if it lives under an allowed dir, else null.
 function resolveAllowedAudioPath(filePath) {
   const real = fs.realpathSync(path.resolve(filePath));
+  if (approvedAudioPaths.has(real)) {
+    return real;
+  }
   const allowed = getCanonicalAllowedAudioDirs();
   if (allowed.some((dir) => real === dir || real.startsWith(dir + path.sep))) {
     return real;
@@ -1650,10 +1666,17 @@ class IPCHandlers {
       if (result.canceled || !result.filePaths.length) {
         return { canceled: true };
       }
+      result.filePaths.forEach(approveAudioPath);
       if (options.multiple === true) {
         return { canceled: false, filePaths: result.filePaths };
       }
       return { canceled: false, filePath: result.filePaths[0] };
+    });
+
+    // Fired by the preload's getPathForFile for real drag-dropped files; a
+    // renderer-constructed File yields "" there, so this can't be forged.
+    ipcMain.on("approve-audio-path", (_event, filePath) => {
+      approveAudioPath(filePath);
     });
 
     ipcMain.handle("get-file-size", async (_event, filePath) => {
@@ -6876,7 +6899,8 @@ class IPCHandlers {
               multipartFields.timestamp_granularities = "segment";
             } else if (isOpenAi) {
               multipartFields.model = "gpt-4o-transcribe-diarize";
-              multipartFields.response_format = "verbose_json";
+              // Speaker annotations require diarized_json; verbose_json is not supported by this model.
+              multipartFields.response_format = "diarized_json";
               multipartFields.chunking_strategy = "auto";
             } else {
               return { success: false, error: "Speaker diarization is only supported with OpenAI and Mistral APIs." };

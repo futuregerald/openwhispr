@@ -809,17 +809,28 @@ function streamToFile(response, tempPath, { contentLength, title, onProgress, ab
   });
 }
 
+// Test seam: electron's net is unavailable under node --test.
+let electronNetOverride = null;
+function getElectronNet() {
+  return electronNetOverride || require("electron").net;
+}
+
+// Internal sentinel: the redirect handler aborts the request and asks the caller
+// to restart the download at the redirect URL (followRedirect must be invoked
+// synchronously inside the redirect event, but our host validation is async).
+const REDIRECT_RESTART = "REDIRECT_RESTART";
+
 // Proxy path: route through Electron net.request (which honors the OS proxy
 // automatically). For defense-in-depth we still pre-flight the target hostname and
 // re-validate each redirect hop against private IPs. With a proxy the corporate
 // egress policy is the primary SSRF control; net.request does not accept a
 // per-request lookup, leaving a narrow DNS-rebinding TOCTOU residual. See J1.
 async function downloadViaProxy(url, onProgress, abortSignal, redirectCount = 0) {
-  const { net } = require("electron");
+  const net = getElectronNet();
 
   await assertPublicHost(new URL(url).hostname);
 
-  const { response, contentLength, request } = await new Promise((resolve, reject) => {
+  const settledResponse = await new Promise((resolve, reject) => {
     if (abortSignal?.aborted) {
       reject(Object.assign(new Error("Download cancelled"), { code: "DOWNLOAD_CANCELLED" }));
       return;
@@ -834,7 +845,13 @@ async function downloadViaProxy(url, onProgress, abortSignal, redirectCount = 0)
       return;
     }
 
-    const onAbort = () => { try { request.abort(); } catch {} };
+    // ClientRequest.abort() emits 'abort'/'close' but never 'error', so an abort
+    // that lands after request.end() must settle the promise itself or it hangs.
+    const onAbort = () => {
+      try { request.abort(); } catch {}
+      detach();
+      reject(Object.assign(new Error("Download cancelled"), { code: "DOWNLOAD_CANCELLED" }));
+    };
     if (abortSignal) abortSignal.addEventListener("abort", onAbort, { once: true });
     const detach = () => { if (abortSignal) abortSignal.removeEventListener("abort", onAbort); };
 
@@ -861,16 +878,10 @@ async function downloadViaProxy(url, onProgress, abortSignal, redirectCount = 0)
         reject(Object.assign(new Error("Only HTTPS URLs are supported for direct downloads"), { code: "INVALID_URL" }));
         return;
       }
-      assertPublicHost(next.hostname)
-        .then(() => { try { request.followRedirect(); } catch (e) {
-          detach();
-          reject(Object.assign(new Error(e.message || "Download failed"), { code: "DOWNLOAD_FAILED" }));
-        } })
-        .catch((e) => {
-          try { request.abort(); } catch {}
-          detach();
-          reject(e);
-        });
+      // Abort and restart at the redirect URL; the recursive call re-runs assertPublicHost.
+      try { request.abort(); } catch {}
+      detach();
+      reject(Object.assign(new Error("Redirected"), { code: REDIRECT_RESTART, url: next.href, redirects }));
     });
 
     request.on("response", (response) => {
@@ -916,7 +927,16 @@ async function downloadViaProxy(url, onProgress, abortSignal, redirectCount = 0)
     });
 
     request.end();
+  }).catch((err) => {
+    if (err && err.code === REDIRECT_RESTART) return err;
+    throw err;
   });
+
+  if (settledResponse && settledResponse.code === REDIRECT_RESTART) {
+    return downloadViaProxy(settledResponse.url, onProgress, abortSignal, settledResponse.redirects);
+  }
+
+  const { response, contentLength, request } = settledResponse;
 
   const { title, ext } = deriveTitleAndExt(new URL(url).pathname);
   const tempPath = path.join(getSafeTempDir(), `ow-url-${Date.now()}.${ext}`);
@@ -1075,6 +1095,9 @@ module.exports = {
   ssrfSafeLookup,
   resolveYtDlpPath,
   maybeUpdateYtDlp,
+  downloadViaProxy,
   // Test-only seam: lets the regression test confirm the single-flight flag is cleared. See T2.
   _isYtDlpUpdateInFlight: () => ytDlpUpdateInFlight,
+  // Test-only seam: injects a fake electron net for downloadViaProxy tests.
+  _setElectronNetForTests: (net) => { electronNetOverride = net; },
 };
