@@ -427,6 +427,8 @@ function ensureCacheBinary() {
   fs.mkdirSync(cacheDir, { recursive: true });
   fs.writeFileSync(binPath, "#!/bin/sh\n");
   try { fs.chmodSync(binPath, 0o755); } catch {}
+  // The update path refuses unverified cache copies, so record the checksum.
+  downloader._recordCacheChecksum();
   return () => {
     try { fs.rmSync(cacheDir, { recursive: true, force: true }); } catch {}
   };
@@ -801,7 +803,6 @@ test("resolveYtDlpBinary discards a cache copy whose checksum does not match", (
   const name = `yt-dlp-${process.platform}-${process.arch}${process.platform === "win32" ? ".exe" : ""}`;
   const cachePath = path.join(YT_DLP_TEST_CACHE_DIR, name);
   try {
-    downloader._recordCacheChecksum();
     assert.equal(downloader._resolveYtDlpBinary(), cachePath, "verified cache copy must win");
 
     fs.writeFileSync(cachePath, "#!/bin/sh\necho tampered\n");
@@ -819,10 +820,40 @@ test("resolveYtDlpBinary ignores a cache copy that has no recorded checksum", ()
   const name = `yt-dlp-${process.platform}-${process.arch}${process.platform === "win32" ? ".exe" : ""}`;
   const cachePath = path.join(YT_DLP_TEST_CACHE_DIR, name);
   try {
+    fs.unlinkSync(`${cachePath}.sha256`);
     const resolved = downloader._resolveYtDlpBinary();
     assert.notEqual(resolved, cachePath);
     assert.equal(fs.existsSync(cachePath), false, "unverifiable copy must be discarded");
   } finally {
+    cleanup();
+  }
+});
+
+test("maybeUpdateYtDlp never executes a tampered cache copy and a failed update keeps the old checksum", async () => {
+  const cleanup = ensureCacheBinary();
+  const name = `yt-dlp-${process.platform}-${process.arch}${process.platform === "win32" ? ".exe" : ""}`;
+  const cachePath = path.join(YT_DLP_TEST_CACHE_DIR, name);
+  fs.writeFileSync(cachePath, "#!/bin/sh\necho tampered\n");
+  const origSpawn = childProcess.spawn;
+  const spawnedContents = [];
+  childProcess.spawn = (bin) => {
+    spawnedContents.push(fs.readFileSync(bin));
+    const child = makeFakeChild();
+    setImmediate(() => child.emit("close", 1));
+    return child;
+  };
+  try {
+    await resolvesWithin(maybeUpdateYtDlp({ force: true }), 2000);
+    for (const content of spawnedContents) {
+      assert.ok(!content.includes("tampered"), "tampered binary must never be spawned");
+    }
+    // Whatever remains on disk must be either absent or checksum-consistent —
+    // a failed update (exit 1) must not have blessed anything new.
+    if (fs.existsSync(cachePath)) {
+      assert.equal(downloader._resolveYtDlpBinary(), cachePath, "remaining copy must verify");
+    }
+  } finally {
+    childProcess.spawn = origSpawn;
     cleanup();
   }
 });

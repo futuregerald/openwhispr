@@ -214,7 +214,7 @@ function extractYouTubeVideoId(urlString) {
     const watchId = parsed.searchParams.get("v");
     if (watchId && /^[A-Za-z0-9_-]{11}$/.test(watchId)) return watchId;
 
-    const pathMatch = parsed.pathname.match(/^\/(shorts|embed)\/([a-zA-Z0-9_-]{11})/);
+    const pathMatch = parsed.pathname.match(/^\/(shorts|embed|live)\/([a-zA-Z0-9_-]{11})/);
     if (pathMatch) return pathMatch[2];
   }
 
@@ -329,9 +329,12 @@ function isExecutableFile(p) {
 }
 
 // Checksum-verified cache copy, else bundled binary, else null. During an update
-// swap, use the bundle so we never spawn a half-replaced file.
+// swap, prefer the bundle so we never spawn a half-replaced file.
 function resolveYtDlpBinary() {
-  if (ytDlpUpdateInFlight) return resolveYtDlpPath();
+  if (ytDlpUpdateInFlight) {
+    const bundled = resolveYtDlpPath();
+    if (bundled) return bundled;
+  }
   const cachePath = getCacheYtDlpPath();
   if (fs.existsSync(cachePath) && isExecutableFile(cachePath) && cacheChecksumValid(cachePath)) {
     return cachePath;
@@ -375,6 +378,12 @@ function maybeUpdateYtDlp({ force, abortSignal, timeoutMs } = {}) {
       seedYtDlpFromBundle();
       const cacheBinary = getCacheYtDlpPath();
       if (!fs.existsSync(cacheBinary)) return resolve();
+      // Never execute (or later bless) a tampered copy: verify first; a failed
+      // check discards the copy, so reseed from the signed bundle and re-verify.
+      if (!cacheChecksumValid(cacheBinary)) {
+        seedYtDlpFromBundle();
+        if (!fs.existsSync(cacheBinary) || !cacheChecksumValid(cacheBinary)) return resolve();
+      }
 
       ytDlpUpdateInFlight = true;
       let child;
@@ -429,8 +438,10 @@ function maybeUpdateYtDlp({ force, abortSignal, timeoutMs } = {}) {
       }
 
       child.on("error", (err) => finish(err.message));
-      child.on("close", () => {
-        recordCacheChecksum();
+      child.on("close", (code) => {
+        // Only a successful update may move the trust anchor; a failed or killed
+        // run leaves the previously verified binary (and checksum) in place.
+        if (code === 0) recordCacheChecksum();
         finish(null);
       });
     } catch (e) {
@@ -635,6 +646,22 @@ async function runYtDlpWithSelfHeal(binary, args, abortSignal, timeoutMs, onBefo
   }
 }
 
+// Startup sweep for orphans left by crashes or windows closed mid-download;
+// live downloads are protected by the age cutoff.
+function sweepStaleTempArtifacts(maxAgeMs = 24 * 60 * 60 * 1000) {
+  try {
+    const tempDir = getSafeTempDir();
+    const cutoff = Date.now() - maxAgeMs;
+    for (const f of fs.readdirSync(tempDir)) {
+      if (!f.startsWith("ow-url-") && !f.startsWith("ow-diarize-")) continue;
+      const p = path.join(tempDir, f);
+      try {
+        if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p);
+      } catch {}
+    }
+  } catch {}
+}
+
 // Remove any temp artifacts produced for a given base path. Best-effort.
 function cleanupTempArtifacts(tempBase) {
   try {
@@ -759,6 +786,12 @@ async function downloadYouTube(url, onProgress, abortSignal) {
       err.code = "YOUTUBE_BLOCKED";
       throw err;
     }
+    // A network stall is not "video unavailable" — keep it retryable.
+    if (/timed out/i.test(e.message || "")) {
+      const err = new Error("yt-dlp timed out");
+      err.code = "DOWNLOAD_FAILED";
+      throw err;
+    }
     const err = new Error(e.message || "Video unavailable");
     err.code = "VIDEO_UNAVAILABLE";
     throw err;
@@ -853,13 +886,20 @@ async function downloadYouTube(url, onProgress, abortSignal) {
 function httpRequest(parsed, options) {
   const mod = parsed.protocol === "https:" ? https : http;
   return new Promise((resolve, reject) => {
-    // UA-less requests get bot-walled by common CDN fronts.
+    // UA-less requests get bot-walled by common CDN fronts. `signal` lets a
+    // cancel land during the connect phase, not just once data is streaming.
     const req = mod.request(
       parsed,
       { timeout: CONNECT_TIMEOUT_MS, headers: { "User-Agent": USER_AGENT }, ...options },
       resolve
     );
-    req.on("error", reject);
+    req.on("error", (err) => {
+      if (options.signal?.aborted) {
+        reject(Object.assign(new Error("Download cancelled"), { code: "DOWNLOAD_CANCELLED" }));
+      } else {
+        reject(err);
+      }
+    });
     req.on("timeout", () => {
       req.destroy();
       reject(new Error("Connection timed out"));
@@ -873,6 +913,12 @@ function httpRequest(parsed, options) {
 // the underlying transport. Resolves to byte size; cleans up temp file on failure.
 function streamToFile(response, tempPath, { contentLength, title, onProgress, abortSignal, abort }) {
   return new Promise((resolve, reject) => {
+    // An already-dispatched abort event never re-fires for a late listener.
+    if (abortSignal?.aborted) {
+      try { abort(); } catch {}
+      reject(Object.assign(new Error("Download cancelled"), { code: "DOWNLOAD_CANCELLED" }));
+      return;
+    }
     const fileStream = fs.createWriteStream(tempPath);
     let downloaded = 0;
     let settled = false;
@@ -1128,7 +1174,11 @@ async function downloadDirect(url, onProgress, abortSignal, redirectCount = 0) {
   let headResponse = null;
   try {
     while (true) {
-      headResponse = await httpRequest(headParsed, { method: "HEAD", lookup: ssrfSafeLookup });
+      headResponse = await httpRequest(headParsed, {
+        method: "HEAD",
+        lookup: ssrfSafeLookup,
+        signal: abortSignal,
+      });
       headResponse.resume();
       if (headResponse.statusCode >= 300 && headResponse.statusCode < 400 && headResponse.headers.location) {
         // Cumulative redirect bound across alternating GET+HEAD hops.
@@ -1155,7 +1205,14 @@ async function downloadDirect(url, onProgress, abortSignal, redirectCount = 0) {
       break;
     }
   } catch (e) {
-    if (e.code === "SSRF_BLOCKED" || e.code === "INVALID_URL" || e.code === "DOWNLOAD_FAILED") throw e;
+    if (
+      e.code === "SSRF_BLOCKED" ||
+      e.code === "INVALID_URL" ||
+      e.code === "DOWNLOAD_FAILED" ||
+      e.code === "DOWNLOAD_CANCELLED"
+    ) {
+      throw e;
+    }
     headResponse = null;
   }
 
@@ -1184,7 +1241,11 @@ async function downloadDirect(url, onProgress, abortSignal, redirectCount = 0) {
 
   onProgress?.({ stage: "downloading", percent: 0, title });
 
-  const response = await httpRequest(headParsed, { method: "GET", lookup: ssrfSafeLookup });
+  const response = await httpRequest(headParsed, {
+    method: "GET",
+    lookup: ssrfSafeLookup,
+    signal: abortSignal,
+  });
 
   if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
     response.destroy();
@@ -1250,6 +1311,7 @@ module.exports = {
   extractYouTubeVideoId,
   isPlaylistUrl,
   download,
+  sweepStaleTempArtifacts,
   isPrivateIp,
   isAcceptableAudioContentType,
   ssrfSafeLookup,

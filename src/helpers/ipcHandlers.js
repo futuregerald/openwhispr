@@ -1731,6 +1731,9 @@ class IPCHandlers {
     const activeUrlDownloads = new Map();
     let urlDownloadSeq = 0;
 
+    // Sweep ow-url-*/ow-diarize-* orphans from crashes or windows closed mid-download.
+    require("./urlAudioDownloader").sweepStaleTempArtifacts();
+
     ipcMain.handle("download-url-audio", async (event, url, downloadId) => {
       if (typeof url !== "string" || url.length > 2048) {
         return { success: false, error: "Invalid URL", code: "INVALID_URL" };

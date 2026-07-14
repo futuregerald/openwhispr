@@ -99,7 +99,9 @@ function parseBatchUrls(text: string): { valid: string[]; skipped: number } {
   for (const line of lines) {
     try {
       const parsed = new URL(line);
-      if ((parsed.protocol === "http:" || parsed.protocol === "https:") && !seen.has(line)) {
+      const httpsOk = parsed.protocol === "https:";
+      const httpYoutubeOk = parsed.protocol === "http:" && isYouTubeUrl(line);
+      if ((httpsOk || httpYoutubeOk) && !seen.has(line)) {
         seen.add(line);
         valid.push(line);
       }
@@ -685,7 +687,9 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
       return;
     }
 
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    // Main enforces HTTPS for direct downloads (YouTube http URLs get coerced),
+    // so reject here instead of surfacing a misleading late failure.
+    if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isYouTubeUrl(trimmed))) {
       setError(t("notes.upload.urlInvalid"));
       setState("error");
       return;

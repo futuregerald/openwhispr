@@ -450,13 +450,15 @@ class SyncService {
           continue;
         }
 
-        // A default folder created on another platform arrives with an
-        // unknown client_folder_id; inserting it would violate the local
-        // unique folder name. Match it by name and adopt its identity.
-        if (!local && cloudFolder.is_default) {
+        // A folder created elsewhere arrives with an unknown client_folder_id;
+        // inserting it would violate the local unique folder name. Converge by
+        // adopting the cloud identity onto the same-named local folder — e.g. a
+        // pre-existing user-created "Videos" in the cloud meeting the locally
+        // seeded default, in either combination.
+        if (!local) {
           const allFolders = (await window.electronAPI.getFolderIdMap?.()) ?? [];
           const nameMatch = allFolders.find(
-            (f) => f.is_default && f.name.toLowerCase() === cloudFolder.name.toLowerCase()
+            (f) => f.name.toLowerCase() === cloudFolder.name.toLowerCase()
           );
           if (nameMatch) {
             await window.electronAPI.adoptFolderIdentity?.(
