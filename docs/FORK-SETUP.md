@@ -77,12 +77,32 @@ git fetch upstream
 git merge upstream/main        # or: git rebase upstream/main
 ```
 
+## Privacy / no phone-home
+
+This fork is built to send **nothing off-device by default**. OpenWhispr already has no
+analytics SDK (no PostHog/Sentry/Mixpanel/etc.); on top of that, the fork disables the few
+things that still reached out:
+
+- **Auth session ping** — Better Auth defaulted to pinging `auth.openwhispr.com/api/auth/get-session`
+  on every window mount (even signed out). `AUTH_URL` now defaults empty, so the auth client is
+  disabled unless you set `VITE_AUTH_URL`.
+- **Automatic update check** — the startup ping to GitHub releases is disabled (a manual check
+  still works if you ask for it). Unsigned fork builds can't auto-update anyway.
+- **Google Fonts** — the onboarding `<link>` to `fonts.googleapis.com` is removed (system font
+  fallback).
+- **Onboarding intent** — the removed use-case step no longer POSTs your selections anywhere.
+
+What still makes network calls, only when you ask: local model downloads (HuggingFace/GitHub) on
+first use, and cloud STT/LLM providers **only** if you enter your own API keys (BYOK). To re-enable
+OpenWhispr accounts/cloud, set `VITE_AUTH_URL` / the API URL back to the hosted endpoints.
+
 ## What's in this fork vs upstream
 
 | | Upstream OpenWhispr | This fork |
 |---|---|---|
-| First-run onboarding | Account / signup | **Local-only, no signup** |
+| First-run onboarding | Account / signup + use-case survey | **Local-only, no signup, no survey** |
 | Default transcription | Cloud (account) | **On-device Whisper `turbo`** |
+| Telemetry / phone-home | Auth ping + update check + fonts fetch | **Disabled by default** |
 | Local transcription (whisper.cpp) | ✅ | ✅ |
 | N-speaker diarization (sherpa-onnx) | ✅ | ✅ |
 | FluidAudio (ANE) diarization backend | — | ✅ auto-selected on macOS; **bundled into builds** |
