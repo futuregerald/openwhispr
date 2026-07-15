@@ -58,6 +58,16 @@ const SEGMENTATION_ONNX = path.join(SEGMENTATION_DIR, "model.onnx");
 const EMBEDDING_ONNX = "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx";
 const SILERO_VAD_ONNX = "silero_vad.onnx";
 
+// --- FluidAudio (optional macOS CoreML/ANE diarization backend) ---
+// Opt in via OPENWHISPR_DIARIZATION_ENGINE=fluidaudio (or =sherpa to force the
+// default), otherwise FluidAudio is auto-selected on Apple Silicon macOS when
+// the `fluidaudio-diarize-<platform>-<arch>` sidecar is present in resources/bin.
+// FluidAudio manages its own CoreML models (auto-downloaded from HuggingFace on
+// first run), so it does NOT depend on the sherpa-onnx model files above.
+// See docs/FLUIDAUDIO-INTEGRATION.md.
+const DIARIZATION_ENGINE_ENV = "OPENWHISPR_DIARIZATION_ENGINE";
+const FLUIDAUDIO_MODE_ENV = "OPENWHISPR_FLUIDAUDIO_MODE"; // "streaming" (default) | "offline"
+
 class DiarizationManager {
   constructor() {
     // Meeting post-processing and upload/batch diarization can overlap, so
@@ -65,6 +75,8 @@ class DiarizationManager {
     this._processes = new Set();
     this.currentDownloadProcess = null;
     this.cachedBinaryPath = null;
+    // undefined = not resolved yet; null = resolved-but-absent (cache the miss).
+    this.cachedFluidBinaryPath = undefined;
   }
 
   getBinaryPath() {
@@ -81,8 +93,44 @@ class DiarizationManager {
     return resolved;
   }
 
+  getFluidAudioBinaryPath() {
+    if (this.cachedFluidBinaryPath !== undefined) return this.cachedFluidBinaryPath;
+    // FluidAudio is CoreML/ANE — macOS only.
+    if (process.platform !== "darwin") {
+      this.cachedFluidBinaryPath = null;
+      return null;
+    }
+    const binaryName = `fluidaudio-diarize-${process.platform}-${process.arch}`;
+    this.cachedFluidBinaryPath = resolveBinaryPath(binaryName) || null;
+    return this.cachedFluidBinaryPath;
+  }
+
+  // Resolves which offline diarization engine to run. Explicit env override wins;
+  // otherwise FluidAudio is preferred on Apple Silicon macOS when present, with
+  // sherpa-onnx as the cross-platform default and fallback.
+  getDiarizationEngine() {
+    const override = String(process.env[DIARIZATION_ENGINE_ENV] || "")
+      .toLowerCase()
+      .trim();
+    if (override === "fluidaudio" || override === "sherpa") return override;
+    if (override) {
+      debugLogger.warn("Unrecognized OPENWHISPR_DIARIZATION_ENGINE value; auto-selecting", {
+        value: override,
+      });
+    }
+    if (process.platform === "darwin" && this.getFluidAudioBinaryPath()) return "fluidaudio";
+    return "sherpa";
+  }
+
+  // Available if EITHER backend can run: FluidAudio (macOS sidecar, manages its
+  // own models) or the cross-platform sherpa-onnx default. Kept engine-agnostic
+  // so callers that gate on availability never skip diarization just because the
+  // non-active backend is the one installed — diarize() falls back accordingly.
   isAvailable() {
-    return this.getBinaryPath() !== null && this.isModelDownloaded();
+    return (
+      this.getFluidAudioBinaryPath() !== null ||
+      (this.getBinaryPath() !== null && this.isModelDownloaded())
+    );
   }
 
   getModelsDir() {
@@ -305,7 +353,157 @@ class DiarizationManager {
     return { success: false, error: "No active download to cancel" };
   }
 
+  // Public entry point. Routes to the active engine; both return the same
+  // Array<{ start:number, end:number, speaker:string }> contract (seconds), or
+  // [] on any failure. Callers (IPC + meeting pipeline) depend only on that shape.
   async diarize(wavPath, options = {}) {
+    if (this.getDiarizationEngine() === "fluidaudio") {
+      if (this.getFluidAudioBinaryPath()) {
+        return this._diarizeFluidAudio(wavPath, options);
+      }
+      debugLogger.warn("FluidAudio engine selected but binary missing; using sherpa-onnx");
+    }
+    return this._diarizeSherpa(wavPath, options);
+  }
+
+  async _diarizeFluidAudio(wavPath, options = {}) {
+    // Coerce to a positive integer or -1 (auto). Guards against non-integer /
+    // string inputs from internal callers; the IPC path also sanitizes upstream.
+    const rawNum = Number(options.numSpeakers);
+    const numSpeakers = Number.isInteger(rawNum) && rawNum > 0 ? rawNum : -1;
+
+    const binaryPath = this.getFluidAudioBinaryPath();
+    if (!binaryPath) {
+      debugLogger.warn("FluidAudio diarization binary not found");
+      return [];
+    }
+
+    if (!fs.existsSync(wavPath)) {
+      debugLogger.warn("Diarization input file not found", { wavPath });
+      return [];
+    }
+
+    const mode =
+      String(process.env[FLUIDAUDIO_MODE_ENV] || "streaming")
+        .toLowerCase()
+        .trim() === "offline"
+        ? "offline"
+        : "streaming";
+
+    const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const outJson = path.join(getSafeTempDir(), `ow-fluidaudio-${runId}.json`);
+
+    // streaming mode = pyannote segmentation + WeSpeaker embeddings (community-1
+    // class, the benchmarked path). numSpeakers maps to --num-clusters there and
+    // to --min/--max-speakers in offline (VBx) mode. OpenWhispr's `threshold` is
+    // NOT forwarded: FluidAudio uses a different threshold scale, so we let it use
+    // its own tuned default rather than over-splitting speakers.
+    const args = ["process", wavPath, "--mode", mode, "--output", outJson];
+    if (numSpeakers > 0) {
+      if (mode === "streaming") {
+        args.push("--num-clusters", String(numSpeakers));
+      } else {
+        args.push("--min-speakers", String(numSpeakers), "--max-speakers", String(numSpeakers));
+      }
+    }
+
+    debugLogger.info("Starting FluidAudio diarization", { binaryPath, mode, numSpeakers, wavPath });
+
+    return new Promise((resolve) => {
+      let stderr = "";
+
+      // detached on non-Windows so the timeout's killProcessGroup can reap any
+      // helper procs FluidAudio spawns (e.g. its first-run model download).
+      const proc = spawn(binaryPath, args, {
+        stdio: ["ignore", "ignore", "pipe"],
+        detached: process.platform !== "win32",
+      });
+
+      this._processes.add(proc);
+      sidecarPidFile.write("diarization", proc.pid);
+
+      const untrack = () => {
+        this._processes.delete(proc);
+        const survivor = this._processes.values().next().value;
+        if (survivor) sidecarPidFile.write("diarization", survivor.pid);
+        else sidecarPidFile.clear("diarization");
+      };
+
+      const cleanup = () => {
+        fsPromises.unlink(outJson).catch(() => {});
+      };
+
+      const timeout = setTimeout(() => {
+        debugLogger.warn("FluidAudio diarization timed out", {
+          timeoutMs: DIARIZATION_TIMEOUT_MS,
+        });
+        gracefulStopProcess(proc);
+        cleanup();
+        resolve([]);
+      }, DIARIZATION_TIMEOUT_MS);
+
+      proc.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      proc.on("close", async (code) => {
+        clearTimeout(timeout);
+        untrack();
+
+        if (code !== 0) {
+          debugLogger.warn("FluidAudio diarization exited with error", {
+            code,
+            stderr: stderr.slice(-500).trim(),
+          });
+          cleanup();
+          resolve([]);
+          return;
+        }
+
+        let segments = [];
+        try {
+          // async read: FluidAudio JSON can be large; don't block the main process.
+          const raw = await fsPromises.readFile(outJson, "utf8");
+          segments = this._parseFluidAudioOutput(raw);
+        } catch (err) {
+          debugLogger.warn("Failed to read FluidAudio output", { error: err.message });
+        }
+        cleanup();
+        debugLogger.info("FluidAudio diarization complete", { segmentCount: segments.length });
+        resolve(segments);
+      });
+
+      proc.on("error", (err) => {
+        clearTimeout(timeout);
+        untrack();
+        cleanup();
+        debugLogger.warn("FluidAudio diarization process error", { error: err.message });
+        resolve([]);
+      });
+    });
+  }
+
+  _parseFluidAudioOutput(rawJson) {
+    let parsed;
+    try {
+      parsed = JSON.parse(rawJson);
+    } catch {
+      return [];
+    }
+    const rawSegments = Array.isArray(parsed?.segments) ? parsed.segments : [];
+    return rawSegments
+      .filter((s) => s && s.speakerId != null)
+      .map((s) => ({
+        start: Number(s.startTimeSeconds),
+        end: Number(s.endTimeSeconds),
+        // speakerId is an opaque string ("1", "2", ...); prefix for parity with
+        // the sherpa path. mergeWithTranscript renumbers to speaker_0..n anyway.
+        speaker: `speaker_${s.speakerId}`,
+      }))
+      .filter((s) => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start);
+  }
+
+  async _diarizeSherpa(wavPath, options = {}) {
     const { numSpeakers = -1, threshold = 0.55 } = options;
 
     const binaryPath = this.getBinaryPath();

@@ -2371,8 +2371,8 @@ class IPCHandlers {
         if (!this.diarizationManager) {
           return { success: false, error: "Diarization not available" };
         }
-        if (!this.diarizationManager.isModelDownloaded()) {
-          return { success: false, error: "Diarization models not downloaded" };
+        if (!this.diarizationManager.isAvailable()) {
+          return { success: false, error: "Diarization engine not available" };
         }
 
         if (typeof filePath !== "string") {
