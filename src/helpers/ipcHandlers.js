@@ -4381,7 +4381,9 @@ class IPCHandlers {
                 : route.auth.keyRef === "openai"
                   ? this.environmentManager.getOpenAIKey()
                   : "";
-          if (!apiKey && route.auth.scheme !== "none") {
+          // Custom endpoints may be keyless (e.g. a LAN server); only the known
+          // cloud providers require a key, matching the live-dictation path.
+          if (!apiKey && (route.auth.keyRef === "openai" || route.auth.keyRef === "groq")) {
             throw new Error(`${route.provider} API key not configured`);
           }
 
