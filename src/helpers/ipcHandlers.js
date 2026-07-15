@@ -145,7 +145,11 @@ function getCanonicalAllowedAudioDirs() {
   const { getSafeTempDir } = require("./safeTempDir");
   const dirs = [os.tmpdir(), getSafeTempDir(), app.getPath("userData")];
   return dirs.map((d) => {
-    try { return fs.realpathSync(d); } catch { return d; }
+    try {
+      return fs.realpathSync(d);
+    } catch {
+      return d;
+    }
   });
 }
 
@@ -461,7 +465,9 @@ class IPCHandlers {
 
   _setWhisperVadSettings(update = {}) {
     const ALLOWED_KEYS = new Set([
-      "dictationSileroEnabled", "noteRecordingSileroEnabled", "meetingSileroEnabled",
+      "dictationSileroEnabled",
+      "noteRecordingSileroEnabled",
+      "meetingSileroEnabled",
       ...Object.keys(require("../constants/whisperVad.json").DEFAULTS),
     ]);
     const filtered = {};
@@ -1740,7 +1746,8 @@ class IPCHandlers {
       }
       const { download } = require("./urlAudioDownloader");
 
-      const id = typeof downloadId === "string" && downloadId ? downloadId : `dl-${++urlDownloadSeq}`;
+      const id =
+        typeof downloadId === "string" && downloadId ? downloadId : `dl-${++urlDownloadSeq}`;
       const abortController = new AbortController();
       activeUrlDownloads.set(id, abortController);
 
@@ -1793,7 +1800,9 @@ class IPCHandlers {
         }
         const real = fs.realpathSync(resolved);
         let tempDir = getSafeTempDir();
-        try { tempDir = fs.realpathSync(tempDir); } catch {}
+        try {
+          tempDir = fs.realpathSync(tempDir);
+        } catch {}
         const rel = path.relative(tempDir, real);
         if (rel.startsWith("..") || path.isAbsolute(rel)) {
           return { success: false, error: "Not an OpenWhispr temp file" };
@@ -2374,7 +2383,10 @@ class IPCHandlers {
         filePath = realPath;
 
         const diarOpts = {
-          numSpeakers: Math.min(MAX_SPEAKER_COUNT, Math.max(-1, Math.round(Number(options.numSpeakers) || -1))),
+          numSpeakers: Math.min(
+            MAX_SPEAKER_COUNT,
+            Math.max(-1, Math.round(Number(options.numSpeakers) || -1))
+          ),
           threshold: Math.min(1, Math.max(0, Number(options.threshold) || 0.55)),
         };
 
@@ -2387,7 +2399,9 @@ class IPCHandlers {
           const segments = await this.diarizationManager.diarize(wavPath, diarOpts);
           return { success: true, segments };
         } finally {
-          try { fs.unlinkSync(wavPath); } catch {}
+          try {
+            fs.unlinkSync(wavPath);
+          } catch {}
         }
       } catch (error) {
         debugLogger.error("Diarization error", { error: error.message });
@@ -2397,7 +2411,12 @@ class IPCHandlers {
 
     ipcMain.handle("merge-speaker-text", async (event, { segments, text, duration }) => {
       try {
-        if (!Array.isArray(segments) || typeof text !== "string" || typeof duration !== "number" || !isFinite(duration)) {
+        if (
+          !Array.isArray(segments) ||
+          typeof text !== "string" ||
+          typeof duration !== "number" ||
+          !isFinite(duration)
+        ) {
           return { success: false, error: "Invalid arguments" };
         }
         if (segments.length > 10000 || text.length > 1_000_000) {
@@ -7338,7 +7357,13 @@ class IPCHandlers {
               multipartFields.response_format = "diarized_json";
               multipartFields.chunking_strategy = "auto";
             } else {
-              return { success: false, error: "Speaker diarization is only supported with OpenAI and Mistral APIs." };
+              // The renderer gates on provider name; this re-check is by hostname.
+              // A non-canonical base URL (Azure/OpenAI-compatible gateway) can
+              // disagree — degrade to a plain transcript, never fail the upload.
+              debugLogger.warn(
+                "BYOK diarization requested but base URL is not OpenAI/Mistral; transcribing without speakers",
+                { baseUrl }
+              );
             }
           }
 
@@ -7374,7 +7399,10 @@ class IPCHandlers {
               end: s.end || 0,
             }));
             const formatted = segments
-              .map((s) => `[${s.speaker}] ${formatDiarTime(s.start)} - ${formatDiarTime(s.end)}\n${s.text}`)
+              .map(
+                (s) =>
+                  `[${s.speaker}] ${formatDiarTime(s.start)} - ${formatDiarTime(s.end)}\n${s.text}`
+              )
               .join("\n\n");
             return { success: true, text: formatted, diarized: true };
           }

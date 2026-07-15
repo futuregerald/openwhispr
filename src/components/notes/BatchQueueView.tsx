@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Check, X, Loader2, Clock, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, X, Loader2, Clock, Trash2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { cn } from "../lib/utils";
 import type { QueueItem } from "../../hooks/useBatchQueue";
@@ -41,9 +41,8 @@ export default function BatchQueueView({
   onOpenNote,
 }: BatchQueueViewProps) {
   const { t } = useTranslation();
-  const allDone = queue.length > 0 && queue.every(
-    (i) => i.status === "done" || i.status === "error"
-  );
+  const allDone =
+    queue.length > 0 && queue.every((i) => i.status === "done" || i.status === "error");
   // Failed items still count as settled so the bar reaches 100% when the run ends.
   const overallProgress =
     totalCount > 0 ? Math.round(((completedCount + failedCount) / totalCount) * 100) : 0;
@@ -94,20 +93,30 @@ export default function BatchQueueView({
             )}
           >
             <StatusIcon status={item.status} />
-            <span className="flex-1 truncate text-foreground/60">
-              {item.name}
-            </span>
+            <span className="flex-1 truncate text-foreground/60">{item.name}</span>
 
             {item.status === "downloading" && (
               <div className="w-16 h-[2px] rounded-full bg-foreground/5 overflow-hidden">
                 <div
-                  className="h-full rounded-full bg-primary/50 transition-[width] duration-300"
-                  style={{ width: `${item.progress}%` }}
+                  className={cn(
+                    "h-full rounded-full bg-primary/50 transition-[width] duration-300",
+                    // Percent 0 = size unknown: pulse instead of an empty bar.
+                    !item.progress && "animate-pulse"
+                  )}
+                  style={{ width: item.progress ? `${item.progress}%` : "100%" }}
                 />
               </div>
             )}
 
-            {item.status === "done" && item.noteId && onOpenNote && (
+            {item.status === "done" && item.warning && (
+              <span className="flex shrink-0" title={t("notes.upload.partialWarning")}>
+                <AlertTriangle size={11} className="text-amber-500/60" />
+              </span>
+            )}
+
+            {/* Hidden while processing: opening a note unmounts this view, which
+                cancels the batch (queue state lives in useBatchQueue). */}
+            {item.status === "done" && item.noteId && onOpenNote && !isProcessing && (
               <button
                 onClick={() => onOpenNote(item.noteId!)}
                 className="text-[10px] text-primary/50 hover:text-primary/70"
@@ -119,7 +128,7 @@ export default function BatchQueueView({
 
             {item.status === "error" && item.error && (
               <span
-                className="text-[10px] text-destructive/50 truncate max-w-[80px]"
+                className="text-[10px] text-destructive/50 truncate max-w-20"
                 title={t(`notes.upload.${item.error}`, { defaultValue: item.error })}
               >
                 {t(`notes.upload.${item.error}`, { defaultValue: item.error })}

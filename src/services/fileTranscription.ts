@@ -90,8 +90,7 @@ export function shouldUseByokDiarize(
     !cfg.useLocalWhisper &&
     !cfg.isOpenWhisprCloud &&
     cfg.transcriptionMode !== "self-hosted" &&
-    (cfg.cloudTranscriptionProvider === "openai" ||
-      cfg.cloudTranscriptionProvider === "mistral")
+    (cfg.cloudTranscriptionProvider === "openai" || cfg.cloudTranscriptionProvider === "mistral")
   );
 }
 
@@ -107,11 +106,11 @@ export async function transcribeFileWithSpeakers(
   const byokDiarize = shouldUseByokDiarize(cfg, diarization.enabled);
   const diarizePromise =
     diarization.enabled && diarization.localModelsReady && !byokDiarize
-      ? window.electronAPI
+      ? (window.electronAPI
           .diarizeAudioFile?.(filePath, {
             numSpeakers: diarization.numSpeakers ?? undefined,
           })
-          .catch(() => null) ?? Promise.resolve(null)
+          .catch(() => null) ?? Promise.resolve(null))
       : Promise.resolve(null);
 
   const [result, diar] = await Promise.all([

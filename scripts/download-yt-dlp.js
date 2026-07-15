@@ -114,7 +114,6 @@ async function main() {
   }
 }
 
-// Export config for potential imports
 module.exports = {
   YT_DLP_VERSION,
   BINARIES,
@@ -122,7 +121,6 @@ module.exports = {
   getDownloadUrl,
 };
 
-// Only run main() when executed directly
 if (require.main === module) {
   main().catch(console.error);
 }

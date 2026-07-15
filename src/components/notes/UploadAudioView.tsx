@@ -524,7 +524,12 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
 
     if (validFiles.length === 1 && !batch.isProcessing && !batch.hasQueue) {
       const f = validFiles[0];
-      setFile({ name: f.name, path: f.path, size: formatFileSize(f.sizeBytes), sizeBytes: f.sizeBytes });
+      setFile({
+        name: f.name,
+        path: f.path,
+        size: formatFileSize(f.sizeBytes),
+        sizeBytes: f.sizeBytes,
+      });
       setState("selected");
       setError(null);
     } else {
@@ -772,12 +777,15 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
     const { valid, skipped } = parseBatchUrls(urlInput);
     if (valid.length > 0) {
       batch.addUrls(valid);
+      // Same default the single-URL flow applies; the selector stays editable.
+      if (!batchFolderId) {
+        const videosFolder = findVideosFolder(folders);
+        if (videosFolder) setBatchFolderId(String(videosFolder.id));
+      }
       setUrlInput("");
       setUrlExpanded(false);
     }
-    setBatchUrlNotice(
-      skipped > 0 ? t("notes.upload.urlsSkipped", { n: skipped }) : null
-    );
+    setBatchUrlNotice(skipped > 0 ? t("notes.upload.urlsSkipped", { n: skipped }) : null);
   };
 
   const startBatchProcessing = () => {
@@ -890,7 +898,10 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => { setUrlExpanded(false); setUrlInput(""); }}
+                      onClick={() => {
+                        setUrlExpanded(false);
+                        setUrlInput("");
+                      }}
                       className="h-7 text-xs text-foreground/30"
                     >
                       {t("notes.upload.cancel")}
@@ -909,7 +920,10 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
               ) : (
                 <div className="relative">
                   {isYouTubeUrl(urlInput) ? (
-                    <svg viewBox="0 0 28 20" className="absolute left-2.5 top-1/2 -translate-y-1/2 w-[18px] h-[13px] z-10 pointer-events-none">
+                    <svg
+                      viewBox="0 0 28 20"
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 w-[18px] h-[13px] z-10 pointer-events-none"
+                    >
                       <rect width="28" height="20" rx="4" fill="#FF0000" />
                       <polygon points="11,4 11,16 21,10" fill="white" />
                     </svg>
@@ -1060,11 +1074,14 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
                 <div
                   className={cn(
                     "h-full rounded-full bg-primary/50 transition-[width] duration-500 ease-out",
-                    downloadProgress.stage !== "downloading" && "animate-pulse"
+                    // Percent 0 = size unknown (no content-length): pulse instead
+                    // of sitting on an empty bar.
+                    (downloadProgress.stage !== "downloading" || !downloadProgress.percent) &&
+                      "animate-pulse"
                   )}
                   style={{
                     width:
-                      downloadProgress.stage === "downloading"
+                      downloadProgress.stage === "downloading" && downloadProgress.percent
                         ? `${Math.min(downloadProgress.percent, 100)}%`
                         : "100%",
                   }}
@@ -1172,24 +1189,33 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
               </button>
             </div>
 
-            {diarizationEnabled && !useLocalWhisper && !isOpenWhisprCloud && !isSelfHosted &&
+            {diarizationEnabled &&
+              !useLocalWhisper &&
+              !isOpenWhisprCloud &&
+              !isSelfHosted &&
               cloudTranscriptionProvider === "openai" && (
-              <p className="text-[10px] text-foreground/25 mt-1.5">
-                {t("notes.upload.openaiDiarizeNote")}
-              </p>
-            )}
-            {diarizationEnabled && !useLocalWhisper && !isOpenWhisprCloud && !isSelfHosted &&
+                <p className="text-[10px] text-foreground/25 mt-1.5">
+                  {t("notes.upload.openaiDiarizeNote")}
+                </p>
+              )}
+            {diarizationEnabled &&
+              !useLocalWhisper &&
+              !isOpenWhisprCloud &&
+              !isSelfHosted &&
               cloudTranscriptionProvider === "mistral" && (
-              <p className="text-[10px] text-foreground/25 mt-1.5">
-                {t("notes.upload.mistralDiarizeNote")}
-              </p>
-            )}
-            {diarizationEnabled && !useLocalWhisper && !isOpenWhisprCloud && !isSelfHosted &&
+                <p className="text-[10px] text-foreground/25 mt-1.5">
+                  {t("notes.upload.mistralDiarizeNote")}
+                </p>
+              )}
+            {diarizationEnabled &&
+              !useLocalWhisper &&
+              !isOpenWhisprCloud &&
+              !isSelfHosted &&
               cloudTranscriptionProvider === "groq" && (
-              <p className="text-[10px] text-amber-500/60 mt-1.5">
-                {t("notes.upload.groqDiarizeNote")}
-              </p>
-            )}
+                <p className="text-[10px] text-amber-500/60 mt-1.5">
+                  {t("notes.upload.groqDiarizeNote")}
+                </p>
+              )}
 
             {diarizationDownloading && (
               <p className="text-[10px] text-primary/50 mt-1.5">
@@ -1212,7 +1238,10 @@ export default function UploadAudioView({ onNoteCreated, onOpenSettings }: Uploa
                   value={diarizationNumSpeakers}
                   onChange={(e) => {
                     const raw = e.target.value;
-                    if (raw === "") { setDiarizationNumSpeakers(""); return; }
+                    if (raw === "") {
+                      setDiarizationNumSpeakers("");
+                      return;
+                    }
                     const n = Math.max(2, Math.min(MAX_SPEAKER_COUNT, Number(raw)));
                     setDiarizationNumSpeakers(String(isNaN(n) ? "" : n));
                   }}
@@ -1666,7 +1695,14 @@ interface FolderSelectProps {
   className?: string;
 }
 
-function FolderSelect({ t, folders, value, onChange, includeCreateNew, className }: FolderSelectProps) {
+function FolderSelect({
+  t,
+  folders,
+  value,
+  onChange,
+  includeCreateNew,
+  className,
+}: FolderSelectProps) {
   return (
     <div className={cn("flex items-center justify-center gap-2", className)}>
       <FolderOpen size={12} className="text-foreground/20 shrink-0" />

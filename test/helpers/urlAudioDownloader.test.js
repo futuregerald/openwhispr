@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const dns = require("dns");
+const https = require("https");
 const childProcess = require("child_process");
 const { EventEmitter } = require("events");
 const { Readable } = require("stream");
@@ -391,7 +392,7 @@ test("extractYouTubeVideoId rejects youtu.be with non-standard ID", () => {
   assert.equal(extractYouTubeVideoId("https://youtu.be/toolongvideoiddd"), null);
 });
 
-// --- maybeUpdateYtDlp self-update: hang/leak regression (FIX A) ---
+// --- maybeUpdateYtDlp self-update: hang/leak regression ---
 
 // A fake child that never emits close/exit, with a kill() that records the call.
 function makeFakeChild() {
@@ -656,6 +657,219 @@ test("downloadViaProxy rejects with DOWNLOAD_CANCELLED on mid-flight abort", asy
   } finally {
     downloader._setElectronNetForTests(null);
   }
+});
+
+// --- downloadDirect: node-https path (HEAD/GET redirects, validation, caps) ---
+//
+// download() routes non-YouTube URLs here; the fakes patch https.request (the
+// module calls it through its captured `https` reference, which is this same
+// object). Literal-IP hosts skip DNS, so ssrfSafeLookup is never exercised —
+// these tests cover the per-hop checks in the HEAD/GET redirect handling.
+
+function makeDirectResponse({ statusCode = 200, headers = {}, body = null }) {
+  const res = body != null ? Readable.from([Buffer.from(body)]) : new EventEmitter();
+  res.statusCode = statusCode;
+  res.headers = headers;
+  if (!res.resume) res.resume = () => {};
+  if (!res.destroy) res.destroy = () => {};
+  if (!res.pipe) res.pipe = () => {};
+  return res;
+}
+
+// Patch https.request for the duration of fn. handler(parsed, options) returns
+// the fake response; onResponse (optional) runs after the caller received it.
+async function withFakeHttps(handler, fn) {
+  const orig = https.request;
+  const calls = [];
+  https.request = (parsed, options, callback) => {
+    calls.push({ method: options.method, url: parsed.href });
+    const req = new EventEmitter();
+    req.destroy = () => {};
+    req.end = () => {
+      setImmediate(() => {
+        const { response, after } = handler(parsed, options);
+        callback(response);
+        if (after) setImmediate(() => after(response));
+      });
+    };
+    return req;
+  };
+  try {
+    return await fn(calls);
+  } finally {
+    https.request = orig;
+  }
+}
+
+function listOwUrlTempFiles() {
+  const { getSafeTempDir } = require("../../src/helpers/safeTempDir");
+  return new Set(fs.readdirSync(getSafeTempDir()).filter((f) => f.startsWith("ow-url-")));
+}
+
+test("downloadDirect streams a validated GET to a temp file", async () => {
+  const body = "audiodata";
+  let tempPath;
+  try {
+    await withFakeHttps(
+      (parsed, options) => ({
+        response:
+          options.method === "HEAD"
+            ? makeDirectResponse({
+                headers: { "content-type": "audio/mpeg", "content-length": String(body.length) },
+              })
+            : makeDirectResponse({
+                headers: { "content-type": "audio/mpeg", "content-length": String(body.length) },
+                body,
+              }),
+      }),
+      async (calls) => {
+        const result = await downloader.download("https://93.184.216.34/interview.mp3", null, null);
+        tempPath = result.tempPath;
+        assert.equal(fs.readFileSync(tempPath, "utf8"), body);
+        assert.equal(result.title, "interview");
+        assert.equal(result.sizeBytes, body.length);
+        assert.deepEqual(calls.map((c) => c.method), ["HEAD", "GET"]);
+      }
+    );
+  } finally {
+    if (tempPath) { try { fs.unlinkSync(tempPath); } catch {} }
+  }
+});
+
+test("downloadDirect rejects a HEAD redirect to http:// with INVALID_URL", async () => {
+  await withFakeHttps(
+    () => ({
+      response: makeDirectResponse({
+        statusCode: 302,
+        headers: { location: "http://93.184.216.34/x.mp3" },
+      }),
+    }),
+    async () => {
+      await assert.rejects(downloader.download("https://93.184.216.34/file.mp3", null, null), {
+        code: "INVALID_URL",
+      });
+    }
+  );
+});
+
+test("downloadDirect rejects a HEAD redirect to a private IP with SSRF_BLOCKED", async () => {
+  await withFakeHttps(
+    () => ({
+      response: makeDirectResponse({
+        statusCode: 302,
+        headers: { location: "https://127.0.0.1/x.mp3" },
+      }),
+    }),
+    async () => {
+      await assert.rejects(downloader.download("https://93.184.216.34/file.mp3", null, null), {
+        code: "SSRF_BLOCKED",
+      });
+    }
+  );
+});
+
+test("downloadDirect fails with DOWNLOAD_FAILED after exceeding MAX_REDIRECTS on HEAD", async () => {
+  await withFakeHttps(
+    () => ({
+      response: makeDirectResponse({
+        statusCode: 302,
+        headers: { location: "https://93.184.216.34/next.mp3" },
+      }),
+    }),
+    async (calls) => {
+      await assert.rejects(
+        downloader.download("https://93.184.216.34/file.mp3", null, null),
+        (err) => {
+          assert.equal(err.code, "DOWNLOAD_FAILED");
+          assert.match(err.message, /Too many redirects/);
+          return true;
+        }
+      );
+      // MAX_REDIRECTS is 3; the 4th redirect hop trips the limit.
+      assert.equal(calls.length, 4);
+    }
+  );
+});
+
+test("downloadDirect rejects a GET redirect to a private IP with SSRF_BLOCKED", async () => {
+  await withFakeHttps(
+    (parsed, options) =>
+      options.method === "HEAD"
+        ? { response: makeDirectResponse({ statusCode: 405 }) }
+        : {
+            response: makeDirectResponse({
+              statusCode: 302,
+              headers: { location: "https://10.0.0.1/x.mp3" },
+            }),
+          },
+    async () => {
+      await assert.rejects(downloader.download("https://93.184.216.34/file.mp3", null, null), {
+        code: "SSRF_BLOCKED",
+      });
+    }
+  );
+});
+
+test("downloadDirect re-validates content-type on GET when HEAD is refused", async () => {
+  await withFakeHttps(
+    (parsed, options) =>
+      options.method === "HEAD"
+        ? { response: makeDirectResponse({ statusCode: 405 }) }
+        : {
+            response: makeDirectResponse({
+              headers: { "content-type": "text/html" },
+              body: "<html></html>",
+            }),
+          },
+    async () => {
+      await assert.rejects(downloader.download("https://93.184.216.34/file.mp3", null, null), {
+        code: "CONTENT_TYPE_INVALID",
+      });
+    }
+  );
+});
+
+test("downloadDirect enforces MAX_DOWNLOAD_BYTES on unknown-size streams and cleans up", async () => {
+  const before = listOwUrlTempFiles();
+  await withFakeHttps(
+    (parsed, options) =>
+      options.method === "HEAD"
+        ? { response: makeDirectResponse({ statusCode: 405 }) }
+        : {
+            response: makeDirectResponse({ headers: { "content-type": "audio/mpeg" } }),
+            // Lying length stands in for 501 MB without allocating it.
+            after: (response) => response.emit("data", { length: 501 * 1024 * 1024 }),
+          },
+    async () => {
+      await assert.rejects(downloader.download("https://93.184.216.34/file.mp3", null, null), {
+        code: "FILE_TOO_LARGE",
+      });
+    }
+  );
+  assert.deepEqual(listOwUrlTempFiles(), before, "oversized download must remove its temp file");
+});
+
+test("downloadDirect rejects with DOWNLOAD_CANCELLED on mid-stream abort and cleans up", async () => {
+  const before = listOwUrlTempFiles();
+  const ac = new AbortController();
+  await withFakeHttps(
+    (parsed, options) =>
+      options.method === "HEAD"
+        ? { response: makeDirectResponse({ statusCode: 405 }) }
+        : {
+            response: makeDirectResponse({ headers: { "content-type": "audio/mpeg" } }),
+            after: (response) => {
+              response.emit("data", { length: 1024 });
+              ac.abort();
+            },
+          },
+    async () => {
+      await assert.rejects(downloader.download("https://93.184.216.34/file.mp3", null, ac.signal), {
+        code: "DOWNLOAD_CANCELLED",
+      });
+    }
+  );
+  assert.deepEqual(listOwUrlTempFiles(), before, "cancelled download must remove its temp file");
 });
 
 // --- selectYtDlpOutput: finished-file selection + transient cleanup ---

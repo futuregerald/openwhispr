@@ -454,12 +454,20 @@ class SyncService {
         // inserting it would violate the local unique folder name. Converge by
         // adopting the cloud identity onto the same-named local folder — e.g. a
         // pre-existing user-created "Videos" in the cloud meeting the locally
-        // seeded default, in either combination.
+        // seeded default, in either combination. Only unlinked folders are
+        // adoptable (never re-point one already bound to another cloud folder),
+        // and the case-insensitive fallback stays reserved for fixed-name
+        // defaults so distinct user folders like "work"/"Work" never merge.
         if (!local) {
           const allFolders = (await window.electronAPI.getFolderIdMap?.()) ?? [];
-          const nameMatch = allFolders.find(
-            (f) => f.name.toLowerCase() === cloudFolder.name.toLowerCase()
-          );
+          const adoptable = allFolders.filter((f) => !f.cloud_id || f.cloud_id === cloudFolder.id);
+          const nameMatch =
+            adoptable.find((f) => f.name === cloudFolder.name) ??
+            adoptable.find(
+              (f) =>
+                (f.is_default || cloudFolder.is_default) &&
+                f.name.toLowerCase() === cloudFolder.name.toLowerCase()
+            );
           if (nameMatch) {
             await window.electronAPI.adoptFolderIdentity?.(
               nameMatch.id,

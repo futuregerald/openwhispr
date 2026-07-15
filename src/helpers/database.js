@@ -214,18 +214,21 @@ class DatabaseManager {
           .run(personalFolder.id);
       }
 
-      // A pre-existing user-created "Videos" folder stays untouched (never promoted
-      // to default); URL downloads route to it by name.
-      const videosFolder = this.db
-        .prepare("SELECT id FROM folders WHERE name = 'Videos'")
-        .get();
-      if (!videosFolder) {
-        const maxOrder = this.db
-          .prepare("SELECT MAX(sort_order) as m FROM folders")
-          .get();
-        this.db
-          .prepare("INSERT OR IGNORE INTO folders (name, is_default, sort_order) VALUES ('Videos', 1, ?)")
-          .run((maxOrder?.m ?? 1) + 1);
+      // One-time seed (user_version 1): a pre-existing user-created "Videos"
+      // folder stays untouched (never promoted to default); URL downloads route
+      // to it by name. Guarded so a later delete/rename doesn't resurrect it as
+      // an undeletable default on the next launch.
+      if (this.db.pragma("user_version", { simple: true }) < 1) {
+        const videosFolder = this.db.prepare("SELECT id FROM folders WHERE name = 'Videos'").get();
+        if (!videosFolder) {
+          const maxOrder = this.db.prepare("SELECT MAX(sort_order) as m FROM folders").get();
+          this.db
+            .prepare(
+              "INSERT OR IGNORE INTO folders (name, is_default, sort_order) VALUES ('Videos', 1, ?)"
+            )
+            .run((maxOrder?.m ?? 1) + 1);
+        }
+        this.db.pragma("user_version = 1");
       }
 
       this.db.exec(`

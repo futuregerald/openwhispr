@@ -715,7 +715,10 @@ declare global {
       getPathForFile: (file: File) => string;
 
       // URL audio download
-      downloadUrlAudio: (url: string, downloadId?: string) => Promise<
+      downloadUrlAudio: (
+        url: string,
+        downloadId?: string
+      ) => Promise<
         | {
             success: true;
             tempPath: string;

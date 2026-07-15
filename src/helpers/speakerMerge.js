@@ -2,7 +2,9 @@ function splitIntoSentences(text) {
   if (typeof Intl !== "undefined" && Intl.Segmenter) {
     try {
       const segmenter = new Intl.Segmenter(undefined, { granularity: "sentence" });
-      return Array.from(segmenter.segment(text), (s) => s.segment.trim()).filter((s) => s.length > 0);
+      return Array.from(segmenter.segment(text), (s) => s.segment.trim()).filter(
+        (s) => s.length > 0
+      );
     } catch {
       // fall through to regex
     }
@@ -100,4 +102,9 @@ function formatSpeakerTranscript(mergedSegments) {
     .join("\n\n");
 }
 
-module.exports = { mergeSpeakersWithText, formatSpeakerTranscript, splitIntoSentences, formatTimestamp };
+module.exports = {
+  mergeSpeakersWithText,
+  formatSpeakerTranscript,
+  splitIntoSentences,
+  formatTimestamp,
+};

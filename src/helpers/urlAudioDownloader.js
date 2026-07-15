@@ -149,10 +149,12 @@ function ssrfSafeLookup(hostname, options, callback) {
     const entries = Array.isArray(address) ? address : [{ address, family }];
     for (const e of entries) {
       if (isPrivateIp(e.address)) {
-        return callback(Object.assign(
-          new Error("Direct downloads from private/internal addresses are not allowed"),
-          { code: "SSRF_BLOCKED" }
-        ));
+        return callback(
+          Object.assign(
+            new Error("Direct downloads from private/internal addresses are not allowed"),
+            { code: "SSRF_BLOCKED" }
+          )
+        );
       }
     }
     callback(null, address, family);
@@ -242,8 +244,12 @@ function createStallChecker(onStall) {
   }, 5_000);
 
   return {
-    touch() { lastDataTime = Date.now(); },
-    clear() { clearInterval(interval); },
+    touch() {
+      lastDataTime = Date.now();
+    },
+    clear() {
+      clearInterval(interval);
+    },
   };
 }
 
@@ -276,20 +282,43 @@ function recordCacheChecksum() {
   try {
     const cachePath = getCacheYtDlpPath();
     fs.writeFileSync(`${cachePath}.sha256`, sha256File(cachePath));
+    verifiedCacheStat = null;
   } catch (e) {
     debugLogger.warn("Failed to record yt-dlp cache checksum", { error: e.message });
   }
 }
 
 // The cache dir is user-writable; verify before executing. Mismatch discards the
-// copy so the next download re-seeds from the signed bundle.
+// copy so the next download re-seeds from the signed bundle. Hashing the ~40 MB
+// binary blocks the main process, so remember the last verified (mtime, size) —
+// an attacker who could forge those could also rewrite the sibling .sha256, so
+// the memo adds no new trust.
+let verifiedCacheStat = null;
+
 function cacheChecksumValid(cachePath) {
   try {
+    const st = fs.statSync(cachePath);
+    if (
+      verifiedCacheStat &&
+      verifiedCacheStat.path === cachePath &&
+      verifiedCacheStat.mtimeMs === st.mtimeMs &&
+      verifiedCacheStat.size === st.size
+    ) {
+      return true;
+    }
     const expected = fs.readFileSync(`${cachePath}.sha256`, "utf8").trim();
-    if (expected && expected === sha256File(cachePath)) return true;
+    if (expected && expected === sha256File(cachePath)) {
+      verifiedCacheStat = { path: cachePath, mtimeMs: st.mtimeMs, size: st.size };
+      return true;
+    }
   } catch {}
-  try { fs.unlinkSync(cachePath); } catch {}
-  try { fs.unlinkSync(`${cachePath}.sha256`); } catch {}
+  verifiedCacheStat = null;
+  try {
+    fs.unlinkSync(cachePath);
+  } catch {}
+  try {
+    fs.unlinkSync(`${cachePath}.sha256`);
+  } catch {}
   debugLogger.warn("yt-dlp cache failed checksum verification; discarded", { cachePath });
   return false;
 }
@@ -304,7 +333,9 @@ function seedYtDlpFromBundle() {
     const bundled = resolveYtDlpPath();
     if (!bundled) return;
     fs.mkdirSync(YT_DLP_CACHE_DIR, { recursive: true, mode: 0o700 });
-    try { fs.chmodSync(YT_DLP_CACHE_DIR, 0o700); } catch {}
+    try {
+      fs.chmodSync(YT_DLP_CACHE_DIR, 0o700);
+    } catch {}
     // Atomic seed: copy to a temp path, chmod, then rename so a crash mid-copy
     // can never leave a truncated cache binary that would fail to spawn.
     tempPath = `${cachePath}.tmp-${process.pid}`;
@@ -313,7 +344,11 @@ function seedYtDlpFromBundle() {
     fs.renameSync(tempPath, cachePath);
     recordCacheChecksum();
   } catch (e) {
-    if (tempPath) { try { fs.unlinkSync(tempPath); } catch {} }
+    if (tempPath) {
+      try {
+        fs.unlinkSync(tempPath);
+      } catch {}
+    }
     debugLogger.warn("Failed to seed yt-dlp from bundle", { error: e.message });
   }
 }
@@ -343,10 +378,10 @@ function resolveYtDlpBinary() {
 }
 
 // Wrap runYtDlp so maybeUpdateYtDlp can skip while a download holds the binary.
-async function runYtDlpTracked(binaryPath, args, abortSignal, timeoutMs) {
+async function runYtDlpTracked(binaryPath, args, abortSignal, timeoutMs, onOutput) {
   ytDlpBusyCount += 1;
   try {
-    return await runYtDlp(binaryPath, args, abortSignal, timeoutMs);
+    return await runYtDlp(binaryPath, args, abortSignal, timeoutMs, onOutput);
   } finally {
     ytDlpBusyCount -= 1;
   }
@@ -421,17 +456,23 @@ function maybeUpdateYtDlp({ force, abortSignal, timeoutMs } = {}) {
       };
 
       killTimer = setTimeout(() => {
-        try { child.kill("SIGKILL"); } catch {}
+        try {
+          child.kill("SIGKILL");
+        } catch {}
         finish("yt-dlp -U timed out");
       }, limit);
 
       if (abortSignal) {
         if (abortSignal.aborted) {
-          try { child.kill("SIGKILL"); } catch {}
+          try {
+            child.kill("SIGKILL");
+          } catch {}
           return finish(null);
         }
         onAbort = () => {
-          try { child.kill("SIGKILL"); } catch {}
+          try {
+            child.kill("SIGKILL");
+          } catch {}
           finish(null);
         };
         abortSignal.addEventListener("abort", onAbort, { once: true });
@@ -461,7 +502,11 @@ async function resolveProxyForUrl(targetUrl) {
   } catch {
     return null;
   }
-  if (!session || !session.defaultSession || typeof session.defaultSession.resolveProxy !== "function") {
+  if (
+    !session ||
+    !session.defaultSession ||
+    typeof session.defaultSession.resolveProxy !== "function"
+  ) {
     return null;
   }
   let result;
@@ -510,23 +555,29 @@ function assertPublicHost(hostname) {
     const raw = hostname.replace(/^\[|\]$/g, "");
     if (isIP(raw)) {
       if (isPrivateIp(raw)) {
-        return reject(Object.assign(
-          new Error("Direct downloads from private/internal addresses are not allowed"),
-          { code: "SSRF_BLOCKED" }
-        ));
+        return reject(
+          Object.assign(
+            new Error("Direct downloads from private/internal addresses are not allowed"),
+            { code: "SSRF_BLOCKED" }
+          )
+        );
       }
       return resolve();
     }
     dns.lookup(raw, { all: true }, (err, addresses) => {
       if (err) {
-        return reject(Object.assign(new Error(`DNS lookup failed: ${err.message}`), { code: "DOWNLOAD_FAILED" }));
+        return reject(
+          Object.assign(new Error(`DNS lookup failed: ${err.message}`), { code: "DOWNLOAD_FAILED" })
+        );
       }
       for (const a of addresses) {
         if (isPrivateIp(a.address)) {
-          return reject(Object.assign(
-            new Error("Direct downloads from private/internal addresses are not allowed"),
-            { code: "SSRF_BLOCKED" }
-          ));
+          return reject(
+            Object.assign(
+              new Error("Direct downloads from private/internal addresses are not allowed"),
+              { code: "SSRF_BLOCKED" }
+            )
+          );
         }
       }
       resolve();
@@ -543,8 +594,31 @@ function jsRuntimeSpawnConfig() {
   };
 }
 
+// Kill yt-dlp AND its subprocesses (ffmpeg postprocessor, node JS-runtime):
+// the detached process group on Unix, taskkill /T on Windows — a plain kill on
+// the parent orphans them mid-download.
+function killYtDlpTree(child, signal) {
+  if (process.platform === "win32" && child.pid) {
+    try {
+      childProcess.spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+        windowsHide: true,
+      });
+      return;
+    } catch {}
+  }
+  if (child.pid) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {}
+  }
+  try {
+    child.kill(signal);
+  } catch {}
+}
+
 // Spawn the yt-dlp sidecar, capture stdout/stderr, honor abort and a hard timeout.
-function runYtDlp(binaryPath, args, abortSignal, timeoutMs) {
+function runYtDlp(binaryPath, args, abortSignal, timeoutMs, onOutput) {
   return new Promise((resolve, reject) => {
     if (abortSignal?.aborted) {
       reject(Object.assign(new Error("Download cancelled"), { code: "DOWNLOAD_CANCELLED" }));
@@ -557,9 +631,12 @@ function runYtDlp(binaryPath, args, abortSignal, timeoutMs) {
       child = childProcess.spawn(binaryPath, [...runtime.args, ...args], {
         windowsHide: true,
         env: runtime.env,
+        detached: process.platform !== "win32",
       });
     } catch (e) {
-      reject(Object.assign(new Error(e.message || "Failed to start yt-dlp"), { code: "DOWNLOAD_FAILED" }));
+      reject(
+        Object.assign(new Error(e.message || "Failed to start yt-dlp"), { code: "DOWNLOAD_FAILED" })
+      );
       return;
     }
 
@@ -570,19 +647,25 @@ function runYtDlp(binaryPath, args, abortSignal, timeoutMs) {
 
     const onAbort = () => {
       aborted = true;
-      try { child.kill("SIGTERM"); } catch {}
+      killYtDlpTree(child, "SIGTERM");
     };
     if (abortSignal) abortSignal.addEventListener("abort", onAbort, { once: true });
 
     const killTimer = timeoutMs
       ? setTimeout(() => {
           timedOut = true;
-          try { child.kill("SIGKILL"); } catch {}
+          killYtDlpTree(child, "SIGKILL");
         }, timeoutMs)
       : null;
 
-    child.stdout.on("data", (d) => { stdout += d.toString(); });
-    child.stderr.on("data", (d) => { stderr += d.toString(); });
+    child.stdout.on("data", (d) => {
+      const text = d.toString();
+      stdout += text;
+      onOutput?.(text);
+    });
+    child.stderr.on("data", (d) => {
+      stderr += d.toString();
+    });
 
     const cleanup = () => {
       if (killTimer) clearTimeout(killTimer);
@@ -591,7 +674,9 @@ function runYtDlp(binaryPath, args, abortSignal, timeoutMs) {
 
     child.on("error", (err) => {
       cleanup();
-      reject(Object.assign(new Error(err.message || "yt-dlp failed to run"), { code: "DOWNLOAD_FAILED" }));
+      reject(
+        Object.assign(new Error(err.message || "yt-dlp failed to run"), { code: "DOWNLOAD_FAILED" })
+      );
     });
 
     child.on("close", (code) => {
@@ -605,10 +690,12 @@ function runYtDlp(binaryPath, args, abortSignal, timeoutMs) {
         return;
       }
       if (code !== 0) {
-        reject(Object.assign(
-          new Error(stderr.trim() || `yt-dlp exited with code ${code}`),
-          { code: "DOWNLOAD_FAILED", stderr }
-        ));
+        reject(
+          Object.assign(new Error(stderr.trim() || `yt-dlp exited with code ${code}`), {
+            code: "DOWNLOAD_FAILED",
+            stderr,
+          })
+        );
         return;
       }
       resolve({ stdout, stderr });
@@ -633,16 +720,16 @@ function looksLikeYouTubeBlock(message) {
 }
 
 // Single self-heal retry: on stale-extractor failures, force-update and retry once.
-async function runYtDlpWithSelfHeal(binary, args, abortSignal, timeoutMs, onBeforeRetry) {
+async function runYtDlpWithSelfHeal(binary, args, abortSignal, timeoutMs, onBeforeRetry, onOutput) {
   try {
-    return await runYtDlpTracked(binary, args, abortSignal, timeoutMs);
+    return await runYtDlpTracked(binary, args, abortSignal, timeoutMs, onOutput);
   } catch (e) {
     if (e.code === "DOWNLOAD_CANCELLED") throw e;
     const text = `${e.message || ""} ${e.stderr || ""}`;
     if (!looksLikeStaleExtractor(text)) throw e;
     onBeforeRetry?.();
     await maybeUpdateYtDlp({ force: true, abortSignal });
-    return runYtDlpTracked(resolveYtDlpBinary() || binary, args, abortSignal, timeoutMs);
+    return runYtDlpTracked(resolveYtDlpBinary() || binary, args, abortSignal, timeoutMs, onOutput);
   }
 }
 
@@ -668,12 +755,23 @@ function cleanupTempArtifacts(tempBase) {
     const tempDir = getSafeTempDir();
     const prefix = path.basename(tempBase);
     for (const f of fs.readdirSync(tempDir).filter((f) => f.startsWith(prefix))) {
-      try { fs.unlinkSync(path.join(tempDir, f)); } catch {}
+      try {
+        fs.unlinkSync(path.join(tempDir, f));
+      } catch {}
     }
   } catch {}
 }
 
-const YT_DLP_AUDIO_EXTENSIONS = new Set(["m4a", "mp3", "opus", "webm", "ogg", "wav", "aac", "flac"]);
+const YT_DLP_AUDIO_EXTENSIONS = new Set([
+  "m4a",
+  "mp3",
+  "opus",
+  "webm",
+  "ogg",
+  "wav",
+  "aac",
+  "flac",
+]);
 
 // Select the finished audio file yt-dlp left for `prefix`, delete every other
 // prefix-matched file (transient scratch files included), return its absolute path.
@@ -714,7 +812,9 @@ function selectYtDlpOutput(tempDir, prefix) {
 
   for (const f of all) {
     if (f === best.name) continue;
-    try { fs.unlinkSync(path.join(tempDir, f)); } catch {}
+    try {
+      fs.unlinkSync(path.join(tempDir, f));
+    } catch {}
   }
   return path.join(tempDir, best.name);
 }
@@ -782,7 +882,9 @@ async function downloadYouTube(url, onProgress, abortSignal) {
     }
     const text = `${e.message || ""} ${e.stderr || ""}`;
     if (looksLikeYouTubeBlock(text)) {
-      const err = new Error("YouTube is temporarily blocking downloads from your network. Try again later.");
+      const err = new Error(
+        "YouTube is temporarily blocking downloads from your network. Try again later."
+      );
       err.code = "YOUTUBE_BLOCKED";
       throw err;
     }
@@ -806,7 +908,6 @@ async function downloadYouTube(url, onProgress, abortSignal) {
   const title = info.title || `youtube-${videoId}`;
   const durationSeconds = info.duration || null;
 
-  // Reject absurdly long videos before downloading.
   if (durationSeconds && durationSeconds > MAX_DURATION_SECONDS) {
     const err = new Error("Video is too long to download. Maximum length is 6 hours.");
     err.code = "FILE_TOO_LARGE";
@@ -826,13 +927,34 @@ async function downloadYouTube(url, onProgress, abortSignal) {
   const extractionArgs = [
     ...proxyArgs,
     "-x",
-    "--audio-format", "best",
-    "--max-filesize", "500M",
-    "--ffmpeg-location", ffmpegDir,
-    "-o", `${tempBase}.%(ext)s`,
+    "--audio-format",
+    "best",
+    "--max-filesize",
+    "500M",
+    "--ffmpeg-location",
+    ffmpegDir,
+    "-o",
+    `${tempBase}.%(ext)s`,
+    // Line-buffered progress ("[download]  42.3% of ...") instead of \r rewrites.
+    "--newline",
     "--no-warnings",
     sanitizedUrl,
   ];
+
+  // Cap at 99: after the download hits 100%, ffmpeg still has to extract audio.
+  let lastPercent = 0;
+  const onExtractionOutput = (text) => {
+    const matches = text.match(/\[download\]\s+(\d{1,3}(?:\.\d+)?)%/g);
+    if (!matches) return;
+    const percent = Math.min(
+      99,
+      Math.round(parseFloat(matches[matches.length - 1].match(/([\d.]+)%/)[1]))
+    );
+    if (percent > lastPercent) {
+      lastPercent = percent;
+      onProgress?.({ stage: "downloading", percent, title });
+    }
+  };
 
   try {
     // The metadata step may have self-healed the cache copy; pick up the fresh binary.
@@ -841,7 +963,8 @@ async function downloadYouTube(url, onProgress, abortSignal) {
       extractionArgs,
       abortSignal,
       YT_DLP_EXTRACTION_TIMEOUT_MS,
-      () => cleanupTempArtifacts(tempBase)
+      () => cleanupTempArtifacts(tempBase),
+      onExtractionOutput
     );
 
     // --max-filesize makes yt-dlp skip the file and exit 0 with no output.
@@ -856,7 +979,9 @@ async function downloadYouTube(url, onProgress, abortSignal) {
 
     // --max-filesize doesn't enforce for unknown-size streams; re-check after the fact.
     if (sizeBytes > MAX_DOWNLOAD_BYTES) {
-      try { fs.unlinkSync(tempPath); } catch {}
+      try {
+        fs.unlinkSync(tempPath);
+      } catch {}
       const err = new Error("File too large. Maximum download size is 500 MB.");
       err.code = "FILE_TOO_LARGE";
       throw err;
@@ -873,7 +998,9 @@ async function downloadYouTube(url, onProgress, abortSignal) {
     if (e.code === "DOWNLOAD_CANCELLED" || e.code === "PLAYLIST_URL") throw e;
     const text = `${e.message || ""} ${e.stderr || ""}`;
     if (looksLikeYouTubeBlock(text)) {
-      const err = new Error("YouTube is temporarily blocking downloads from your network. Try again later.");
+      const err = new Error(
+        "YouTube is temporarily blocking downloads from your network. Try again later."
+      );
       err.code = "YOUTUBE_BLOCKED";
       throw err;
     }
@@ -911,11 +1038,17 @@ function httpRequest(parsed, options) {
 // Stream a readable HTTP response to disk under the shared caps (size, stall,
 // abort, progress). Used by both the direct and proxy paths. `abort` tears down
 // the underlying transport. Resolves to byte size; cleans up temp file on failure.
-function streamToFile(response, tempPath, { contentLength, title, onProgress, abortSignal, abort }) {
+function streamToFile(
+  response,
+  tempPath,
+  { contentLength, title, onProgress, abortSignal, abort }
+) {
   return new Promise((resolve, reject) => {
     // An already-dispatched abort event never re-fires for a late listener.
     if (abortSignal?.aborted) {
-      try { abort(); } catch {}
+      try {
+        abort();
+      } catch {}
       reject(Object.assign(new Error("Download cancelled"), { code: "DOWNLOAD_CANCELLED" }));
       return;
     }
@@ -925,13 +1058,17 @@ function streamToFile(response, tempPath, { contentLength, title, onProgress, ab
 
     const stall = createStallChecker(() => {
       if (settled) return;
-      try { abort(); } catch {}
+      try {
+        abort();
+      } catch {}
       bail(Object.assign(new Error("Download stalled"), { code: "DOWNLOAD_FAILED" }));
     });
 
     const cleanupFile = () => {
       fileStream.destroy();
-      try { fs.unlinkSync(tempPath); } catch {}
+      try {
+        fs.unlinkSync(tempPath);
+      } catch {}
     };
 
     const bail = (err) => {
@@ -945,7 +1082,9 @@ function streamToFile(response, tempPath, { contentLength, title, onProgress, ab
 
     // React to cancel even while stalled (no data events arriving).
     const onAbort = () => {
-      try { abort(); } catch {}
+      try {
+        abort();
+      } catch {}
       bail(Object.assign(new Error("Download cancelled"), { code: "DOWNLOAD_CANCELLED" }));
     };
     if (abortSignal) abortSignal.addEventListener("abort", onAbort, { once: true });
@@ -957,8 +1096,14 @@ function streamToFile(response, tempPath, { contentLength, title, onProgress, ab
       downloaded += chunk.length;
 
       if (downloaded > MAX_DOWNLOAD_BYTES) {
-        try { abort(); } catch {}
-        bail(Object.assign(new Error("File too large. Maximum download size is 500 MB."), { code: "FILE_TOO_LARGE" }));
+        try {
+          abort();
+        } catch {}
+        bail(
+          Object.assign(new Error("File too large. Maximum download size is 500 MB."), {
+            code: "FILE_TOO_LARGE",
+          })
+        );
         return;
       }
 
@@ -988,7 +1133,9 @@ function streamToFile(response, tempPath, { contentLength, title, onProgress, ab
         resolve(sizeBytes);
       } catch {
         cleanupFile();
-        reject(Object.assign(new Error("Download produced no output"), { code: "DOWNLOAD_FAILED" }));
+        reject(
+          Object.assign(new Error("Download produced no output"), { code: "DOWNLOAD_FAILED" })
+        );
       }
     });
   });
@@ -1034,17 +1181,34 @@ async function downloadViaProxy(url, onProgress, abortSignal, redirectCount = 0)
     // ClientRequest.abort() emits 'abort'/'close' but never 'error', so an abort
     // that lands after request.end() must settle the promise itself or it hangs.
     const onAbort = () => {
-      try { request.abort(); } catch {}
+      try {
+        request.abort();
+      } catch {}
       detach();
       reject(Object.assign(new Error("Download cancelled"), { code: "DOWNLOAD_CANCELLED" }));
     };
     if (abortSignal) abortSignal.addEventListener("abort", onAbort, { once: true });
-    const detach = () => { if (abortSignal) abortSignal.removeEventListener("abort", onAbort); };
+    // Chromium's net stack has no response-header timeout; without this a proxy
+    // that accepts the connection but never answers wedges the queue forever
+    // (the direct path gets the same bound from httpRequest's socket timeout).
+    const connectTimer = setTimeout(() => {
+      try {
+        request.abort();
+      } catch {}
+      detach();
+      reject(Object.assign(new Error("Connection timed out"), { code: "DOWNLOAD_FAILED" }));
+    }, CONNECT_TIMEOUT_MS);
+    const detach = () => {
+      clearTimeout(connectTimer);
+      if (abortSignal) abortSignal.removeEventListener("abort", onAbort);
+    };
 
     request.on("redirect", (statusCode, method, redirectUrl) => {
       redirects += 1;
       if (redirects > MAX_REDIRECTS) {
-        try { request.abort(); } catch {}
+        try {
+          request.abort();
+        } catch {}
         detach();
         reject(Object.assign(new Error("Too many redirects"), { code: "DOWNLOAD_FAILED" }));
         return;
@@ -1053,21 +1217,37 @@ async function downloadViaProxy(url, onProgress, abortSignal, redirectCount = 0)
       try {
         next = new URL(redirectUrl);
       } catch {
-        try { request.abort(); } catch {}
+        try {
+          request.abort();
+        } catch {}
         detach();
         reject(Object.assign(new Error("Invalid redirect URL"), { code: "INVALID_URL" }));
         return;
       }
       if (next.protocol !== "https:") {
-        try { request.abort(); } catch {}
+        try {
+          request.abort();
+        } catch {}
         detach();
-        reject(Object.assign(new Error("Only HTTPS URLs are supported for direct downloads"), { code: "INVALID_URL" }));
+        reject(
+          Object.assign(new Error("Only HTTPS URLs are supported for direct downloads"), {
+            code: "INVALID_URL",
+          })
+        );
         return;
       }
       // Abort and restart at the redirect URL; the recursive call re-runs assertPublicHost.
-      try { request.abort(); } catch {}
+      try {
+        request.abort();
+      } catch {}
       detach();
-      reject(Object.assign(new Error("Redirected"), { code: REDIRECT_RESTART, url: next.href, redirects }));
+      reject(
+        Object.assign(new Error("Redirected"), {
+          code: REDIRECT_RESTART,
+          url: next.href,
+          redirects,
+        })
+      );
     });
 
     request.on("response", (response) => {
@@ -1075,7 +1255,9 @@ async function downloadViaProxy(url, onProgress, abortSignal, redirectCount = 0)
       const statusCode = response.statusCode;
       if (statusCode !== 200) {
         response.resume();
-        try { request.abort(); } catch {}
+        try {
+          request.abort();
+        } catch {}
         reject(Object.assign(new Error(`HTTP ${statusCode}`), { code: "DOWNLOAD_FAILED" }));
         return;
       }
@@ -1083,11 +1265,15 @@ async function downloadViaProxy(url, onProgress, abortSignal, redirectCount = 0)
       const contentType = (firstHeaderValue(response.headers, "content-type") || "").toLowerCase();
       if (!isAcceptableAudioContentType(contentType)) {
         response.resume();
-        try { request.abort(); } catch {}
-        reject(Object.assign(
-          new Error(`URL does not point to an audio file (content-type: ${contentType})`),
-          { code: "CONTENT_TYPE_INVALID" }
-        ));
+        try {
+          request.abort();
+        } catch {}
+        reject(
+          Object.assign(
+            new Error(`URL does not point to an audio file (content-type: ${contentType})`),
+            { code: "CONTENT_TYPE_INVALID" }
+          )
+        );
         return;
       }
 
@@ -1095,8 +1281,14 @@ async function downloadViaProxy(url, onProgress, abortSignal, redirectCount = 0)
       const contentLength = clHeader ? Number(clHeader) : null;
       if (contentLength && contentLength > MAX_DOWNLOAD_BYTES) {
         response.resume();
-        try { request.abort(); } catch {}
-        reject(Object.assign(new Error("File too large. Maximum download size is 500 MB."), { code: "FILE_TOO_LARGE" }));
+        try {
+          request.abort();
+        } catch {}
+        reject(
+          Object.assign(new Error("File too large. Maximum download size is 500 MB."), {
+            code: "FILE_TOO_LARGE",
+          })
+        );
         return;
       }
 
@@ -1108,7 +1300,9 @@ async function downloadViaProxy(url, onProgress, abortSignal, redirectCount = 0)
       if (abortSignal?.aborted) {
         reject(Object.assign(new Error("Download cancelled"), { code: "DOWNLOAD_CANCELLED" }));
       } else {
-        reject(Object.assign(new Error(err.message || "Download failed"), { code: "DOWNLOAD_FAILED" }));
+        reject(
+          Object.assign(new Error(err.message || "Download failed"), { code: "DOWNLOAD_FAILED" })
+        );
       }
     });
 
@@ -1119,7 +1313,12 @@ async function downloadViaProxy(url, onProgress, abortSignal, redirectCount = 0)
   });
 
   if (settledResponse && settledResponse.code === REDIRECT_RESTART) {
-    return downloadViaProxy(settledResponse.url, onProgress, abortSignal, settledResponse.redirects);
+    return downloadViaProxy(
+      settledResponse.url,
+      onProgress,
+      abortSignal,
+      settledResponse.redirects
+    );
   }
 
   const { response, contentLength, request } = settledResponse;
@@ -1134,7 +1333,11 @@ async function downloadViaProxy(url, onProgress, abortSignal, redirectCount = 0)
     title,
     onProgress,
     abortSignal,
-    abort: () => { try { request.abort(); } catch {} },
+    abort: () => {
+      try {
+        request.abort();
+      } catch {}
+    },
   });
 
   onProgress?.({ stage: "ready", percent: 100, title });
@@ -1180,7 +1383,11 @@ async function downloadDirect(url, onProgress, abortSignal, redirectCount = 0) {
         signal: abortSignal,
       });
       headResponse.resume();
-      if (headResponse.statusCode >= 300 && headResponse.statusCode < 400 && headResponse.headers.location) {
+      if (
+        headResponse.statusCode >= 300 &&
+        headResponse.statusCode < 400 &&
+        headResponse.headers.location
+      ) {
         // Cumulative redirect bound across alternating GET+HEAD hops.
         if (redirectCount + ++headRedirects > MAX_REDIRECTS) {
           const err = new Error("Too many redirects");
@@ -1288,7 +1495,11 @@ async function downloadDirect(url, onProgress, abortSignal, redirectCount = 0) {
     title,
     onProgress,
     abortSignal,
-    abort: () => { try { response.destroy(); } catch {} },
+    abort: () => {
+      try {
+        response.destroy();
+      } catch {}
+    },
   });
 
   onProgress?.({ stage: "ready", percent: 100, title });
@@ -1315,13 +1526,14 @@ module.exports = {
   isPrivateIp,
   isAcceptableAudioContentType,
   ssrfSafeLookup,
-  resolveYtDlpPath,
   maybeUpdateYtDlp,
   downloadViaProxy,
   // Test-only seam: lets the regression test confirm the single-flight flag is cleared.
   _isYtDlpUpdateInFlight: () => ytDlpUpdateInFlight,
   // Test-only seam: injects a fake electron net for downloadViaProxy tests.
-  _setElectronNetForTests: (net) => { electronNetOverride = net; },
+  _setElectronNetForTests: (net) => {
+    electronNetOverride = net;
+  },
   // Test-only seam: exposes yt-dlp output selection to the regression tests.
   _selectYtDlpOutput: selectYtDlpOutput,
   // Test-only seams: cache checksum verification and block-detection heuristics.

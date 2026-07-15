@@ -3,12 +3,7 @@ import { transcribeFileWithSpeakers } from "../services/fileTranscription";
 import type { FileTranscriptionConfig, DiarizationSettings } from "../services/fileTranscription";
 import { DOWNLOAD_ERROR_KEYS } from "../components/notes/shared";
 
-export type QueueItemStatus =
-  | "queued"
-  | "downloading"
-  | "transcribing"
-  | "done"
-  | "error";
+export type QueueItemStatus = "queued" | "downloading" | "transcribing" | "done" | "error";
 
 export interface QueueItem {
   id: string;
@@ -20,6 +15,8 @@ export interface QueueItem {
   status: QueueItemStatus;
   progress: number;
   error?: string;
+  // Transcription completed but parts of the audio failed (e.g. failed chunks).
+  warning?: boolean;
   noteId?: number;
   tempPath?: string;
 }
@@ -43,13 +40,10 @@ export function useBatchQueue() {
   // instant an item finishes are never missed.
   const queueRef = useRef<QueueItem[]>([]);
 
-  const applyQueue = useCallback(
-    (updater: (prev: QueueItem[]) => QueueItem[]) => {
-      queueRef.current = updater(queueRef.current);
-      setQueue(queueRef.current);
-    },
-    []
-  );
+  const applyQueue = useCallback((updater: (prev: QueueItem[]) => QueueItem[]) => {
+    queueRef.current = updater(queueRef.current);
+    setQueue(queueRef.current);
+  }, []);
 
   const addFiles = useCallback(
     (files: Array<{ name: string; path: string; sizeBytes: number }>) => {
@@ -95,9 +89,7 @@ export function useBatchQueue() {
 
   const updateItem = useCallback(
     (id: string, updates: Partial<QueueItem>) => {
-      applyQueue((prev) =>
-        prev.map((item) => (item.id === id ? { ...item, ...updates } : item))
-      );
+      applyQueue((prev) => prev.map((item) => (item.id === id ? { ...item, ...updates } : item)));
     },
     [applyQueue]
   );
@@ -151,14 +143,13 @@ export function useBatchQueue() {
           if (item.source === "url" && item.url) {
             updateItem(item.id, { status: "downloading", progress: 0 });
 
-            const cleanupProgress =
-              window.electronAPI.onUrlDownloadProgress?.((data) => {
-                if (data.downloadId && data.downloadId !== item.id) return;
-                updateItem(item.id, {
-                  progress: data.percent,
-                  name: data.title || item.name,
-                });
+            const cleanupProgress = window.electronAPI.onUrlDownloadProgress?.((data) => {
+              if (data.downloadId && data.downloadId !== item.id) return;
+              updateItem(item.id, {
+                progress: data.percent,
+                name: data.title || item.name,
               });
+            });
 
             try {
               const res = await window.electronAPI.downloadUrlAudio(item.url, item.id);
@@ -253,6 +244,7 @@ export function useBatchQueue() {
             updateItem(item.id, {
               status: "done",
               progress: 100,
+              warning: !!transcriptionResult.warning,
               noteId: noteRes.note.id,
             });
           } else {
