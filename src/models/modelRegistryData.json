@@ -35,6 +35,7 @@
       ],
       "downloadUrl": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
       "extractDir": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
+      "recommended": true,
       "descriptionKey": "models.descriptions.parakeet.parakeet_tdt_0_6b_v3"
     },
     "parakeet-unified-en-0.6b": {

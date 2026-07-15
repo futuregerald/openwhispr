@@ -22,7 +22,7 @@ npm run dev                  # first run downloads whisper/sherpa/model binaries
 ```
 
 That's it. First run walks a **local-only onboarding — no account or signup**. Transcription
-defaults to on-device Whisper (`turbo` model, downloaded on first use); grant the mic/accessibility
+defaults to on-device **NVIDIA Parakeet TDT 0.6B** (downloaded on first use; switch to Whisper in Settings for noisy audio / non-European languages); grant the mic/accessibility
 permissions it asks for and start a meeting. Speaker diarization runs automatically after the
 meeting; you can rename/lock speakers in the transcript, and named speakers persist across meetings.
 (You can still switch models or enable a cloud provider later in Settings.)
@@ -101,7 +101,7 @@ OpenWhispr accounts/cloud, set `VITE_AUTH_URL` / the API URL back to the hosted 
 | | Upstream OpenWhispr | This fork |
 |---|---|---|
 | First-run onboarding | Account / signup + use-case survey | **Local-only, no signup, no survey** |
-| Default transcription | Cloud (account) | **On-device Whisper `turbo`** |
+| Default transcription | Cloud (account) | **On-device NVIDIA Parakeet TDT** (Whisper optional) |
 | Telemetry / phone-home | Auth ping + update check + fonts fetch | **Disabled by default** |
 | Local transcription (whisper.cpp) | ✅ | ✅ |
 | N-speaker diarization (sherpa-onnx) | ✅ | ✅ |

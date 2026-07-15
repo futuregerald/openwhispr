@@ -871,13 +871,17 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   uiLanguage: normalizeUiLanguage(isBrowser ? localStorage.getItem("uiLanguage") : null),
   // Fork default: fully local out of the box (no account/cloud required).
   useLocalWhisper: readBoolean("useLocalWhisper", true),
-  // Fork default: large-v3-turbo — best accuracy that's still fast on Apple
-  // Silicon. Users can switch to small/base in onboarding or Settings.
+  // Whisper model used when the local engine is switched to Whisper; turbo
+  // (large-v3-turbo) is the best accuracy/speed Whisper option.
   whisperModel: readString("whisperModel", "turbo"),
-  localTranscriptionProvider: (readString("localTranscriptionProvider", "whisper") === "nvidia"
+  // Fork default engine: NVIDIA Parakeet TDT 0.6B v3 — faster, smaller (680MB),
+  // and higher English/European accuracy than Whisper on Apple Silicon. Users
+  // can switch to Whisper (better for noisy audio / non-European languages) in
+  // onboarding or Settings.
+  localTranscriptionProvider: (readString("localTranscriptionProvider", "nvidia") === "nvidia"
     ? "nvidia"
     : "whisper") as LocalTranscriptionProvider,
-  parakeetModel: readString("parakeetModel", ""),
+  parakeetModel: readString("parakeetModel", "parakeet-tdt-0.6b-v3"),
   allowOpenAIFallback: readBoolean("allowOpenAIFallback", false),
   allowLocalFallback: readBoolean("allowLocalFallback", false),
   fallbackWhisperModel: readString("fallbackWhisperModel", "base"),
