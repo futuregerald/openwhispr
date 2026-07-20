@@ -987,7 +987,8 @@ class IPCHandlers {
 
     ipcMain.handle("delete-note-audio", async (_event, noteId) => {
       const note = this.databaseManager.getNote(noteId);
-      for (const p of [note?.mic_audio_path, note?.system_audio_path]) {
+      if (!note) return { success: false, error: "Note not found" };
+      for (const p of [note.mic_audio_path, note.system_audio_path]) {
         if (p && fs.existsSync(p)) {
           try { fs.unlinkSync(p); } catch (_) {}
         }
@@ -1023,10 +1024,10 @@ class IPCHandlers {
         // Re-run diarization if system audio available
         let finalTranscript = rawText;
         const systemPath = note.system_audio_path;
-        if (systemPath && fs.existsSync(systemPath) && this.diarizationManager) {
+        if (systemPath && fs.existsSync(systemPath) && this.diarizationManager?.isAvailable()) {
           try {
             const { convertToWav } = require("./ffmpegUtils");
-            const tmpWav = systemPath.replace(/\.opus$/, `-retranscribe-${Date.now()}.wav`);
+            const tmpWav = path.join(os.tmpdir(), `ow-retranscribe-${noteId}-${Date.now()}.wav`);
             await convertToWav(systemPath, tmpWav, { sampleRate: 16000, channels: 1 });
 
             const diarResult = await this.diarizationManager.diarize(tmpWav, {});
@@ -1066,7 +1067,7 @@ class IPCHandlers {
     ipcMain.handle("check-whisper-model-downloaded", async (_event, modelName) => {
       try {
         const modelPath = this.whisperManager.getModelPath(modelName);
-        return { downloaded: fs.existsSync(modelPath), modelPath };
+        return { downloaded: fs.existsSync(modelPath) };
       } catch {
         return { downloaded: false };
       }
@@ -6314,7 +6315,6 @@ class IPCHandlers {
         }
 
         if (!meetingDiarizationStream) {
-          const os = require("os");
           meetingDiarizationPath = path.join(os.tmpdir(), `ow-diarize-raw-${Date.now()}.pcm`);
           meetingDiarizationStream = fs.createWriteStream(meetingDiarizationPath);
           meetingDiarizationStartedAt = receivedAt;
@@ -6323,15 +6323,17 @@ class IPCHandlers {
 
         // Diagnostic: measure system audio level (sample every 100 chunks)
         if (meetingSendCounts.system % 100 === 0 && meetingSendCounts.system > 0) {
-          const samples = new Int16Array(outboundBuffer.buffer, outboundBuffer.byteOffset, outboundBuffer.length >> 1);
-          let sumSq = 0;
-          for (let i = 0; i < samples.length; i++) {
-            const n = samples[i] / 0x7fff;
-            sumSq += n * n;
-          }
-          const rms = Math.sqrt(sumSq / samples.length);
-          const dbfs = rms > 0 ? 20 * Math.log10(rms) : -Infinity;
-          debugLogger.debug("System audio level", { dbfs: dbfs.toFixed(1), chunks: meetingSendCounts.system }, "meeting-gain");
+          try {
+            const samples = new Int16Array(outboundBuffer.buffer, outboundBuffer.byteOffset, outboundBuffer.length >> 1);
+            let sumSq = 0;
+            for (let i = 0; i < samples.length; i++) {
+              const n = samples[i] / 0x7fff;
+              sumSq += n * n;
+            }
+            const rms = Math.sqrt(sumSq / samples.length);
+            const dbfs = rms > 0 ? 20 * Math.log10(rms) : -Infinity;
+            debugLogger.debug("System audio level", { dbfs: dbfs.toFixed(1), chunks: meetingSendCounts.system }, "meeting-gain");
+          } catch (_) {}
         }
 
         dispatchMeetingAudioBuffer(outboundBuffer, "system");
@@ -6341,7 +6343,6 @@ class IPCHandlers {
       if (source === "mic") {
         // Accumulate raw mic PCM for audio retention
         if (!meetingMicPcmStream) {
-          const os = require("os");
           meetingMicPcmPath = path.join(os.tmpdir(), `ow-mic-raw-${Date.now()}.pcm`);
           meetingMicPcmStream = fs.createWriteStream(meetingMicPcmPath);
         }
@@ -6520,27 +6521,7 @@ class IPCHandlers {
           this.activeMeetingSpeakerConfig = null;
           resetMeetingLocalState();
 
-          // --- Audio retention: copy system PCM before diarization deletes it ---
-          const saveAudio = options?.saveAudio !== false;
-          let systemPcmCopy = null;
-          if (saveAudio && diarizationPcmPath && noteIdSnapshot) {
-            const copyPath = diarizationPcmPath + `.save-${Date.now()}.pcm`;
-            try {
-              fs.copyFileSync(diarizationPcmPath, copyPath);
-              systemPcmCopy = copyPath;
-            } catch (err) {
-              debugLogger.warn("Could not copy system PCM for audio save", { error: err.message }, "meeting");
-            }
-          }
-
-          // Fire-and-forget audio retention (non-blocking, parallel with diarization)
-          if (saveAudio && noteIdSnapshot) {
-            this._saveMeetingAudio(noteIdSnapshot, micPcmPath, systemPcmCopy)
-              .catch(err => debugLogger.warn("Meeting audio save failed", { error: err.message }, "meeting"));
-          } else {
-            if (micPcmPath) { try { fs.unlinkSync(micPcmPath); } catch (_) {} }
-            if (systemPcmCopy) { try { fs.unlinkSync(systemPcmCopy); } catch (_) {} }
-          }
+          this._handleAudioRetention(options, diarizationPcmPath, noteIdSnapshot, micPcmPath);
 
           // Fire-and-forget background diarization (or notify skip)
           this._startOrSkipDiarization(
@@ -6568,27 +6549,7 @@ class IPCHandlers {
         const noteIdSnapshot = meetingNoteId;
         this.activeMeetingSpeakerConfig = null;
 
-        // --- Audio retention: copy system PCM before diarization deletes it ---
-        const saveAudio = options?.saveAudio !== false;
-        let systemPcmCopy = null;
-        if (saveAudio && diarizationPcmPath && noteIdSnapshot) {
-          const copyPath = diarizationPcmPath + `.save-${Date.now()}.pcm`;
-          try {
-            fs.copyFileSync(diarizationPcmPath, copyPath);
-            systemPcmCopy = copyPath;
-          } catch (err) {
-            debugLogger.warn("Could not copy system PCM for audio save", { error: err.message }, "meeting");
-          }
-        }
-
-        // Fire-and-forget audio retention (non-blocking, parallel with diarization)
-        if (saveAudio && noteIdSnapshot) {
-          this._saveMeetingAudio(noteIdSnapshot, micPcmPath, systemPcmCopy)
-            .catch(err => debugLogger.warn("Meeting audio save failed", { error: err.message }, "meeting"));
-        } else {
-          if (micPcmPath) { try { fs.unlinkSync(micPcmPath); } catch (_) {} }
-          if (systemPcmCopy) { try { fs.unlinkSync(systemPcmCopy); } catch (_) {} }
-        }
+        this._handleAudioRetention(options, diarizationPcmPath, noteIdSnapshot, micPcmPath);
 
         // Fire-and-forget background diarization (or notify skip)
         this._startOrSkipDiarization(
@@ -9253,6 +9214,28 @@ class IPCHandlers {
    * Encode PCM tracks to Opus and store in userData/audio/.
    * Returns { micPath, systemPath } or null if nothing to save.
    */
+  _handleAudioRetention(options, diarizationPcmPath, noteIdSnapshot, micPcmPath) {
+    const saveAudio = options?.saveAudio !== false;
+    let systemPcmCopy = null;
+    if (saveAudio && diarizationPcmPath && noteIdSnapshot) {
+      const copyPath = diarizationPcmPath + `.save-${Date.now()}.pcm`;
+      try {
+        fs.copyFileSync(diarizationPcmPath, copyPath);
+        systemPcmCopy = copyPath;
+      } catch (err) {
+        debugLogger.warn("Could not copy system PCM for audio save", { error: err.message }, "meeting");
+      }
+    }
+
+    if (saveAudio && noteIdSnapshot) {
+      this._saveMeetingAudio(noteIdSnapshot, micPcmPath, systemPcmCopy)
+        .catch(err => debugLogger.warn("Meeting audio save failed", { error: err.message }, "meeting"));
+    } else {
+      if (micPcmPath) { try { fs.unlinkSync(micPcmPath); } catch (_) {} }
+      if (systemPcmCopy) { try { fs.unlinkSync(systemPcmCopy); } catch (_) {} }
+    }
+  }
+
   async _saveMeetingAudio(noteId, micPcmPath, systemPcmPath) {
     const { encodePcmToOpus } = require("./ffmpegUtils");
     const fs = require("fs");

@@ -559,7 +559,7 @@ declare global {
       getNoteAudioPaths?: (noteId: number) => Promise<{ micPath: string | null; systemPath: string | null }>;
       deleteNoteAudio?: (noteId: number) => Promise<{ success: boolean }>;
       retranscribeMeetingNote?: (noteId: number, options?: { model?: string; language?: string }) => Promise<{ success: boolean; error?: string; noteId?: number }>;
-      checkWhisperModelDownloaded?: (model: string) => Promise<{ downloaded: boolean; modelPath?: string }>;
+      checkWhisperModelDownloaded?: (model: string) => Promise<{ downloaded: boolean }>;
       retryTranscription: (
         id: number,
         settings?: {

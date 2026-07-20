@@ -102,8 +102,11 @@ class AudioStorageManager {
   cleanupExpiredAudio(retentionDays, databaseManager) {
     try {
       const cutoffMs = Date.now() - retentionDays * 86400000;
-      const files = fs.readdirSync(this.audioDir).filter((f) => f.endsWith(".webm"));
-      const expiredIds = [];
+      const files = fs.readdirSync(this.audioDir).filter(
+        (f) => f.endsWith(".webm") || f.endsWith(".opus")
+      );
+      const expiredTranscriptionIds = [];
+      const expiredNoteIds = new Set();
       let kept = 0;
 
       for (const file of files) {
@@ -112,11 +115,17 @@ class AudioStorageManager {
           const stats = fs.statSync(filePath);
           if (stats.mtimeMs < cutoffMs) {
             fs.unlinkSync(filePath);
-            // Extract ID from "OpenWhispr-...-{id}.webm" or legacy "{id}.webm"
-            const basename = path.basename(file, ".webm");
-            const lastDash = basename.lastIndexOf("-");
-            const id = lastDash !== -1 ? basename.slice(lastDash + 1) : basename;
-            expiredIds.push(id);
+            if (file.endsWith(".webm")) {
+              // Extract ID from "OpenWhispr-...-{id}.webm" or legacy "{id}.webm"
+              const basename = path.basename(file, ".webm");
+              const lastDash = basename.lastIndexOf("-");
+              const id = lastDash !== -1 ? basename.slice(lastDash + 1) : basename;
+              expiredTranscriptionIds.push(id);
+            } else if (file.endsWith(".opus")) {
+              // Extract noteId from "OpenWhispr-meeting-{noteId}-{stamp}-{track}.opus"
+              const match = file.match(/^OpenWhispr-meeting-(\d+)-/);
+              if (match) expiredNoteIds.add(Number(match[1]));
+            }
           } else {
             kept++;
           }
@@ -129,8 +138,13 @@ class AudioStorageManager {
         }
       }
 
-      if (expiredIds.length > 0 && databaseManager) {
-        databaseManager.clearAudioFlags(expiredIds);
+      if (expiredTranscriptionIds.length > 0 && databaseManager) {
+        databaseManager.clearAudioFlags(expiredTranscriptionIds);
+      }
+      for (const noteId of expiredNoteIds) {
+        try {
+          databaseManager?.updateNote(noteId, { mic_audio_path: null, system_audio_path: null });
+        } catch (_) {}
       }
 
       debugLogger.info(
@@ -147,7 +161,9 @@ class AudioStorageManager {
 
   deleteAllAudio() {
     try {
-      const files = fs.readdirSync(this.audioDir).filter((f) => f.endsWith(".webm"));
+      const files = fs.readdirSync(this.audioDir).filter(
+        (f) => f.endsWith(".webm") || f.endsWith(".opus")
+      );
       for (const file of files) {
         try {
           fs.unlinkSync(path.join(this.audioDir, file));
@@ -169,7 +185,9 @@ class AudioStorageManager {
 
   getStorageUsage() {
     try {
-      const files = fs.readdirSync(this.audioDir).filter((f) => f.endsWith(".webm"));
+      const files = fs.readdirSync(this.audioDir).filter(
+        (f) => f.endsWith(".webm") || f.endsWith(".opus")
+      );
       let totalBytes = 0;
       for (const file of files) {
         try {
