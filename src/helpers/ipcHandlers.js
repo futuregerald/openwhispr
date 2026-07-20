@@ -6384,7 +6384,7 @@ class IPCHandlers {
       sendMeetingAudio(audioBuffer, source);
     });
 
-    ipcMain.handle("meeting-transcription-stop", async () => {
+    ipcMain.handle("meeting-transcription-stop", async (_event, options = {}) => {
       this.meetingDetectionEngine?.setUserRecording(false);
       try {
         if (this.audioTapManager) {

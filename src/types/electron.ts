@@ -1717,7 +1717,7 @@ declare global {
         oneOnOneAttendee?: { displayName: string; email: string | null } | null;
       }>;
       meetingTranscriptionSend?: (buffer: ArrayBuffer, source: "mic" | "system") => void;
-      meetingTranscriptionStop?: () => Promise<{
+      meetingTranscriptionStop?: (options?: { saveAudio?: boolean }) => Promise<{
         success: boolean;
         transcript?: string;
         diarizationSessionId?: string;
