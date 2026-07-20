@@ -147,12 +147,13 @@ class AudioStorageManager {
         } catch (_) {}
       }
 
+      const totalDeleted = expiredTranscriptionIds.length + expiredNoteIds.size;
       debugLogger.info(
         "Audio cleanup complete",
-        { deleted: expiredIds.length, kept, retentionDays },
+        { deleted: totalDeleted, kept, retentionDays },
         "audio-storage"
       );
-      return { deleted: expiredIds.length, kept };
+      return { deleted: totalDeleted, kept };
     } catch (error) {
       debugLogger.error("Audio cleanup failed", { error: error.message }, "audio-storage");
       return { deleted: 0, kept: 0 };
