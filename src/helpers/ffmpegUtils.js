@@ -328,6 +328,56 @@ function clearCache() {
   cachedFFmpegPath = null;
 }
 
+/**
+ * Encode a raw PCM file (16-bit signed LE, mono) to Opus.
+ * @param {string} inputPath  - raw PCM path
+ * @param {string} outputPath - .opus output path
+ * @param {object} [opts]
+ * @param {number} [opts.sampleRate=24000]
+ * @param {number} [opts.bitrate=32] kbps
+ * @param {boolean} [opts.loudnorm=false] apply loudnorm filter
+ * @returns {Promise<void>}
+ */
+function encodePcmToOpus(inputPath, outputPath, opts = {}) {
+  const { sampleRate = 24000, bitrate = 32, loudnorm = false } = opts;
+  return new Promise((resolve, reject) => {
+    const ffmpegPath = getFFmpegPath();
+    if (!ffmpegPath) {
+      reject(new Error("FFmpeg not found — cannot encode Opus audio"));
+      return;
+    }
+    const audioFilter = loudnorm ? ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"] : [];
+    const args = [
+      "-f", "s16le",
+      "-ar", String(sampleRate),
+      "-ac", "1",
+      "-i", inputPath,
+      ...audioFilter,
+      "-c:a", "libopus",
+      "-b:a", `${bitrate}k`,
+      "-application", "voip",
+      "-y",
+      outputPath,
+    ];
+    const proc = spawn(ffmpegPath, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    let stderr = "";
+    proc.stderr.on("data", (d) => { stderr += d; });
+    proc.on("error", (e) => reject(new Error(`FFmpeg Opus error: ${e.message}`)));
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`FFmpeg Opus exited ${code}: ${stderr.slice(-300)}`));
+        return;
+      }
+      if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
+        reject(new Error("FFmpeg Opus produced no output"));
+        return;
+      }
+      debugLogger.debug("Opus encode complete", { output: outputPath, bitrate });
+      resolve();
+    });
+  });
+}
+
 module.exports = {
   getFFmpegPath,
   isWavFormat,
@@ -336,4 +386,5 @@ module.exports = {
   wavToFloat32Samples,
   computeFloat32RMS,
   clearCache,
+  encodePcmToOpus,
 };
