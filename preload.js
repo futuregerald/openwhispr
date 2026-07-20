@@ -69,6 +69,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   deleteTranscriptionAudio: (id) => ipcRenderer.invoke("delete-transcription-audio", id),
   getAudioStorageUsage: () => ipcRenderer.invoke("get-audio-storage-usage"),
   deleteAllAudio: () => ipcRenderer.invoke("delete-all-audio"),
+  getNoteAudioPaths: (noteId) => ipcRenderer.invoke("get-note-audio-paths", noteId),
+  deleteNoteAudio: (noteId) => ipcRenderer.invoke("delete-note-audio", noteId),
+  retranscribeMeetingNote: (noteId, options) => ipcRenderer.invoke("retranscribe-meeting-note", noteId, options),
+  checkWhisperModelDownloaded: (model) => ipcRenderer.invoke("check-whisper-model-downloaded", model),
   retryTranscription: (id, settings) => ipcRenderer.invoke("retry-transcription", id, settings),
   updateTranscriptionText: (id, text, rawText) =>
     ipcRenderer.invoke("update-transcription-text", id, text, rawText),
@@ -632,7 +636,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("meeting-transcription-start", options),
   meetingTranscriptionSend: (buffer, source) =>
     ipcRenderer.send("meeting-transcription-send", buffer, source),
-  meetingTranscriptionStop: () => ipcRenderer.invoke("meeting-transcription-stop"),
+  meetingTranscriptionStop: (options) => ipcRenderer.invoke("meeting-transcription-stop", options),
   meetingTranscriptionCancel: () => ipcRenderer.invoke("meeting-transcription-cancel"),
   onMeetingTranscriptionSegment: registerListener(
     "meeting-transcription-segment",

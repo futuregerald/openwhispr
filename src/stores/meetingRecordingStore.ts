@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { getSettings, selectResolvedMeetingTranscription } from "./settingsStore";
+import { getSettings, selectResolvedMeetingTranscription, useSettingsStore } from "./settingsStore";
 import { useStreamingProvidersStore } from "./streamingProvidersStore";
 import { isBuiltInMicrophone } from "../utils/audioDeviceUtils";
 import { reconcileSavedMicSelection } from "../helpers/micSelectionRecovery";
@@ -881,7 +881,9 @@ export async function startRecording(args: StartRecordingArgs): Promise<void> {
         isRecording: false,
         isTranscribing: false,
       });
-      await window.electronAPI?.meetingTranscriptionStop?.();
+      await window.electronAPI?.meetingTranscriptionStop?.({
+        saveAudio: useSettingsStore.getState().dataRetentionEnabled,
+      });
       isRecordingFlag = false;
       isStartingFlag = false;
       return;
@@ -1215,7 +1217,9 @@ export async function stopRecording(): Promise<StopRecordingResult> {
 
   let diarizationSessionId: string | null = null;
   try {
-    const result = await window.electronAPI?.meetingTranscriptionStop?.();
+    const result = await window.electronAPI?.meetingTranscriptionStop?.({
+      saveAudio: useSettingsStore.getState().dataRetentionEnabled,
+    });
     if (result?.diarizationSessionId) {
       diarizationSessionId = result.diarizationSessionId;
       useMeetingRecordingStore.setState({ diarizationSessionId });

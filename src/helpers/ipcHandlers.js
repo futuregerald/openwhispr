@@ -977,6 +977,102 @@ class IPCHandlers {
       return { success: true };
     });
 
+    ipcMain.handle("get-note-audio-paths", async (_event, noteId) => {
+      const note = this.databaseManager.getNote(noteId);
+      return {
+        micPath: note?.mic_audio_path || null,
+        systemPath: note?.system_audio_path || null,
+      };
+    });
+
+    ipcMain.handle("delete-note-audio", async (_event, noteId) => {
+      const note = this.databaseManager.getNote(noteId);
+      if (!note) return { success: false, error: "Note not found" };
+      for (const p of [note.mic_audio_path, note.system_audio_path]) {
+        if (p && fs.existsSync(p)) {
+          try { fs.unlinkSync(p); } catch (_) {}
+        }
+      }
+      this.databaseManager.updateNote(noteId, { mic_audio_path: null, system_audio_path: null });
+      return { success: true };
+    });
+
+    ipcMain.handle("retranscribe-meeting-note", async (event, noteId, options = {}) => {
+      const { BrowserWindow } = require("electron");
+      const note = this.databaseManager.getNote(noteId);
+      if (!note) return { success: false, error: "Note not found" };
+
+      const audioPath = note.system_audio_path || note.mic_audio_path;
+      if (!audioPath || !fs.existsSync(audioPath)) {
+        return { success: false, error: "No saved audio found for this note" };
+      }
+
+      try {
+        const audioBuffer = fs.readFileSync(audioPath);
+        const model = options.model || "large";
+
+        const transcriptionResult = await this.whisperManager.transcribeLocalWhisper(audioBuffer, {
+          model,
+          language: options.language || null,
+        });
+
+        const rawText = transcriptionResult?.text || "";
+        if (!rawText.trim()) {
+          return { success: false, error: "Re-transcription produced empty output" };
+        }
+
+        // Re-run diarization if system audio available
+        let finalTranscript = rawText;
+        const systemPath = note.system_audio_path;
+        if (systemPath && fs.existsSync(systemPath) && this.diarizationManager?.isAvailable()) {
+          try {
+            const { convertToWav } = require("./ffmpegUtils");
+            const tmpWav = path.join(os.tmpdir(), `ow-retranscribe-${noteId}-${Date.now()}.wav`);
+            await convertToWav(systemPath, tmpWav, { sampleRate: 16000, channels: 1 });
+
+            const diarResult = await this.diarizationManager.diarize(tmpWav, {});
+            if (diarResult?.segments?.length) {
+              const whisperSegments = (transcriptionResult.segments || []).map((seg, i) => ({
+                id: `retranscribe-${i}`,
+                text: seg.text,
+                source: "system",
+                timestamp: (seg.start || 0) * 1000,
+              }));
+              const enriched = this.diarizationManager.mergeWithTranscript(whisperSegments, diarResult.segments);
+              if (enriched?.length) {
+                finalTranscript = JSON.stringify(enriched);
+              }
+            }
+            try { fs.unlinkSync(tmpWav); } catch (_) {}
+          } catch (diarErr) {
+            debugLogger.warn("Re-transcription diarization failed, using raw text", { error: diarErr.message }, "meeting");
+          }
+        }
+
+        this.databaseManager.updateNote(noteId, { transcript: finalTranscript });
+        const updatedNote = this.databaseManager.getNote(noteId);
+
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win && !win.isDestroyed()) {
+          win.webContents.send("note-updated", updatedNote);
+        }
+
+        return { success: true, noteId };
+      } catch (err) {
+        debugLogger.error("Re-transcription failed", { error: err.message, noteId }, "meeting");
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle("check-whisper-model-downloaded", async (_event, modelName) => {
+      try {
+        const modelPath = this.whisperManager.getModelPath(modelName);
+        return { downloaded: fs.existsSync(modelPath) };
+      } catch {
+        return { downloaded: false };
+      }
+    });
+
     ipcMain.handle("get-audio-buffer", async (event, id) => {
       const buffer = this.audioStorageManager.getAudioBuffer(id);
       return buffer ? buffer.buffer : null;
@@ -4685,14 +4781,20 @@ class IPCHandlers {
       const diarizationPcmPath = meetingDiarizationPath;
       const diarizationSegments = meetingDiarizationSegments;
       const diarizationStartedAt = meetingDiarizationStartedAt;
+      const micPcmPath = meetingMicPcmPath;
+      meetingMicPcmPath = null; // Clear so resetMeetingLocalState doesn't double-unlink
       if (meetingDiarizationStream) {
         await new Promise((resolve) => meetingDiarizationStream.end(resolve));
         meetingDiarizationStream = null;
       }
+      if (meetingMicPcmStream) {
+        await new Promise((resolve) => meetingMicPcmStream.end(resolve));
+        meetingMicPcmStream = null;
+      }
       meetingDiarizationPath = null;
       meetingDiarizationStartedAt = null;
       meetingDiarizationSegments = [];
-      return { diarizationPcmPath, diarizationSegments, diarizationStartedAt };
+      return { diarizationPcmPath, diarizationSegments, diarizationStartedAt, micPcmPath };
     };
 
     const attachMeetingStreamingHandlers = (streaming, win, source) => {
@@ -5159,6 +5261,8 @@ class IPCHandlers {
     let meetingDiarizationPath = null;
     let meetingDiarizationStartedAt = null;
     let meetingDiarizationSegments = [];
+    let meetingMicPcmStream = null;
+    let meetingMicPcmPath = null;
     let meetingLiveSpeakerActive = false;
     let meetingLiveSpeakerState = null;
     let meetingLiveSpeakerStartedAt = null;
@@ -5748,6 +5852,14 @@ class IPCHandlers {
         fs.unlink(meetingDiarizationPath, () => {});
         meetingDiarizationPath = null;
       }
+      if (meetingMicPcmStream) {
+        meetingMicPcmStream.end();
+        meetingMicPcmStream = null;
+      }
+      if (meetingMicPcmPath) {
+        fs.unlink(meetingMicPcmPath, () => {});
+        meetingMicPcmPath = null;
+      }
       meetingDiarizationStartedAt = null;
       meetingDiarizationSegments = [];
       meetingLocalWin = null;
@@ -6203,17 +6315,39 @@ class IPCHandlers {
         }
 
         if (!meetingDiarizationStream) {
-          const os = require("os");
           meetingDiarizationPath = path.join(os.tmpdir(), `ow-diarize-raw-${Date.now()}.pcm`);
           meetingDiarizationStream = fs.createWriteStream(meetingDiarizationPath);
           meetingDiarizationStartedAt = receivedAt;
         }
         meetingDiarizationStream.write(outboundBuffer);
+
+        // Diagnostic: measure system audio level (sample every 100 chunks)
+        if (meetingSendCounts.system % 100 === 0 && meetingSendCounts.system > 0) {
+          try {
+            const samples = new Int16Array(outboundBuffer.buffer, outboundBuffer.byteOffset, outboundBuffer.length >> 1);
+            let sumSq = 0;
+            for (let i = 0; i < samples.length; i++) {
+              const n = samples[i] / 0x7fff;
+              sumSq += n * n;
+            }
+            const rms = Math.sqrt(sumSq / samples.length);
+            const dbfs = rms > 0 ? 20 * Math.log10(rms) : -Infinity;
+            debugLogger.debug("System audio level", { dbfs: dbfs.toFixed(1), chunks: meetingSendCounts.system }, "meeting-gain");
+          } catch (_) {}
+        }
+
         dispatchMeetingAudioBuffer(outboundBuffer, "system");
         return;
       }
 
       if (source === "mic") {
+        // Accumulate raw mic PCM for audio retention
+        if (!meetingMicPcmStream) {
+          meetingMicPcmPath = path.join(os.tmpdir(), `ow-mic-raw-${Date.now()}.pcm`);
+          meetingMicPcmStream = fs.createWriteStream(meetingMicPcmPath);
+        }
+        meetingMicPcmStream.write(outboundBuffer);
+
         if (processMeetingMicWithAec(outboundBuffer)) {
           return;
         }
@@ -6346,7 +6480,7 @@ class IPCHandlers {
       sendMeetingAudio(audioBuffer, source);
     });
 
-    ipcMain.handle("meeting-transcription-stop", async () => {
+    ipcMain.handle("meeting-transcription-stop", async (_event, options = {}) => {
       this.meetingDetectionEngine?.setUserRecording(false);
       try {
         if (this.audioTapManager) {
@@ -6378,7 +6512,7 @@ class IPCHandlers {
             debugLogger.error("Local meeting final transcription failed", { error: err.message });
           }
           flushPendingMicFinals(true);
-          const { diarizationPcmPath, diarizationSegments, diarizationStartedAt } =
+          const { diarizationPcmPath, diarizationSegments, diarizationStartedAt, micPcmPath } =
             await captureMeetingDiarizationState();
           const transcript =
             buildOrderedTranscriptText(diarizationSegments) || meetingLocalTranscript;
@@ -6386,6 +6520,8 @@ class IPCHandlers {
           const noteIdSnapshot = meetingNoteId;
           this.activeMeetingSpeakerConfig = null;
           resetMeetingLocalState();
+
+          this._handleAudioRetention(options, diarizationPcmPath, noteIdSnapshot, micPcmPath);
 
           // Fire-and-forget background diarization (or notify skip)
           this._startOrSkipDiarization(
@@ -6403,7 +6539,7 @@ class IPCHandlers {
         }
 
         const results = await disconnectMeetingStreaming({ flushPending: true });
-        const { diarizationPcmPath, diarizationSegments, diarizationStartedAt } =
+        const { diarizationPcmPath, diarizationSegments, diarizationStartedAt, micPcmPath } =
           await captureMeetingDiarizationState();
         const transcript =
           buildOrderedTranscriptText(diarizationSegments) ||
@@ -6412,6 +6548,8 @@ class IPCHandlers {
         const sessionSpeakerConfigSnapshot = this.activeMeetingSpeakerConfig;
         const noteIdSnapshot = meetingNoteId;
         this.activeMeetingSpeakerConfig = null;
+
+        this._handleAudioRetention(options, diarizationPcmPath, noteIdSnapshot, micPcmPath);
 
         // Fire-and-forget background diarization (or notify skip)
         this._startOrSkipDiarization(
@@ -9070,6 +9208,77 @@ class IPCHandlers {
     }
 
     return { numSpeakers: -1, cap: DEFAULT_EXPECTED_SPEAKER_COUNT };
+  }
+
+  /**
+   * Encode PCM tracks to Opus and store in userData/audio/.
+   * Returns { micPath, systemPath } or null if nothing to save.
+   */
+  _handleAudioRetention(options, diarizationPcmPath, noteIdSnapshot, micPcmPath) {
+    const saveAudio = options?.saveAudio !== false;
+    let systemPcmCopy = null;
+    if (saveAudio && diarizationPcmPath && noteIdSnapshot) {
+      const copyPath = diarizationPcmPath + `.save-${Date.now()}.pcm`;
+      try {
+        fs.copyFileSync(diarizationPcmPath, copyPath);
+        systemPcmCopy = copyPath;
+      } catch (err) {
+        debugLogger.warn("Could not copy system PCM for audio save", { error: err.message }, "meeting");
+      }
+    }
+
+    if (saveAudio && noteIdSnapshot) {
+      this._saveMeetingAudio(noteIdSnapshot, micPcmPath, systemPcmCopy)
+        .catch(err => debugLogger.warn("Meeting audio save failed", { error: err.message }, "meeting"));
+    } else {
+      if (micPcmPath) { try { fs.unlinkSync(micPcmPath); } catch (_) {} }
+      if (systemPcmCopy) { try { fs.unlinkSync(systemPcmCopy); } catch (_) {} }
+    }
+  }
+
+  async _saveMeetingAudio(noteId, micPcmPath, systemPcmPath) {
+    const { encodePcmToOpus } = require("./ffmpegUtils");
+    const fs = require("fs");
+    const path = require("path");
+    const audioDir = this.audioStorageManager.audioDir;
+
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+
+    const saved = { micPath: null, systemPath: null };
+
+    const encode = async (pcmPath, track) => {
+      if (!pcmPath || !fs.existsSync(pcmPath)) return null;
+      const outFile = path.join(audioDir, `OpenWhispr-meeting-${noteId}-${stamp}-${track}.opus`);
+      try {
+        await encodePcmToOpus(pcmPath, outFile, { sampleRate: 24000, bitrate: 32 });
+        return outFile;
+      } catch (err) {
+        debugLogger.warn(`Meeting ${track} audio encode failed`, { error: err.message }, "meeting");
+        return null;
+      } finally {
+        try { fs.unlinkSync(pcmPath); } catch (_) {}
+      }
+    };
+
+    [saved.micPath, saved.systemPath] = await Promise.all([
+      encode(micPcmPath, "mic"),
+      encode(systemPcmPath, "system"),
+    ]);
+
+    if ((saved.micPath || saved.systemPath) && noteId) {
+      try {
+        const updates = {};
+        if (saved.micPath) updates.mic_audio_path = saved.micPath;
+        if (saved.systemPath) updates.system_audio_path = saved.systemPath;
+        this.databaseManager.updateNote(noteId, updates);
+      } catch (err) {
+        debugLogger.warn("Failed to update note audio paths", { error: err.message }, "meeting");
+      }
+    }
+
+    return saved;
   }
 
   _startOrSkipDiarization(

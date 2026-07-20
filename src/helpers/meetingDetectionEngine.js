@@ -91,14 +91,28 @@ class MeetingDetectionEngine {
     // a voice memo). A browser meeting-URL match confirms it; if Automation is
     // denied we can't check, so we trust the device-in-use signal.
     const urlMatch = data?.urlMatch;
-    const confirmed = !!(urlMatch && (urlMatch.matched || urlMatch.denied));
-    if (!confirmed) {
+    // Three outcomes:
+    // 1. matched=true → definitely a meeting → auto-start
+    // 2. denied/unavailable/null → can't check → trust device signal → auto-start
+    // 3. matched=false (confident) → no meeting → skip
+    const urlCheckRan = urlMatch && !urlMatch.denied && !urlMatch.unavailable;
+    const noMeetingFound = urlCheckRan && !urlMatch.matched;
+
+    if (noMeetingFound) {
       debugLogger.info(
-        "Camera/mic in use but no active meeting URL matched; not auto-starting",
+        "Camera/mic in use but browser check found no meeting URL; not auto-starting",
         { devices: data?.devices },
         "meeting"
       );
       return;
+    }
+
+    if (!urlMatch?.matched) {
+      debugLogger.info(
+        "Camera/mic in use; URL check unavailable — trusting device signal for auto-start",
+        { devices: data?.devices, reason: urlMatch?.denied ? "denied" : urlMatch?.unavailable ? "unavailable" : "no-checker" },
+        "meeting"
+      );
     }
     debugLogger.info(
       "Auto-starting meeting recording (call detected)",

@@ -63,6 +63,8 @@ export interface NoteItem {
   client_note_id: string;
   sync_status: "synced" | "pending" | "error";
   deleted_at: string | null;
+  mic_audio_path?: string | null;
+  system_audio_path?: string | null;
   workspace_id?: string | null;
   team_id?: string | null;
 }
@@ -554,6 +556,10 @@ declare global {
       deleteTranscriptionAudio: (id: number) => Promise<{ success: boolean }>;
       getAudioStorageUsage: () => Promise<{ fileCount: number; totalBytes: number }>;
       deleteAllAudio: () => Promise<{ deleted: number }>;
+      getNoteAudioPaths?: (noteId: number) => Promise<{ micPath: string | null; systemPath: string | null }>;
+      deleteNoteAudio?: (noteId: number) => Promise<{ success: boolean }>;
+      retranscribeMeetingNote?: (noteId: number, options?: { model?: string; language?: string }) => Promise<{ success: boolean; error?: string; noteId?: number }>;
+      checkWhisperModelDownloaded?: (model: string) => Promise<{ downloaded: boolean }>;
       retryTranscription: (
         id: number,
         settings?: {
@@ -1717,7 +1723,7 @@ declare global {
         oneOnOneAttendee?: { displayName: string; email: string | null } | null;
       }>;
       meetingTranscriptionSend?: (buffer: ArrayBuffer, source: "mic" | "system") => void;
-      meetingTranscriptionStop?: () => Promise<{
+      meetingTranscriptionStop?: (options?: { saveAudio?: boolean }) => Promise<{
         success: boolean;
         transcript?: string;
         diarizationSessionId?: string;
