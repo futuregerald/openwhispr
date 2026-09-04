@@ -15,6 +15,7 @@ function createIdentifier() {
   identifier.transientProfileIds = new Map();
   identifier.transientNoteIds = new Map();
   identifier.pendingMerges = [];
+  identifier.segmentMintedSpeakerIds = new Set();
   identifier.currentSegmentSpeakerId = null;
   identifier.currentSegmentSpeakerName = null;
   identifier.nextLiveIndex = 0;

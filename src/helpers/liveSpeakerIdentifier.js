@@ -149,7 +149,9 @@ class LiveSpeakerIdentifier {
     this.nextLiveIndex = 0;
     this.currentSegmentSpeakerId = null;
     this.currentSegmentSpeakerName = null;
+    this.segmentMintedSpeakerIds = new Set();
     this.lastLiveIdentificationSample = 0;
+    this.finalMerges = [];
     this._diarizationManager = null;
     this.maxSpeakers = MAX_SPEAKER_COUNT;
     this.enabled = true;
@@ -227,7 +229,13 @@ class LiveSpeakerIdentifier {
     }
 
     const transientState = this.getTransientState();
+    // The final utterance is assigned right above, after the caller's last
+    // recluster() — so any merge it produced is still pending, and
+    // _resetMeetingState is about to empty the list. Hand it to the caller
+    // instead of dropping every meeting's last correction on the floor.
+    const finalMerges = this._drainPendingMerges();
     this._resetMeetingState();
+    this.finalMerges = finalMerges;
     this.onSpeakerIdentified = null;
     this.getSpeakerProfiles = null;
     return transientState;
@@ -355,6 +363,13 @@ class LiveSpeakerIdentifier {
     return drained;
   }
 
+  // Merges recorded while stop() finalized the last utterance. Read once.
+  takeFinalMerges() {
+    const merges = this.finalMerges;
+    this.finalMerges = [];
+    return merges;
+  }
+
   feedAudio(pcmBuffer) {
     if (!this.running || !pcmBuffer?.length) {
       return Promise.resolve();
@@ -424,7 +439,6 @@ class LiveSpeakerIdentifier {
     }
   }
 
-
   _resetMeetingState() {
     this.queue = Promise.resolve();
     this.audioRemainder = new Float32Array(0);
@@ -443,7 +457,9 @@ class LiveSpeakerIdentifier {
     this.nextLiveIndex = 0;
     this.currentSegmentSpeakerId = null;
     this.currentSegmentSpeakerName = null;
+    this.segmentMintedSpeakerIds = new Set();
     this.lastLiveIdentificationSample = 0;
+    this.finalMerges = [];
     this._resetVadRuntimeState();
   }
 
@@ -521,6 +537,7 @@ class LiveSpeakerIdentifier {
     this.silenceWindows = 0;
     this.currentSegmentSpeakerId = null;
     this.currentSegmentSpeakerName = null;
+    this.segmentMintedSpeakerIds.clear();
     this.lastLiveIdentificationSample = 0;
   }
 
@@ -685,7 +702,7 @@ class LiveSpeakerIdentifier {
       return;
     }
 
-    const resolved = this._resolveSpeakerForEmbedding(embedding, { updateCentroid: true });
+    const resolved = this._resolveFinalSegmentSpeaker(embedding);
     if (!resolved?.speakerId) {
       return;
     }
@@ -708,15 +725,70 @@ class LiveSpeakerIdentifier {
 
     this.currentSegmentSpeakerId = null;
     this.currentSegmentSpeakerName = null;
+    this.segmentMintedSpeakerIds.clear();
     this.lastLiveIdentificationSample = 0;
   }
 
-  _findTransientMatch(embedding) {
+  /**
+   * Who the segment belonged to, decided on the whole segment rather than on
+   * its first 1.6 seconds.
+   *
+   * The provisional decision is made as soon as a segment reaches 1.6 s, where
+   * 79% of same-speaker pairs score below MATCH_THRESHOLD; by 3 s only 2% do.
+   * Finalize already computes a far better embedding — the best window of the
+   * whole segment — and used to throw it away, because
+   * _resolveSpeakerForEmbedding short-circuits on currentSegmentSpeakerId.
+   *
+   * The provisional cluster is excluded from the comparison rather than merely
+   * deprioritised. Its centroid IS a window of this same segment, so it scores
+   * near-perfectly against the full-segment embedding and acceptsMatch takes
+   * anything at or above CONFIDENT_MATCH_THRESHOLD outright — the guess would
+   * vouch for itself and nothing would ever be corrected.
+   */
+  _resolveFinalSegmentSpeaker(embedding) {
+    const provisionalId = this.currentSegmentSpeakerId;
+    if (!provisionalId || !this.segmentMintedSpeakerIds.has(provisionalId)) {
+      // An established cluster is real evidence from before this segment, so it
+      // keeps the existing behaviour. Overruling it here would merge two people.
+      return this._resolveSpeakerForEmbedding(embedding, { updateCentroid: true });
+    }
+
+    const matchId = this._findTransientMatch(embedding, this.segmentMintedSpeakerIds);
+
+    // No older cluster fits, or the two carry different identities: this really
+    // is someone new, so the provisional survives. Deliberately routed back
+    // through _resolveSpeakerForEmbedding, whose currentSegmentSpeakerId
+    // short-circuit is what keeps it from minting a SECOND cluster for one
+    // segment. If that short-circuit is ever removed, the "no second cluster is
+    // minted" test in liveSpeakerFinalize.test.js is what says so.
+    if (!matchId || this._hasConflictingIdentity(matchId, provisionalId)) {
+      return this._resolveSpeakerForEmbedding(embedding, { updateCentroid: true });
+    }
+
+    const similarity = speakerEmbeddings.cosineSimilarity(
+      embedding,
+      this.transientEmbeddings.get(matchId)
+    );
+    // A merge, not a second identification: ipcHandlers.js only stamps a
+    // transcript segment while it is still a placeholder, and the provisional
+    // identification already confirmed it. Merges are the one channel that
+    // relabels a segment that has already been stamped.
+    this._mergeTransientSpeakers(matchId, provisionalId, similarity);
+    this._updateCentroid(matchId, embedding);
+
+    return {
+      speakerId: matchId,
+      displayName: this.transientDisplayNames.get(matchId) || null,
+    };
+  }
+
+  _findTransientMatch(embedding, excludedSpeakerIds = null) {
     let bestSpeakerId = null;
     let bestSimilarity = 0;
     let secondBestSimilarity = 0;
 
     for (const [speakerId, centroid] of this.transientEmbeddings.entries()) {
+      if (excludedSpeakerIds?.has(speakerId)) continue;
       const similarity = speakerEmbeddings.cosineSimilarity(embedding, centroid);
       if (similarity > bestSimilarity) {
         secondBestSimilarity = bestSimilarity;
@@ -911,6 +983,10 @@ class LiveSpeakerIdentifier {
     this.nextLiveIndex += 1;
     this.transientEmbeddings.set(speakerId, cloneFloat32Array(embedding));
     this.transientCounts.set(speakerId, 1);
+    // Recorded here rather than at the call sites so that a cluster minted from
+    // 1.6 s of audio can never be mistaken, at finalize, for evidence that
+    // existed before this segment started.
+    this.segmentMintedSpeakerIds.add(speakerId);
     return speakerId;
   }
 
