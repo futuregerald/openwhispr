@@ -12,7 +12,7 @@ const { LiveSpeakerIdentifier } = require("../../src/helpers/liveSpeakerIdentifi
 // two-person call minted 176 clusters.
 //
 // The correction has to be a MERGE, not a second identification:
-// ipcHandlers.js:5069 only stamps a transcript segment when
+// applyConfirmedSpeaker in ipcHandlers only stamps a transcript segment when
 // `(!seg.speaker || seg.speakerIsPlaceholder)`, and the provisional
 // identification already called applyConfirmedSpeaker.
 
@@ -90,6 +90,24 @@ test("the full-segment embedding overrules a cluster this segment minted", async
     [{ keep: "speaker_0", remove: "speaker_1" }]
   );
   assert.equal(live.transientEmbeddings.has("speaker_1"), false);
+
+  // The surviving cluster must also LEARN from the full-segment embedding —
+  // that is the best evidence the pipeline ever produces. Without it every
+  // correction still merges, but the winner never improves, so later segments
+  // match it worse and the over-splitting quietly returns.
+  assert.equal(live.transientCounts.get("speaker_0"), 7, "5 seeded + 1 merged + 1 learned");
+  assert.ok(
+    speakerEmbeddings.cosineSimilarity(live.transientEmbeddings.get("speaker_0"), ALICE) <
+      speakerEmbeddings.cosineSimilarity(ALICE, ALICE),
+    "the centroid moved away from the seed"
+  );
+  assert.ok(
+    speakerEmbeddings.cosineSimilarity(
+      live.transientEmbeddings.get("speaker_0"),
+      ALICE_SHORT_WINDOW
+    ) > speakerEmbeddings.cosineSimilarity(ALICE, ALICE_SHORT_WINDOW),
+    "the centroid moved toward the segment it just absorbed"
+  );
 });
 
 test("an established provisional speaker is left alone", async () => {
@@ -146,8 +164,8 @@ test("a provisional whose own window was unlike the segment still keeps one clus
 
 test("a provisional carrying a stored profile is not merged into a different identity", async () => {
   // Mutation check for the identity guard. Both existing callers of
-  // _mergeTransientSpeakers check _hasConflictingIdentity first
-  // (liveSpeakerIdentifier.js:260, :831); the function itself does not.
+  // _mergeTransientSpeakers (_performRecluster and _assignOrForceCluster) check
+  // _hasConflictingIdentity first; the function itself does not.
   const live = identifier();
   seedCluster(live, "speaker_0", ALICE);
   live.transientProfileIds.set("speaker_0", 1);
@@ -163,10 +181,10 @@ test("a provisional carrying a stored profile is not merged into a different ide
 });
 
 test("merges made during stop() reach the caller instead of being reset away", async () => {
-  // stopLiveSpeakerIdentification reclusters at ipcHandlers.js:5011 and only
-  // then calls stop() at :5014. stop() finalizes the in-flight segment — where
-  // this correction is recorded — and then _resetMeetingState() empties
-  // pendingMerges. Every meeting's last segment lost its correction.
+  // stopLiveSpeakerIdentification reclusters and only then calls stop(). stop()
+  // finalizes the in-flight segment — where this correction is recorded — and
+  // _resetMeetingState then emptied pendingMerges. Every meeting's last segment
+  // lost its correction.
   const live = identifier();
   live.running = true;
   live.session = {};

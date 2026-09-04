@@ -58,9 +58,9 @@ function identifierWith(session) {
 const window512 = () => new Float32Array(512);
 
 for (const [label, inputs, outputs] of [
-  ["silero v5 (new_h/new_c)", ["x", "h", "c", "sr"], ["prob", "new_h", "new_c"]],
-  ["silero v4 (hn/cn)", ["x", "h", "c", "sr"], ["prob", "hn", "cn"]],
-  ["unified state (stateN)", ["x", "state", "sr"], ["prob", "stateN"]],
+  ["new_h/new_c — the bundled export", ["x", "h", "c", "sr"], ["prob", "new_h", "new_c"]],
+  ["hn/cn", ["x", "h", "c", "sr"], ["prob", "hn", "cn"]],
+  ["state/stateN", ["x", "state", "sr"], ["prob", "stateN"]],
 ]) {
   test(`carries recurrent state between windows — ${label}`, async () => {
     const session = fakeSession(inputs, outputs);
@@ -96,7 +96,7 @@ test("pairs by name, not by position, when the outputs are declared out of order
   assert.ok(session.seen[1].c.every((v) => v === 1));
 });
 
-test("warns instead of guessing when a state input pairs with nothing", () => {
+test("reports a state input that pairs with nothing", () => {
   // Two state inputs, one state output: positional pairing would silently feed
   // the wrong tensor back, which is the same silent-failure class as the bug.
   const session = fakeSession(["x", "h", "c"], ["prob", "memory"]);
@@ -112,6 +112,7 @@ test("warns instead of guessing when a state input pairs with nothing", () => {
 });
 
 test("reports a clean pairing for the model that actually ships", () => {
+  // silero-vad v4 as exported to ONNX by k2-fsa, per the model file's own note.
   const session = fakeSession(["x", "h", "c", "sr"], ["prob", "new_h", "new_c"]);
   const identifier = identifierWith(session);
 
@@ -120,6 +121,43 @@ test("reports a clean pairing for the model that actually ships", () => {
   assert.equal(problems.ok, true);
   assert.deepEqual(problems.unpaired, []);
   assert.deepEqual(problems.pairs, { h: "new_h", c: "new_c" });
+});
+
+test("two inputs claiming one output is reported, not resolved by arrival order", () => {
+  // The output list comes from a substring filter, so names that fail to
+  // distinguish the state inputs are possible. Pairing the first arrival and
+  // moving on would be a coin flip presented as a decision.
+  const session = fakeSession(["x", "h", "hc"], ["prob", "hc"]);
+  const identifier = new LiveSpeakerIdentifier();
+  identifier.session = session;
+  identifier.vadStateInputs = ["h", "hc"];
+  identifier.vadStateOutputs = ["hc"];
+
+  const pairing = identifier.describeVadStatePairing();
+
+  assert.equal(pairing.ok, false);
+  assert.deepEqual(pairing.pairs, {});
+  assert.deepEqual(pairing.unpaired.sort(), ["h", "hc"]);
+});
+
+test("an output that pairs by name but is the wrong size is not fed back as state", async () => {
+  // A probability output named "speech" ends in "h", so it matches state input
+  // "h" and survives the /state|h|c/i filter. Its single element would throw at
+  // tensor creation on the next window if it were accepted.
+  const session = fakeSession(["x", "h"], ["speech"]);
+  session.run = async () => ({ speech: { data: Float32Array.from([0.9]) } });
+  const identifier = new LiveSpeakerIdentifier();
+  identifier.session = session;
+  identifier.vadStateInputs = ["h"];
+  identifier.vadStateOutputs = ["speech"];
+  identifier._resetVadRuntimeState();
+
+  assert.deepEqual(identifier.vadStatePairs.pairs, { h: "speech" });
+  await identifier._getVadProbability(window512());
+  await identifier._getVadProbability(window512());
+
+  assert.equal(identifier.vadStates.get("h").length, 2 * 1 * 64);
+  assert.ok(identifier.vadStates.get("h").every((v) => v === 0));
 });
 
 test("an unmatched state input leaves its state alone rather than taking a neighbour's", async () => {

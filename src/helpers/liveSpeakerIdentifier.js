@@ -591,11 +591,11 @@ class LiveSpeakerIdentifier {
   /**
    * Which output tensor carries each state input's next value.
    *
-   * Silero names them three different ways across its exports — `h`/`c` become
-   * `hn`/`cn` in v4 and `new_h`/`new_c` in v5, and the unified export turns
-   * `state` into `stateN` — so both a prefix and a suffix match are legitimate.
-   * The prefix-only rule that shipped missed v5, which is the model bundled
-   * here, and missed it in silence.
+   * Silero's exports name them inconsistently. The model bundled here says of
+   * itself "silero-vad v4 exported to onnx by k2-fsa" and pairs `h`/`c` with
+   * `new_h`/`new_c`; other exports use `hn`/`cn`, and the unified one turns
+   * `state` into `stateN`. So both a prefix and a suffix match are legitimate,
+   * and the prefix-only rule that shipped missed the bundled model in silence.
    *
    * Matching is by name only. Pairing by position instead would look tempting
    * — ONNX Runtime reports names in the model's declared order — but the lists
@@ -608,6 +608,7 @@ class LiveSpeakerIdentifier {
   describeVadStatePairing() {
     const pairs = {};
     const unpaired = [];
+    const claimed = new Map();
 
     for (const inputName of this.vadStateInputs) {
       const expected = normalizeVadStateName(inputName);
@@ -616,11 +617,23 @@ class LiveSpeakerIdentifier {
         return actual.startsWith(expected) || actual.endsWith(expected);
       });
 
-      if (output) {
-        pairs[inputName] = output;
-      } else {
+      if (!output) {
         unpaired.push(inputName);
+        continue;
       }
+
+      // Two inputs matching one output means the names do not distinguish them,
+      // so neither pairing is trustworthy. Reported rather than resolved by
+      // arrival order, which would be a coin flip dressed as a decision.
+      const rival = claimed.get(output);
+      if (rival) {
+        delete pairs[rival];
+        unpaired.push(rival, inputName);
+        continue;
+      }
+
+      claimed.set(output, inputName);
+      pairs[inputName] = output;
     }
 
     return { ok: unpaired.length === 0, pairs, unpaired };
@@ -634,9 +647,16 @@ class LiveSpeakerIdentifier {
     const { pairs } = this.vadStatePairs;
 
     for (const inputName of this.vadStateInputs) {
-      const output = results[pairs[inputName]] ?? results[inputName];
+      const output = results[pairs[inputName]];
+      const expectedLength = this.vadStates.get(inputName)?.length;
 
-      if (output?.data) {
+      // A name match is not proof of a state tensor: the output list comes from
+      // a substring filter, so a probability output whose name happens to end
+      // in "h" or "c" can pair with a state input. Feeding its one element back
+      // as state would throw on the next window; running stateless is the
+      // failure this whole method is fixing, but it is still the better of the
+      // two, and the size is the only honest way to tell them apart.
+      if (output?.data && output.data.length === expectedLength) {
         this.vadStates.set(inputName, new Float32Array(output.data));
       }
     }
