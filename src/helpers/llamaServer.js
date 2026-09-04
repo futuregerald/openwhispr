@@ -195,6 +195,17 @@ class LlamaServerManager {
         kvBudgetBytes: resolved.kvBudgetBytes,
         availableMemBytes: available.bytes,
         memorySource: available.source,
+        // The reclaimable pages the probe deliberately did not count. Read with
+        // floorApplied: the floor deciding while these are large is the signature
+        // of a probe that is under-reading and costing context.
+        memoryExcluded: available.components
+          ? {
+              purgeable: available.components.purgeable,
+              fileBacked: available.components.fileBacked,
+              compressor: available.components.compressor,
+            }
+          : null,
+        floorApplied: resolved.floorApplied,
         source: resolved.source,
         totalMemBytes: os.totalmem(),
       },

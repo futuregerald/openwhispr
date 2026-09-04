@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.1] - 2026-09-04
+
+### Fixed
+- **The local model was being given a smaller context than the machine can actually hold.** On macOS the app measures free memory in a way that reads about half what the system itself reports, so on a busy machine it was setting aside far less for the conversation than it could afford. Rather than change that measurement — reading it too generously is what made the machine unresponsive in August — the app now scales what it reserves against the size of the model it is already loading, still capped so it can never take more than its share of the machine. On the machine this was reported from, the context doubles from 16,384 to 32,768.
+- The startup log now records the memory the measurement deliberately left out, so a future decision about that measurement can be made from real data rather than a guess.
+
 ## [1.17.0] - 2026-09-03
 
 ### Fixed

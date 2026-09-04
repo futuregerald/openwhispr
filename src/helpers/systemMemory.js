@@ -29,6 +29,24 @@ let probeOverride = null;
  * that gets us back into swap.
  */
 function parseVmStat(text) {
+  const components = vmStatComponents(text);
+  if (!components) return null;
+  return components.free + components.inactive + components.speculative;
+}
+
+/**
+ * The pages the probe counts, and the reclaimable ones it deliberately does not.
+ *
+ * The probe reads roughly half what macOS itself reports — 3.94 GiB against
+ * `memory_pressure`'s 7.92 on the same machine, seconds apart. Widening it is the
+ * direction that caused the 2026-08-12 stall, so the excluded fields are recorded
+ * instead and the decision to widen is left to that evidence. `purgeable` and
+ * `fileBacked` both overlap active and inactive, so neither can simply be added.
+ *
+ * @returns {{free:number, inactive:number, speculative:number, purgeable:number,
+ *   fileBacked:number, compressor:number, pageSize:number}|null}
+ */
+function vmStatComponents(text) {
   if (typeof text !== "string" || text.length === 0) return null;
 
   const pageSizeMatch = text.match(/page size of (\d+) bytes/);
@@ -45,7 +63,18 @@ function parseVmStat(text) {
 
   if (free == null && inactive == null) return null;
 
-  return ((free || 0) + (inactive || 0) + (speculative || 0)) * pageSize;
+  // This one is not spelled "Pages <name>:" like every other line.
+  const fileBackedMatch = text.match(/File-backed pages:\s+(\d+)/);
+
+  return {
+    free: (free || 0) * pageSize,
+    inactive: (inactive || 0) * pageSize,
+    speculative: (speculative || 0) * pageSize,
+    purgeable: (pages("purgeable") || 0) * pageSize,
+    fileBacked: (fileBackedMatch ? Number(fileBackedMatch[1]) : 0) * pageSize,
+    compressor: (pages("occupied by compressor") || 0) * pageSize,
+    pageSize,
+  };
 }
 
 /** MemAvailable is the kernel's own estimate of exactly this. */
@@ -58,7 +87,11 @@ function parseMemInfo(text) {
 function runVmStat() {
   return new Promise((resolve) => {
     execFile("vm_stat", [], { timeout: PROBE_TIMEOUT_MS }, (err, stdout) => {
-      resolve({ bytes: err ? null : parseVmStat(stdout), source: "vm_stat" });
+      resolve({
+        bytes: err ? null : parseVmStat(stdout),
+        source: "vm_stat",
+        components: err ? null : vmStatComponents(stdout),
+      });
     });
   });
 }
@@ -82,7 +115,7 @@ function defaultProbe() {
 async function availableMemBytes() {
   const now = Date.now();
   if (cached && now - cached.at < CACHE_TTL_MS) {
-    return { bytes: cached.bytes, source: cached.source };
+    return { bytes: cached.bytes, source: cached.source, components: cached.components ?? null };
   }
   if (inFlight) return inFlight;
 
@@ -94,11 +127,13 @@ async function availableMemBytes() {
       result = null;
     }
     if (!result || !Number.isFinite(result.bytes) || result.bytes == null) {
-      result = { bytes: os.freemem(), source: "os.freemem" };
+      // Nothing to decompose on this path — the components describe vm_stat's
+      // view, and this is the fallback for when that view was unavailable.
+      result = { bytes: os.freemem(), source: "os.freemem", components: null };
     }
     cached = { ...result, at: Date.now() };
     inFlight = null;
-    return { bytes: result.bytes, source: result.source };
+    return { bytes: result.bytes, source: result.source, components: result.components ?? null };
   })();
 
   return inFlight;
@@ -117,6 +152,7 @@ function __resetForTest() {
 module.exports = {
   availableMemBytes,
   parseVmStat,
+  vmStatComponents,
   parseMemInfo,
   __setProbeForTest,
   __resetForTest,

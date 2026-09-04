@@ -3,6 +3,7 @@ const assert = require("node:assert");
 
 const {
   parseVmStat,
+  vmStatComponents,
   parseMemInfo,
   __setProbeForTest,
   __resetForTest,
@@ -21,6 +22,9 @@ Pages purgeable:                          12000.
 "Translation faults":                4044738570.
 Pages copy-on-write:                   80121611.
 Pages zero filled:                   2001234567.
+File-backed pages:                       160000.
+Anonymous pages:                         320000.
+Pages occupied by compressor:            180000.
 `;
 
 const MEMINFO = `MemTotal:       32791528 kB
@@ -123,4 +127,62 @@ test("concurrent callers share a single in-flight probe", async () => {
   assert.equal(a.bytes, 42);
   assert.equal(b.bytes, 42);
   assert.equal(c.bytes, 42);
+});
+
+
+// ── Probe telemetry (1.17.1) ───────────────────────────────────────────────
+//
+// The probe reads roughly half what macOS itself reports. Widening it is the
+// direction that caused the 2026-08-12 swap stall, so instead the fields it
+// EXCLUDES are recorded, and the decision to widen is left to that evidence.
+
+test("the probe reports the reclaimable pages it chose not to count", () => {
+  const c = vmStatComponents(VM_STAT);
+  const PAGE = 16384;
+
+  assert.equal(c.free, 4123 * PAGE);
+  assert.equal(c.inactive, 237456 * PAGE);
+  assert.equal(c.speculative, 988 * PAGE);
+  assert.equal(c.purgeable, 12000 * PAGE, "excluded: overlaps active and inactive");
+  assert.equal(c.fileBacked, 160000 * PAGE, "excluded: the label is not `Pages <name>:`");
+  assert.equal(c.compressor, 180000 * PAGE, "excluded: reclaimable only by decompressing");
+});
+
+test("the counted components still sum to exactly what the probe returns", () => {
+  const c = vmStatComponents(VM_STAT);
+
+  assert.equal(c.free + c.inactive + c.speculative, parseVmStat(VM_STAT));
+});
+
+test("components are absent rather than wrong when the probe cannot parse", () => {
+  assert.equal(vmStatComponents(""), null);
+  assert.equal(vmStatComponents("total nonsense"), null);
+  assert.equal(vmStatComponents(null), null);
+});
+
+test("availableMemBytes carries the components alongside the total", async () => {
+  __resetForTest();
+  __setProbeForTest(async () => ({
+    bytes: parseVmStat(VM_STAT),
+    source: "vm_stat",
+    components: vmStatComponents(VM_STAT),
+  }));
+
+  const result = await availableMemBytes();
+
+  assert.equal(result.bytes, parseVmStat(VM_STAT));
+  assert.equal(result.components.fileBacked, 160000 * 16384);
+  __resetForTest();
+});
+
+test("the os.freemem fallback reports no components and does not throw", async () => {
+  // Three return sites; this is the one with nothing to decompose.
+  __resetForTest();
+  __setProbeForTest(async () => ({ bytes: null, source: "vm_stat" }));
+
+  const result = await availableMemBytes();
+
+  assert.equal(result.source, "os.freemem");
+  assert.equal(result.components, null);
+  __resetForTest();
 });

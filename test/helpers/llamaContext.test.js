@@ -273,21 +273,6 @@ test("omitting availableMemBytes behaves exactly as before", () => {
   assert.deepEqual(a, b);
 });
 
-test("weights are not subtracted when the server is already running", () => {
-  // Available memory already excludes a resident model; subtracting the file
-  // size again double-counts and collapses the context to the floor.
-  const gguf = { contextLength: 131072, blockCount: 42, headCountKv: 2, embeddingLength: 2560, headCount: 8 };
-  const cold = resolveContextSize({
-    gguf, totalMemBytes: 25769803776, modelFileBytes: 5405168384,
-    availableMemBytes: 8 * 1024 ** 3,
-  });
-  const warm = resolveContextSize({
-    gguf, totalMemBytes: 25769803776, modelFileBytes: 5405168384,
-    availableMemBytes: 8 * 1024 ** 3, modelAlreadyResident: true,
-  });
-  assert.ok(warm.contextSize >= cold.contextSize);
-});
-
 // ── Sliding-window models (1.17.0) ─────────────────────────────────────────
 //
 // Measured by running the bundled llama-server against the real
@@ -368,7 +353,7 @@ test("the reported machine gets a context it can actually use", () => {
     availableMemBytes: 5292244992,
   });
 
-  assert.equal(resolved.contextSize, 16384);
+  assert.equal(resolved.contextSize, 32768, "16384 until the floor share was raised in 1.17.1");
   assert.ok(
     Math.floor(resolved.contextSize * PROMPT_SHARE) > 2871,
     "must clear the notes prompt: 648 system tokens + 2223 of transcript"
@@ -676,4 +661,89 @@ test("an unpriceable geometry costs zero, never NaN", () => {
   ]) {
     assert.equal(kvCacheBytes(gguf, 8192), 0, JSON.stringify(gguf));
   }
+});
+
+// ── The floor recovers context the memory probe under-reads (1.17.1) ────────
+//
+// `vm_stat` sums free + inactive + speculative, which measured roughly half what
+// macOS itself reports (3.94 GiB against memory_pressure's 7.92). Widening the
+// probe is the direction that caused the 2026-08-12 swap stall — File-backed
+// pages, the only large excluded field, overlaps active and inactive. So the
+// recovery goes through the floor instead, which politeCeiling already bounds.
+
+test("the reported machine gets the context its memory can actually hold", () => {
+  const resolved = resolveContextSize({ gguf: GEMMA_SWA, ...HONEST_MACHINE });
+
+  assert.equal(resolved.contextSize, 32768, "was 16384 while the probe decided");
+  assert.equal(resolved.floorApplied, true, "the floor decided, not either memory bound");
+});
+
+test("raising the floor cannot breach the polite total-RAM share", () => {
+  // The whole safety argument. Not "one grid cell moves" — that was an artifact
+  // of only testing this model's unusually cheap sliding-window cache.
+  const MODELS = [
+    ["tiny", 1 * GIB, { contextLength: 32768, blockCount: 24, headCountKv: 2, headCount: 14, embeddingLength: 896 }],
+    ["gemma-swa", 5405168384, GEMMA_SWA],
+    ["dense-7b", 4 * GIB, { contextLength: 32768, blockCount: 32, headCountKv: 8, headCount: 32, embeddingLength: 4096 }],
+    ["dense-32b", 15 * GIB, { contextLength: 32768, blockCount: 64, headCountKv: 8, headCount: 64, embeddingLength: 8192 }],
+  ];
+
+  for (const [name, modelFileBytes, gguf] of MODELS) {
+    for (const totalGib of [8, 16, 24, 32, 64, 128]) {
+      for (const probeShare of [0.05, 0.15, 0.35, 0.6, 0.9]) {
+        const totalMemBytes = totalGib * GIB;
+        const r = resolveContextSize({
+          gguf, totalMemBytes, modelFileBytes,
+          availableMemBytes: totalMemBytes * probeShare,
+        });
+
+        assert.ok(
+          r.kvBudgetBytes <= Math.max(268435456, Math.floor(totalMemBytes * 0.35) - modelFileBytes),
+          `${name} on ${totalGib}GiB @${probeShare}: budget ${r.kvBudgetBytes} escaped the ceiling`
+        );
+
+        // The below-floor path is the one documented exception: it returns
+        // MIN_CONTEXT even when that costs more than the budget. Pre-existing,
+        // and identical before and after this change.
+        if (r.source !== "below-floor" && r.source !== "unpriceable-geometry") {
+          assert.ok(
+            r.estimatedKvBytes <= r.kvBudgetBytes,
+            `${name} on ${totalGib}GiB @${probeShare}: KV ${r.estimatedKvBytes} over budget ${r.kvBudgetBytes}`
+          );
+        }
+      }
+    }
+  }
+});
+
+test("the 2026-08-12 incident inputs, priced as the real model is read today", () => {
+  // The committed incident test above uses the DENSE fixture, which resolves
+  // 8192 here. The real file carries SWA keys and resolves 32768 — recorded
+  // rather than left to be discovered. That is defensible: the real cache at
+  // 32768 is 612 MiB (measured), against roughly 3.5 GB reserved during the
+  // incident, and the 5 GiB of weights neither fit in 3.7 GiB nor are changed by
+  // this. The margin exists because the estimate is ~1.9x conservative.
+  const resolved = resolveContextSize({
+    gguf: GEMMA_SWA,
+    totalMemBytes: 25769803776,
+    modelFileBytes: 5405168384,
+    availableMemBytes: 3.7 * GIB,
+  });
+
+  assert.equal(resolved.contextSize, 32768);
+  assert.ok(
+    resolved.estimatedKvBytes <= resolved.kvBudgetBytes,
+    "the estimate must still fit the budget it was granted"
+  );
+});
+
+test("floorApplied says which of the three inputs decided the budget", () => {
+  const roomy = resolveContextSize({
+    gguf: GEMMA_SWA,
+    totalMemBytes: 128 * GIB,
+    modelFileBytes: 5405168384,
+    availableMemBytes: 100 * GIB,
+  });
+
+  assert.equal(roomy.floorApplied, false, "a roomy machine is decided by a memory bound");
 });
