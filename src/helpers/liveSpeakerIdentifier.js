@@ -23,8 +23,14 @@ const LIVE_IDENTIFICATION_INTERVAL_SAMPLES = Math.round(
 );
 const MAX_EMBEDDING_SAMPLES = SAMPLE_RATE * MAX_EMBEDDING_SECONDS;
 const SPEECH_CHUNKS_MAX_SAMPLES = MAX_EMBEDDING_SAMPLES * 4;
-const SPEECH_THRESHOLD = 0.15;
-const SILENCE_THRESHOLD = 0.08;
+// Silero's own defaults: 0.5 to open a segment, and neg_threshold = 0.5 - 0.15
+// to keep one open. These have to move together with the VAD state fix below —
+// they were 0.15/0.08 because a stateless Silero peaks at 0.474 on real audio
+// and never once reaches 0.5, so they were percentiles of a crippled signal
+// rather than thresholds. Carrying the state without raising them would count
+// 13.4% of windows as speech where 9.6% are, which splits more, not less.
+const SPEECH_THRESHOLD = 0.5;
+const SILENCE_THRESHOLD = 0.35;
 const SILENCE_WINDOWS_TO_END = 24;
 const {
   MATCH_THRESHOLD,
@@ -124,6 +130,9 @@ class LiveSpeakerIdentifier {
     this.audioRemainder = new Float32Array(0);
     this.vadStateInputs = [];
     this.vadStateOutputs = [];
+    // Resolved once when the model loads: _updateVadState runs about 31 times a
+    // second and the answer cannot change while a session is open.
+    this.vadStatePairs = { ok: true, pairs: {}, unpaired: [] };
     this.vadStates = new Map();
     this.speechChunks = [];
     this.speechActive = false;
@@ -402,8 +411,19 @@ class LiveSpeakerIdentifier {
     this.vadStateOutputs = (this.session.outputNames || []).filter((name) =>
       /state|h|c/i.test(name)
     );
+
     this._resetVadRuntimeState();
+
+    if (!this.vadStatePairs.ok) {
+      debugLogger.warn("VAD recurrent state cannot be paired; running stateless", {
+        vadModelPath,
+        inputs: this.vadStateInputs,
+        outputs: this.vadStateOutputs,
+        unpaired: this.vadStatePairs.unpaired,
+      });
+    }
   }
+
 
   _resetMeetingState() {
     this.queue = Promise.resolve();
@@ -429,6 +449,11 @@ class LiveSpeakerIdentifier {
 
   _resetVadRuntimeState() {
     this.vadStates = new Map();
+    // Resolved here rather than in _updateVadState, which runs about 31 times a
+    // second: the answer cannot change while the input and output name lists
+    // do not, and this is the one place that rebuilds everything derived from
+    // them.
+    this.vadStatePairs = this.describeVadStatePairing();
 
     if (!this.session) {
       return;
@@ -546,17 +571,53 @@ class LiveSpeakerIdentifier {
     return typeof value === "number" ? value : 0;
   }
 
+  /**
+   * Which output tensor carries each state input's next value.
+   *
+   * Silero names them three different ways across its exports — `h`/`c` become
+   * `hn`/`cn` in v4 and `new_h`/`new_c` in v5, and the unified export turns
+   * `state` into `stateN` — so both a prefix and a suffix match are legitimate.
+   * The prefix-only rule that shipped missed v5, which is the model bundled
+   * here, and missed it in silence.
+   *
+   * Matching is by name only. Pairing by position instead would look tempting
+   * — ONNX Runtime reports names in the model's declared order — but the lists
+   * come from a substring filter, so an output merely containing an "h" or a
+   * "c", or outputs declared in a different order from the inputs, would pair a
+   * state input with someone else's tensor and say nothing. That is the same
+   * silent corruption this method exists to fix. An input that pairs with
+   * nothing is reported, not guessed at.
+   */
+  describeVadStatePairing() {
+    const pairs = {};
+    const unpaired = [];
+
+    for (const inputName of this.vadStateInputs) {
+      const expected = normalizeVadStateName(inputName);
+      const output = this.vadStateOutputs.find((outputName) => {
+        const actual = normalizeVadStateName(outputName);
+        return actual.startsWith(expected) || actual.endsWith(expected);
+      });
+
+      if (output) {
+        pairs[inputName] = output;
+      } else {
+        unpaired.push(inputName);
+      }
+    }
+
+    return { ok: unpaired.length === 0, pairs, unpaired };
+  }
+
   _updateVadState(results) {
     if (!results) {
       return;
     }
 
+    const { pairs } = this.vadStatePairs;
+
     for (const inputName of this.vadStateInputs) {
-      const expectedName = normalizeVadStateName(inputName);
-      const matchingOutput = this.vadStateOutputs.find((outputName) =>
-        normalizeVadStateName(outputName).startsWith(expectedName)
-      );
-      const output = (matchingOutput && results[matchingOutput]) || results[inputName];
+      const output = results[pairs[inputName]] ?? results[inputName];
 
       if (output?.data) {
         this.vadStates.set(inputName, new Float32Array(output.data));
