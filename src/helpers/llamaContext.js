@@ -31,7 +31,13 @@ const MAX_KV_BUDGET = 8 * 1024 ** 3;
 // deciding the context — so it scales with the commitment already made. Bounded
 // above by the polite total-RAM allowance, so a model too large for the machine
 // cannot use its own size to claim more.
-const WEIGHTS_KV_FLOOR_SHARE = 0.15;
+//
+// 0.3 rather than 0.15 because the macOS memory probe reads roughly half what the
+// OS itself reports, so on a busy machine this floor — not either memory bound —
+// is what decides the context. At 0.15 that cost the reporting machine 2-4x. The
+// ceiling still binds: total commitment can never exceed
+// max(weights + MIN_KV_BUDGET, 0.35 * total), whatever this share says.
+const WEIGHTS_KV_FLOOR_SHARE = 0.3;
 
 const roundDownToPowerOfTwo = (value) => 2 ** Math.floor(Math.log2(value));
 
@@ -45,18 +51,13 @@ function resolveContextSize({
   modelFileBytes = 0,
   requested,
   availableMemBytes,
-  modelAlreadyResident = false,
 } = {}) {
   const shareOfTotal = Math.floor((totalMemBytes || 0) * MEMORY_SHARE);
-  // A resident model's weights are already excluded from the available figure,
-  // so subtracting the file size again would double-count them and collapse the
-  // context to the floor on the second run.
-  const weights = modelAlreadyResident ? 0 : modelFileBytes;
 
   const bounds = [shareOfTotal - modelFileBytes];
   let availableBound = false;
   if (Number.isFinite(availableMemBytes)) {
-    const shareOfAvailable = Math.floor(availableMemBytes * AVAILABLE_SHARE) - weights;
+    const shareOfAvailable = Math.floor(availableMemBytes * AVAILABLE_SHARE) - modelFileBytes;
     availableBound = shareOfAvailable < bounds[0];
     bounds.push(shareOfAvailable);
   }
@@ -67,7 +68,12 @@ function resolveContextSize({
     politeCeiling
   );
 
-  const kvBudgetBytes = Math.min(Math.max(Math.min(...bounds), kvFloor), MAX_KV_BUDGET);
+  const memoryBound = Math.min(...bounds);
+  const kvBudgetBytes = Math.min(Math.max(memoryBound, kvFloor), MAX_KV_BUDGET);
+  // Answers a different question from `source`, which compares the two memory
+  // bounds without asking whether the floor then overrode both. A floor-decided
+  // outcome reports `available-bound` and `floorApplied: true` together.
+  const floorApplied = kvFloor > memoryBound;
 
   // `contextLength` drives the search's termination, so it is checked here and
   // not only in the reader: an infinite one halves forever, and a fractional one
@@ -92,6 +98,7 @@ function resolveContextSize({
       kvBytesPerToken: null,
       estimatedKvBytes: null,
       kvBudgetBytes,
+      floorApplied,
       source: "unpriceable-geometry",
       requested: requested ?? null,
     };
@@ -106,6 +113,7 @@ function resolveContextSize({
       kvBytesPerToken: null,
       estimatedKvBytes: null,
       kvBudgetBytes,
+      floorApplied,
       source: "fallback",
     };
   }
@@ -130,6 +138,7 @@ function resolveContextSize({
     kvBytesPerToken: kvBytesPerToken(gguf),
     estimatedKvBytes: kvCacheBytes(gguf, contextSize),
     kvBudgetBytes,
+    floorApplied,
     source: belowFloor
       ? "below-floor"
       : contextSize >= gguf.contextLength
