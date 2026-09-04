@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.2] - 2026-09-04
+
+### Fixed
+- **Live speaker labels invented people.** A two-person call could come back as five or six speakers, and the worst recorded case put 22 different labels on a 94-minute call between two people. Two separate faults were behind it. The voice-activity detector, which decides where one person's turn starts and ends, is a model that has to be given its own memory of the previous fraction of a second — and it never was, because of a name mismatch that silently did nothing. It was running blind, and the two sensitivity settings around it had been quietly tuned to compensate for a signal that could never reach its own normal range. Separately, the app decided who was speaking from the first 1.6 seconds of a turn and then refused to reconsider — even though it goes on to compute a far better read of the voice from the whole turn, which it was throwing away. It now uses that better read, and when it changes its mind, the label already shown is corrected rather than left behind.
+- Measured over 13.7 hours of real calls containing 46 people: distinct speakers reported fell from 200 to 143. Speech the app finds at all went **up** slightly rather than down, and the stretches it discards as too short to identify fell by a sixth — so nothing was traded away to get the count down.
+- **Every meeting used to lose the speaker correction for its final stretch of speech.** The last piece of a call is processed during shutdown, after the point where corrections were collected, so it was recorded and then discarded. It now lands before the note is saved.
+
 ## [1.17.1] - 2026-09-04
 
 ### Fixed
