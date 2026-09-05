@@ -2,7 +2,11 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { resolveRetryStep, retryableSteps } = require("../../src/helpers/noteRetryStep.js");
-const { isPipelineStep, STEP_ORDER } = require("../../src/helpers/postCallPipelineManager.js");
+const {
+  isPipelineStep,
+  STEP_ORDER,
+  localizedTitlePlaceholders,
+} = require("../../src/helpers/postCallPipelineManager.js");
 
 const meeting = (overrides) => ({
   id: 1,
@@ -54,7 +58,7 @@ test("no transcript and no audio offers nothing rather than a retry that must fa
 
 test("a meeting that still has its placeholder title retries the title step", () => {
   const { step, reason } = resolveRetryStep(
-    meeting({ title: "Untitled Note", transcript: "t", enhanced_content: "notes" })
+    meeting({ title: localizedTitlePlaceholders()[0], transcript: "t", enhanced_content: "notes" })
   );
   assert.equal(step, "title");
   assert.equal(reason, "no-title");
@@ -79,7 +83,7 @@ test("whitespace is not content", () => {
 test("the earliest missing step wins, because everything after it depends on it", () => {
   // No transcript AND no notes AND a placeholder title: retranscribe, not notes.
   const { step } = resolveRetryStep(
-    meeting({ title: "Untitled Note", transcript: null, enhanced_content: null })
+    meeting({ title: localizedTitlePlaceholders()[0], transcript: null, enhanced_content: null })
   );
   assert.equal(step, "retranscribe");
 });
@@ -88,7 +92,9 @@ test("every step this resolver returns is one the pipeline accepts", () => {
   const notes = [
     meeting({ transcript: null }),
     meeting({ transcript: "t" }),
-    meeting({ title: "New Note", transcript: "t", enhanced_content: "n" }),
+    // Taken from the real list rather than typed out: the English placeholder is
+    // "New note", not "New Note", and guessing it made this test assert nothing.
+    meeting({ title: localizedTitlePlaceholders()[1], transcript: "t", enhanced_content: "n" }),
   ];
   for (const note of notes) {
     const { step } = resolveRetryStep(note);
@@ -106,4 +112,28 @@ test("re-transcription is not offered for a meeting whose audio is gone", () => 
 
 test("a missing note resolves to nothing rather than throwing", () => {
   assert.deepEqual(resolveRetryStep(null), { step: null, reason: "missing" });
+});
+
+// The placeholder list must be the pipeline's own, not a hard-coded English
+// one. A note created in Spanish carries "Nota sin título", which no English
+// list matches -- so a hard-coded list would report every non-English user's
+// ungenerated title as complete and offer them no retry. The pipeline resolves
+// every placeholder in every supported language for exactly this reason.
+test("a placeholder title is recognised in every supported language", () => {
+  const placeholders = localizedTitlePlaceholders();
+  assert.ok(placeholders.length >= 10, `only ${placeholders.length} placeholders resolved`);
+
+  for (const placeholder of placeholders) {
+    const { step } = resolveRetryStep(
+      meeting({ title: placeholder, transcript: "t", enhanced_content: "notes" })
+    );
+    assert.equal(step, "title", `"${placeholder}" was not recognised as a placeholder`);
+  }
+});
+
+test("a real title in another language is not mistaken for a placeholder", () => {
+  const { step } = resolveRetryStep(
+    meeting({ title: "Reunión semanal de equipo", transcript: "t", enhanced_content: "notes" })
+  );
+  assert.equal(step, null, "a genuine Spanish title must count as generated");
 });

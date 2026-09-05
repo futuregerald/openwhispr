@@ -586,4 +586,5 @@ module.exports = {
   buildTypedNotesPrompt,
   STEP_ORDER,
   isPipelineStep,
+  localizedTitlePlaceholders,
 };

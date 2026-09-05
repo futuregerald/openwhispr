@@ -1,6 +1,16 @@
-const { STEP_ORDER } = require("./postCallPipelineManager");
+const { STEP_ORDER, localizedTitlePlaceholders } = require("./postCallPipelineManager");
 
-const PLACEHOLDER_TITLES = ["Untitled Note", "New Note", ""];
+// Reuses the pipeline's own list rather than hard-coding the English strings.
+// It resolves every placeholder in every supported language, because a note may
+// have been created while the app was in a different language than the one
+// running now -- and because for every non-English user the English list matches
+// nothing at all, which would report a note as complete when its title was never
+// generated.
+function isPlaceholderTitle(title) {
+  const trimmed = String(title || "").trim();
+  if (!trimmed) return true;
+  return localizedTitlePlaceholders().includes(trimmed);
+}
 
 /**
  * Which pipeline step a meeting note is stuck on, decided from the note itself.
@@ -25,7 +35,7 @@ function resolveRetryStep(note) {
   const hasAudio = !!(note.system_audio_path || note.mic_audio_path);
   const hasTranscript = !!(note.transcript && String(note.transcript).trim());
   const hasNotes = !!(note.enhanced_content && String(note.enhanced_content).trim());
-  const hasTitle = !PLACEHOLDER_TITLES.includes(String(note.title || "").trim());
+  const hasTitle = !isPlaceholderTitle(note.title);
 
   if (!hasTranscript) {
     // Nothing to work from. Retrying the transcription is only meaningful if
@@ -55,4 +65,4 @@ function retryableSteps(note) {
   return STEP_ORDER.filter((step) => step !== "retranscribe" || hasAudio);
 }
 
-module.exports = { resolveRetryStep, retryableSteps, PLACEHOLDER_TITLES };
+module.exports = { resolveRetryStep, retryableSteps, isPlaceholderTitle };
