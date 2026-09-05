@@ -210,3 +210,87 @@ test("merges made during stop() reach the caller instead of being reset away", a
   );
   assert.deepEqual(live.takeFinalMerges(), [], "draining twice must not repeat them");
 });
+
+// The reproduction PR #44's own review found, as an assertion.
+//
+// segmentMintedSpeakerIds records which ids were CREATED during this segment.
+// _resolveFinalSegmentSpeaker reads it as "which clusters hold no evidence from
+// before this segment" — a different question, and _mergeTransientSpeakers is
+// the operation that separates the two. A recluster tick landing mid-segment can
+// leave a minted id in the set after it has absorbed an established cluster's
+// entire history; finalize then overrules a real speaker and hands their name to
+// someone else.
+//
+// The route is not exotic. _performRecluster breaks a tie on hasName before
+// count, so a count-1 minted cluster wins only by carrying a display name the
+// established one lacks — which is what the stored-profile branch of
+// _resolveSpeakerForEmbedding gives it. The app arms that branch itself: a
+// 1-on-1 calendar meeting writes a speaker profile carrying the attendee's email
+// (bindOneOnOneAttendeeToSpeaker in ipcHandlers), and getLiveSpeakerProfiles
+// then returns it for every later meeting with that person.
+test("a cluster that absorbed an established speaker is no longer this segment's guess", async () => {
+  const live = identifier();
+  seedCluster(live, "speaker_0", ALICE);
+  seedCluster(live, "speaker_1", BOB);
+
+  // The 1.6 s window matched Bob's stored profile, so a fresh cluster is minted
+  // carrying Bob's name — the one thing that lets it win the tie-break.
+  const provisional = live._assignSpeakerId(BOB);
+  live.transientDisplayNames.set(provisional, "Bob");
+  live.transientProfileIds.set(provisional, 42);
+  live.currentSegmentSpeakerId = provisional;
+  live.currentSegmentSpeakerName = "Bob";
+
+  // The 30 s recluster timer fires while the segment is still open. Mean segment
+  // length is 5.0 s against a 30 s interval, so roughly one segment in six is.
+  live._performRecluster();
+  assert.equal(live.transientCounts.get(provisional), 6, "the minted cluster absorbed Bob");
+  assert.equal(live.transientEmbeddings.has("speaker_1"), false);
+
+  // The full-segment embedding drifted toward Alice: 0.71, above MATCH_THRESHOLD
+  // and below CONFIDENT_MATCH_THRESHOLD.
+  await finalizeWith(live, ALICE_SHORT_WINDOW);
+
+  assert.deepEqual(
+    [...live.transientEmbeddings.keys()].sort(),
+    ["speaker_0", provisional].sort(),
+    "Alice and Bob are two people and must stay two clusters"
+  );
+  assert.equal(
+    live.transientDisplayNames.get("speaker_0"),
+    undefined,
+    "Alice's cluster must not inherit Bob's name"
+  );
+  assert.equal(live.transientDisplayNames.get(provisional), "Bob");
+  assert.equal(live.transientProfileIds.get(provisional), 42);
+  assert.deepEqual(live._drainPendingMerges(), [], "finalize must not merge two real speakers");
+});
+
+// The guard the fix must not weaken: when both clusters in a merge were minted
+// during this segment, the survivor is still a guess and finalize must stay free
+// to overrule it.
+test("a merge between two clusters minted this segment leaves the survivor overrulable", () => {
+  const live = identifier();
+  const first = live._assignSpeakerId(ALICE);
+  const second = live._assignSpeakerId(ALICE_SHORT_WINDOW);
+
+  live._mergeTransientSpeakers(first, second, 0.71);
+
+  assert.equal(
+    live.segmentMintedSpeakerIds.has(first),
+    true,
+    "nothing older was absorbed, so the survivor still holds no pre-segment evidence"
+  );
+  assert.equal(live.segmentMintedSpeakerIds.has(second), false, "the removed id is gone");
+});
+
+// A merge that no-ops because one side is already gone must not touch the set.
+// _performRecluster's inner loop can revisit an id, and this is what pins the
+// three new lines to their side of the null guard.
+test("a merge that cannot proceed leaves the minted set untouched", () => {
+  const live = identifier();
+  const minted = live._assignSpeakerId(ALICE);
+
+  assert.equal(live._mergeTransientSpeakers(minted, "speaker_gone", 0.9), null);
+  assert.equal(live.segmentMintedSpeakerIds.has(minted), true);
+});

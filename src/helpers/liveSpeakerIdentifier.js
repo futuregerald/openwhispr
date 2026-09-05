@@ -328,6 +328,18 @@ class LiveSpeakerIdentifier {
       map.delete(removeId);
     }
 
+    // segmentMintedSpeakerIds answers "which clusters hold no evidence from
+    // before this segment", and a merge is the one operation that can make an
+    // id's membership disagree with that. The survivor has just absorbed
+    // removeId's whole history, so if removeId was established the survivor now
+    // is too — and _resolveFinalSegmentSpeaker must stop treating it as a 1.6 s
+    // guess it is free to overrule, which is how two real speakers became one.
+    const removeWasMinted = this.segmentMintedSpeakerIds.has(removeId);
+    this.segmentMintedSpeakerIds.delete(removeId);
+    if (!removeWasMinted) {
+      this.segmentMintedSpeakerIds.delete(keepId);
+    }
+
     if (this.currentSegmentSpeakerId === removeId) {
       this.currentSegmentSpeakerId = keepId;
       // _performRecluster never did this, so a stale name could still be stamped onto the
