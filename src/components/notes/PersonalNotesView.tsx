@@ -269,11 +269,22 @@ export default function PersonalNotesView({
       const step = retrySteps[noteId];
       if (!step) return;
       const result = await window.electronAPI?.retryPipelineStep?.(noteId, step);
-      toast({
-        title: result?.success
-          ? t("notes.context.retryQueued")
-          : t("notes.context.retryFailed"),
-      });
+
+      // `queued: false` means this note's job was already on the queue. Saying
+      // "queued for reprocessing" then would report work that did not happen.
+      const title = !result?.success
+        ? t("notes.context.retryFailed")
+        : result.queued === false
+          ? t("notes.context.retryAlreadyQueued")
+          : t("notes.context.retryQueued");
+      toast({ title });
+
+      // The menu is driven by the note's stored columns, which the retry is
+      // about to change. Without this the "Retry notes" item stays offered on a
+      // note that is now being reprocessed.
+      if (result?.success) {
+        setRetrySteps((current) => ({ ...current, [noteId]: null }));
+      }
     },
     [retrySteps, toast, t]
   );

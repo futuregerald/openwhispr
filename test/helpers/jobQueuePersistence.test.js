@@ -125,6 +125,39 @@ test("a job that always fails is retried a bounded number of times", async () =>
   assert.equal(row.last_error, "model missing", "and it says why, instead of vanishing");
 });
 
+// The failure mode persistence exists FOR, and the one that can loop. A job
+// that rejects runs markFailed and is bounded. A job that takes the PROCESS down
+// -- an ONNX bad_alloc, an OOM kill, a hard power-off -- never reaches markFailed
+// and leaves its row `running`. Without a bound on the running revival, a job
+// that reliably kills the app is re-queued at every launch forever, before any
+// window exists, and the only escape is editing SQLite by hand.
+test("a job that crashes the app is not re-queued forever", () => {
+  const { db, store } = freshStore();
+  store.insert("post-call-99", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 99 });
+
+  let launchesThatRanIt = 0;
+  for (let launch = 0; launch < MAX_ATTEMPTS + 4; launch += 1) {
+    const recovering = new JobStore(db);
+    const pending = recovering.recoverInterrupted();
+    if (pending.some((row) => row.job_key === "post-call-99")) {
+      launchesThatRanIt += 1;
+      // The process dies here: markRunning has counted the attempt, and nothing
+      // ever runs markDone or markFailed.
+      recovering.markRunning(pending.find((row) => row.job_key === "post-call-99").id);
+    }
+  }
+
+  assert.equal(
+    launchesThatRanIt,
+    MAX_ATTEMPTS,
+    `a crashing job must stop after ${MAX_ATTEMPTS} launches, not run every time`
+  );
+
+  const row = db.prepare("SELECT * FROM jobs WHERE job_key = 'post-call-99'").get();
+  assert.equal(row.status, "failed", "and it must not sit at 'running' forever");
+  assert.match(row.last_error, /interrupted/);
+});
+
 test("a failure is recorded rather than losing the job silently", async () => {
   const { db, store } = freshStore();
   const { queue } = queueWith(store, async () => {
@@ -284,26 +317,44 @@ test("every dispatchable kind is one the dispatcher knows", () => {
   assert.throws(() => runJob({}, "not-a-kind", {}), /Unknown job kind/);
 });
 
-// The DDL above is a copy. If database.js's version drifts, these tests keep
-// passing against a schema the app does not have -- so compare them.
-test("the jobs schema here matches the one the app creates", () => {
+// The DDL above is a copy of database.js's. Asserting that each contains the
+// same handful of strings would not catch drift -- add a column to database.js
+// and both still pass. So the two are normalised and compared to each other.
+test("the jobs schema here is identical to the one the app creates", () => {
   const fs = require("node:fs");
   const source = fs.readFileSync(require.resolve("../../src/helpers/database.js"), "utf8");
-  const appDdl = source.slice(
-    source.indexOf("CREATE TABLE IF NOT EXISTS jobs"),
-    source.indexOf(")", source.indexOf("updated_at DATETIME DEFAULT CURRENT_TIMESTAMP", source.indexOf("jobs")))
-  );
-  const normalise = (text) => text.replace(/\s+/g, " ").trim();
 
-  for (const column of [
-    "job_key TEXT NOT NULL UNIQUE",
-    "kind TEXT NOT NULL",
-    "payload TEXT NOT NULL DEFAULT '{}'",
-    "status TEXT NOT NULL DEFAULT 'pending'",
-    "attempts INTEGER NOT NULL DEFAULT 0",
-    "last_error TEXT",
-  ]) {
-    assert.ok(normalise(appDdl).includes(column), `database.js is missing: ${column}`);
-    assert.ok(normalise(JOBS_DDL).includes(column), `this test file is missing: ${column}`);
+  const marker = "CREATE TABLE IF NOT EXISTS jobs";
+  const start = source.indexOf(marker);
+  assert.ok(start > -1, "database.js no longer creates a jobs table");
+
+  // Balance parentheses from the opening one, so the end is found rather than
+  // guessed at by searching for a column name that might move.
+  const open = source.indexOf("(", start);
+  let depth = 0;
+  let end = -1;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === "(") depth += 1;
+    else if (source[i] === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        end = i + 1;
+        break;
+      }
+    }
   }
+  assert.ok(end > -1, "unbalanced parentheses in the jobs DDL");
+
+  const normalise = (ddl) =>
+    ddl
+      .slice(ddl.indexOf("("))
+      .replace(/\s+/g, " ")
+      .replace(/\s*,\s*/g, ",")
+      .trim();
+
+  assert.equal(
+    normalise(source.slice(start, end)),
+    normalise(JOBS_DDL),
+    "this file's jobs DDL has drifted from the one database.js creates"
+  );
 });

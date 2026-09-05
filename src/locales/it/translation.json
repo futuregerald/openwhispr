@@ -1900,11 +1900,11 @@
       "retry": {
         "retranscribe": "Riprova trascrizione",
         "title": "Riprova titolo",
-        "classify": "Riprova tipo di riunione",
         "notes": "Riprova note"
       },
       "retryQueued": "In coda per la rielaborazione",
-      "retryFailed": "Impossibile mettere in coda questa nota"
+      "retryFailed": "Impossibile mettere in coda questa nota",
+      "retryAlreadyQueued": "Rielaborazione già in corso"
     },
     "actions": {
       "manage": "Gestisci azioni...",

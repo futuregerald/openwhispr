@@ -110,9 +110,32 @@ class JobStore {
    * by construction rather than by anything here.
    */
   recoverInterrupted() {
+    // A row still marked `running` at startup did not reject -- it took the
+    // process down with it, or the machine did. That is the ONE failure mode
+    // this table exists for, and it is also the one that can loop: nothing runs
+    // markFailed for a job that crashes, so without a bound here a job that
+    // reliably kills the app is re-queued at every launch, forever, before any
+    // window exists. That is strictly worse than the lost work it replaces.
+    //
+    // So the same MAX_ATTEMPTS bound applies. It cannot distinguish a crash from
+    // an ordinary quit mid-job, and it does not need to: three launches is
+    // enough for a real quit and few enough for a real crash.
     const interrupted = this.db
       .prepare(
         `UPDATE jobs SET status = '${PENDING}', updated_at = CURRENT_TIMESTAMP
+         WHERE status = '${RUNNING}' AND attempts < ?`
+      )
+      .run(MAX_ATTEMPTS);
+
+    // Anything still `running` has exhausted its attempts. Marked failed rather
+    // than left `running` forever, so it reads as finished-and-broken instead of
+    // in-flight, and so `insert` can revive it if the user asks again.
+    const exhaustedInFlight = this.db
+      .prepare(
+        `UPDATE jobs
+         SET status = '${FAILED}',
+             last_error = COALESCE(last_error, 'interrupted repeatedly without completing'),
+             updated_at = CURRENT_TIMESTAMP
          WHERE status = '${RUNNING}'`
       )
       .run();
@@ -128,10 +151,11 @@ class JobStore {
       .prepare(`SELECT COUNT(*) AS n FROM jobs WHERE status = '${FAILED}'`)
       .get().n;
 
-    if (interrupted.changes || retried.changes || exhausted) {
+    if (interrupted.changes || retried.changes || exhaustedInFlight.changes || exhausted) {
       debugLogger.info("Recovered background jobs", {
         interrupted: interrupted.changes,
         retried: retried.changes,
+        exhaustedInFlight: exhaustedInFlight.changes,
         exhausted,
       });
     }

@@ -1900,11 +1900,11 @@
       "retry": {
         "retranscribe": "Reintentar transcripción",
         "title": "Reintentar título",
-        "classify": "Reintentar tipo de reunión",
         "notes": "Reintentar notas"
       },
       "retryQueued": "En cola para reprocesar",
-      "retryFailed": "No se pudo poner esta nota en cola"
+      "retryFailed": "No se pudo poner esta nota en cola",
+      "retryAlreadyQueued": "Ya se está reprocesando"
     },
     "actions": {
       "manage": "Gestionar acciones...",

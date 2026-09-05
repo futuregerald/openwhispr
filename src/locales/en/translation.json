@@ -1994,11 +1994,11 @@
       "retry": {
         "retranscribe": "Retry transcription",
         "title": "Retry title",
-        "classify": "Retry meeting type",
         "notes": "Retry notes"
       },
       "retryQueued": "Queued for reprocessing",
-      "retryFailed": "Could not queue this note"
+      "retryFailed": "Could not queue this note",
+      "retryAlreadyQueued": "Already being reprocessed"
     },
     "actions": {
       "done": "Done",

@@ -1,6 +1,6 @@
-const { JOB_KINDS } = require("./jobDispatch");
-
 "use strict";
+
+const { JOB_KINDS } = require("./jobDispatch");
 
 /**
  * Decide whether a finished meeting should kick off the post-call pipeline, and
@@ -30,9 +30,18 @@ function enqueuePostCallPipeline({
   }
   if (noteId === null || noteId === undefined) return false;
 
-  return backgroundJobQueue.enqueueKind(`post-call-${noteId}`, JOB_KINDS.POST_CALL_PIPELINE, {
+  // Returns true whenever this note's pipeline is now ON THE QUEUE -- whether
+  // this call put it there or a previous one did. It used to return true
+  // unconditionally, and the caller gates the large whisper model's
+  // auto-download on it: a recovered job from the last launch is precisely the
+  // case that needs that model, so treating "already queued" as "not queued"
+  // would withhold the download from the job that needs it most.
+  //
+  // Only `disabled` and a missing note id return false, as before.
+  backgroundJobQueue.enqueueKind(`post-call-${noteId}`, JOB_KINDS.POST_CALL_PIPELINE, {
     noteId,
   });
+  return true;
 }
 
 module.exports = { enqueuePostCallPipeline };

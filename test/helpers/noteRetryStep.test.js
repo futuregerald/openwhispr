@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { resolveRetryStep, retryableSteps } = require("../../src/helpers/noteRetryStep.js");
+const { resolveRetryStep } = require("../../src/helpers/noteRetryStep.js");
 const {
   isPipelineStep,
   STEP_ORDER,
@@ -100,14 +100,6 @@ test("every step this resolver returns is one the pipeline accepts", () => {
     const { step } = resolveRetryStep(note);
     assert.equal(isPipelineStep(step), true, `${step} is not a pipeline step`);
   }
-});
-
-test("re-transcription is not offered for a meeting whose audio is gone", () => {
-  assert.deepEqual(retryableSteps(meeting({})), STEP_ORDER);
-  assert.deepEqual(
-    retryableSteps(meeting({ system_audio_path: null, mic_audio_path: null })),
-    STEP_ORDER.filter((s) => s !== "retranscribe")
-  );
 });
 
 test("a missing note resolves to nothing rather than throwing", () => {

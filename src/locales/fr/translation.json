@@ -1956,11 +1956,11 @@
       "retry": {
         "retranscribe": "Relancer la transcription",
         "title": "Relancer le titre",
-        "classify": "Relancer le type de réunion",
         "notes": "Relancer les notes"
       },
       "retryQueued": "Mise en file pour retraitement",
-      "retryFailed": "Impossible de mettre cette note en file"
+      "retryFailed": "Impossible de mettre cette note en file",
+      "retryAlreadyQueued": "Retraitement déjà en cours"
     },
     "actions": {
       "done": "Terminé",

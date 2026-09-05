@@ -1900,11 +1900,11 @@
       "retry": {
         "retranscribe": "重新转录",
         "title": "重新生成标题",
-        "classify": "重新识别会议类型",
         "notes": "重新生成笔记"
       },
       "retryQueued": "已加入重新处理队列",
-      "retryFailed": "无法将此笔记加入队列"
+      "retryFailed": "无法将此笔记加入队列",
+      "retryAlreadyQueued": "已在重新处理中"
     },
     "actions": {
       "manage": "管理操作...",

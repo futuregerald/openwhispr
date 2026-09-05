@@ -36,6 +36,13 @@ class BackgroundJobQueue extends EventEmitter {
    * never has to ask whether persistence happens to be wired up.
    */
   enqueueKind(jobKey, kind, payload = {}) {
+    if (!this._dependencies) {
+      // Nothing can dispatch this. Saying so beats enqueuing a job that throws
+      // a TypeError deep inside the dispatch table while this returned true.
+      debugLogger.error("Background job dropped: no dispatch dependencies", { jobKey, kind });
+      return false;
+    }
+
     if (!this._store) {
       this.enqueue(jobKey, () => runJob(this._dependencies, kind, payload));
       return true;

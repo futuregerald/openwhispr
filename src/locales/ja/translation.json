@@ -1793,11 +1793,11 @@
       "retry": {
         "retranscribe": "文字起こしを再実行",
         "title": "タイトルを再生成",
-        "classify": "会議の種類を再判定",
         "notes": "ノートを再生成"
       },
       "retryQueued": "再処理のキューに追加しました",
-      "retryFailed": "このノートをキューに追加できませんでした"
+      "retryFailed": "このノートをキューに追加できませんでした",
+      "retryAlreadyQueued": "すでに再処理中です"
     },
     "actions": {
       "manage": "アクションを管理...",

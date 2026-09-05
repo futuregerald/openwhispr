@@ -1,4 +1,4 @@
-const { STEP_ORDER, localizedTitlePlaceholders } = require("./postCallPipelineManager");
+const { localizedTitlePlaceholders } = require("./postCallPipelineManager");
 
 // Reuses the pipeline's own list rather than hard-coding the English strings.
 // It resolves every placeholder in every supported language, because a note may
@@ -59,10 +59,4 @@ function resolveRetryStep(note) {
   return { step: null, reason: "complete" };
 }
 
-/** Every step a user may retry, earliest first. */
-function retryableSteps(note) {
-  const hasAudio = !!(note?.system_audio_path || note?.mic_audio_path);
-  return STEP_ORDER.filter((step) => step !== "retranscribe" || hasAudio);
-}
-
-module.exports = { resolveRetryStep, retryableSteps, isPlaceholderTitle };
+module.exports = { resolveRetryStep, isPlaceholderTitle };

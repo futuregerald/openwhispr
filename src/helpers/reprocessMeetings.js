@@ -1,6 +1,6 @@
-const { JOB_KINDS } = require("./jobDispatch");
-
 "use strict";
+
+const { JOB_KINDS } = require("./jobDispatch");
 
 /**
  * Enqueue a full post-call pipeline re-run for every meeting note that still

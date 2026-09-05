@@ -77,6 +77,7 @@ class DiarizationManager {
     // Serialises diarize(); see the comment there. Starts resolved so the first
     // call runs immediately.
     this._diarizeGate = Promise.resolve();
+    this._shuttingDown = false;
     this.currentDownloadProcess = null;
     this.cachedBinaryPath = null;
     // undefined = not resolved yet; null = resolved-but-absent (cache the miss).
@@ -374,9 +375,30 @@ class DiarizationManager {
    * Serialising is not the same as rejecting: a second call waits and then runs.
    */
   async diarize(wavPath, options = {}) {
+    const queuedAt = Date.now();
     const runWhenFree = this._diarizeGate
       .catch(() => {})
-      .then(() => this._diarizeNow(wavPath, options));
+      .then(() => {
+        // FIFO with no priority: a live meeting's diarization can sit behind a
+        // long batch one. That is the trade the gate exists to make -- two model
+        // processes at once is what made the machine unusable -- but a silent
+        // multi-minute wait is not diagnosable, so it is logged.
+        // A call parked here has not spawned anything yet, so shutdown()'s sweep
+        // of _processes cannot see it -- and letting it through would spawn a
+        // model process during teardown that outlives the app. Before the gate
+        // existed every call spawned immediately and was always in _processes
+        // when shutdown ran, so this hazard came in with the gate.
+        if (this._shuttingDown) {
+          debugLogger.info("Diarization abandoned: the app is shutting down");
+          return [];
+        }
+
+        const waited = Date.now() - queuedAt;
+        if (waited > 1000) {
+          debugLogger.info("Diarization waited for another to finish", { waitedMs: waited });
+        }
+        return this._diarizeNow(wavPath, options);
+      });
 
     // Stores the same promise rather than a derived one: a derived promise would
     // be a SECOND reference to the rejection and would need its own handler.
@@ -850,6 +872,7 @@ class DiarizationManager {
   }
 
   async shutdown() {
+    this._shuttingDown = true;
     const procs = [...this._processes];
     this._processes.clear();
     await Promise.all(procs.map((p) => gracefulStopProcess(p)));

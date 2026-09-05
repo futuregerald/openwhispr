@@ -148,3 +148,53 @@ test("a rejected diarization leaves no unhandled rejection behind", async () => 
     "the gate must absorb the failure it stores, not re-raise it"
   );
 });
+
+// A call parked on the gate has not spawned anything, so shutdown()'s sweep of
+// _processes cannot see it. Without a shutting-down check, quitting while one
+// diarization runs lets the parked one spawn during teardown and outlive the
+// app. Before the gate existed every call spawned immediately and was always in
+// _processes when shutdown ran, so this hazard is new.
+test("a diarization parked on the gate does not spawn after shutdown", async () => {
+  const spawned = [];
+  const manager = managerWithFakeEngine(async (wavPath) => {
+    spawned.push(wavPath);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    return [];
+  });
+  manager._shuttingDown = false;
+  manager._processes = new Set();
+
+  const first = manager.diarize("/tmp/first.wav");
+  const parked = manager.diarize("/tmp/parked.wav");
+
+  // Let the first call actually reach the engine, which is the real situation:
+  // one diarization in flight and already tracked in _processes, another
+  // waiting behind it with nothing spawned yet.
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(spawned, ["/tmp/first.wav"], "the first call is in flight");
+
+  await DiarizationManager.prototype.shutdown.call(manager);
+  await Promise.all([first, parked]);
+
+  assert.deepEqual(spawned, ["/tmp/first.wav"], "the parked call must not spawn after quit");
+});
+
+test("the parked call still resolves rather than hanging the caller", async () => {
+  // Slow enough that the second call is genuinely still parked when shutdown
+  // arrives -- an instant engine would let both finish first and the test would
+  // assert nothing.
+  const manager = managerWithFakeEngine(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    return ["segments"];
+  });
+  manager._shuttingDown = false;
+  manager._processes = new Set();
+
+  const first = manager.diarize("/tmp/first.wav");
+  const parked = manager.diarize("/tmp/parked.wav");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await DiarizationManager.prototype.shutdown.call(manager);
+
+  await first;
+  assert.deepEqual(await parked, [], "an abandoned diarization returns the empty contract");
+});

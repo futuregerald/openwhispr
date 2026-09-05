@@ -1900,11 +1900,11 @@
       "retry": {
         "retranscribe": "Transkription erneut versuchen",
         "title": "Titel erneut versuchen",
-        "classify": "Meeting-Typ erneut versuchen",
         "notes": "Notizen erneut versuchen"
       },
       "retryQueued": "Zur erneuten Verarbeitung eingereiht",
-      "retryFailed": "Diese Notiz konnte nicht eingereiht werden"
+      "retryFailed": "Diese Notiz konnte nicht eingereiht werden",
+      "retryAlreadyQueued": "Wird bereits neu verarbeitet"
     },
     "actions": {
       "manage": "Aktionen verwalten...",
