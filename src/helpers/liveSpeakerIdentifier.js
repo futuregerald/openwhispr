@@ -477,6 +477,7 @@ class LiveSpeakerIdentifier {
 
   _resetVadRuntimeState() {
     this.vadStates = new Map();
+    this.warnedVadStateSizeMismatch = false;
     // Resolved here rather than in _updateVadState, which runs about 31 times a
     // second: the answer cannot change while the input and output name lists
     // do not, and this is the one place that rebuilds everything derived from
@@ -668,8 +669,29 @@ class LiveSpeakerIdentifier {
       // as state would throw on the next window; running stateless is the
       // failure this whole method is fixing, but it is still the better of the
       // two, and the size is the only honest way to tell them apart.
+      //
+      // expectedLength comes from DEFAULT_VAD_STATE_SHAPE rather than from the
+      // model: session.inputMetadata is an ARRAY in onnxruntime-node, so the
+      // by-name lookup in _resetVadRuntimeState always misses. Correct for the
+      // bundled model, and a guess for any other.
       if (output?.data && output.data.length === expectedLength) {
         this.vadStates.set(inputName, new Float32Array(output.data));
+        continue;
+      }
+
+      // Dropping the tensor here means the VAD runs stateless, which is the
+      // exact failure this PR exists to remove -- reached on a different axis,
+      // and previously in silence, because describeVadStatePairing reports
+      // ok: true for a pairing that is sound by name. Warned once per meeting
+      // rather than 31 times a second.
+      if (!this.warnedVadStateSizeMismatch) {
+        this.warnedVadStateSizeMismatch = true;
+        debugLogger.warn("VAD state output has the wrong size; running stateless", {
+          input: inputName,
+          output: pairs[inputName] || null,
+          expectedLength,
+          actualLength: output?.data?.length ?? null,
+        });
       }
     }
   }

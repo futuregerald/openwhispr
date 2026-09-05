@@ -1,7 +1,22 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
+const debugLogger = require("../../src/helpers/debugLogger");
 const { LiveSpeakerIdentifier } = require("../../src/helpers/liveSpeakerIdentifier");
+
+// Captures what the identifier warns about, so a silent failure is a test
+// failure. The whole point of this file is that a VAD which quietly runs
+// stateless looks identical to one that is working.
+function captureWarnings(run) {
+  const warnings = [];
+  const original = debugLogger.warn;
+  debugLogger.warn = (message, meta) => warnings.push({ message, meta });
+  return Promise.resolve()
+    .then(() => run(warnings))
+    .finally(() => {
+      debugLogger.warn = original;
+    });
+}
 
 // The Silero VAD is an LSTM: its `h`/`c` inputs must be fed back from the
 // `new_h`/`new_c` outputs of the previous window or it re-runs cold every 32 ms.
@@ -36,11 +51,16 @@ function fakeSession(inputNames, outputNames, stateShape = [2, 1, 64]) {
       );
       // Each run returns state filled with the run index + 1, so a carried
       // state is distinguishable from a zeroed one and from the run before it.
+      // The i-th state output is scaled by (i + 1) as well, so the two state
+      // tensors are distinguishable FROM EACH OTHER. Stamping them identically
+      // -- as this fake did -- made a cross-wire invisible: feeding `c` the
+      // `new_h` tensor left all 795 tests green, including the one named for
+      // pairing by name rather than position.
       const stamp = seen.length;
       const out = { [outputNames[0]]: { data: Float32Array.from([0.9]) } };
-      for (const name of outputNames.slice(1)) {
-        out[name] = { data: new Float32Array(size).fill(stamp) };
-      }
+      outputNames.slice(1).forEach((name, index) => {
+        out[name] = { data: new Float32Array(size).fill(stamp * (index + 1)) };
+      });
       return out;
     },
   };
@@ -57,10 +77,18 @@ function identifierWith(session) {
 
 const window512 = () => new Float32Array(512);
 
-for (const [label, inputs, outputs] of [
-  ["new_h/new_c — the bundled export", ["x", "h", "c", "sr"], ["prob", "new_h", "new_c"]],
-  ["hn/cn", ["x", "h", "c", "sr"], ["prob", "hn", "cn"]],
-  ["state/stateN", ["x", "state", "sr"], ["prob", "stateN"]],
+// `afterRun1` is written out literally rather than derived from the pairing the
+// code under test reports, so a cross-wire cannot quietly agree with its own
+// expectation. The first state output is stamped 1, the second 2.
+for (const [label, inputs, outputs, afterRun1] of [
+  [
+    "new_h/new_c — the bundled export",
+    ["x", "h", "c", "sr"],
+    ["prob", "new_h", "new_c"],
+    { h: 1, c: 2 },
+  ],
+  ["hn/cn", ["x", "h", "c", "sr"], ["prob", "hn", "cn"], { h: 1, c: 2 }],
+  ["state/stateN", ["x", "state", "sr"], ["prob", "stateN"], { state: 1 }],
 ]) {
   test(`carries recurrent state between windows — ${label}`, async () => {
     const session = fakeSession(inputs, outputs);
@@ -76,8 +104,9 @@ for (const [label, inputs, outputs] of [
         `${name} should start zeroed`
       );
       assert.ok(
-        session.seen[1][name].every((v) => v === 1),
-        `${name} should carry run 1's output into run 2, got ${session.seen[1][name][0]}`
+        session.seen[1][name].every((v) => v === afterRun1[name]),
+        `${name} should carry its OWN run-1 output (${afterRun1[name]}) into run 2, ` +
+          `got ${session.seen[1][name][0]}`
       );
     }
   });
@@ -92,8 +121,10 @@ test("pairs by name, not by position, when the outputs are declared out of order
 
   await identifier._getVadProbability(window512());
   await identifier._getVadProbability(window512());
-  assert.ok(session.seen[1].h.every((v) => v === 1));
-  assert.ok(session.seen[1].c.every((v) => v === 1));
+  // new_c is declared first and stamped 1; new_h second and stamped 2. Position
+  // would give h <- new_c, i.e. h === 1. These two numbers are the whole test.
+  assert.ok(session.seen[1].h.every((v) => v === 2), `h took ${session.seen[1].h[0]}`);
+  assert.ok(session.seen[1].c.every((v) => v === 1), `c took ${session.seen[1].c[0]}`);
 });
 
 test("reports a state input that pairs with nothing", () => {
@@ -153,11 +184,60 @@ test("an output that pairs by name but is the wrong size is not fed back as stat
   identifier._resetVadRuntimeState();
 
   assert.deepEqual(identifier.vadStatePairs.pairs, { h: "speech" });
-  await identifier._getVadProbability(window512());
-  await identifier._getVadProbability(window512());
+
+  const warnings = await captureWarnings(async (collected) => {
+    await identifier._getVadProbability(window512());
+    await identifier._getVadProbability(window512());
+    return collected;
+  });
 
   assert.equal(identifier.vadStates.get("h").length, 2 * 1 * 64);
   assert.ok(identifier.vadStates.get("h").every((v) => v === 0));
+
+  // describeVadStatePairing reports ok:true here -- the names DO pair -- so the
+  // load-time warning never fires and this is the only thing standing between a
+  // stateless VAD and total silence.
+  assert.equal(warnings.length, 1, "warned once, not once per 32 ms window");
+  assert.match(warnings[0].message, /stateless/);
+  assert.equal(warnings[0].meta.input, "h");
+  assert.equal(warnings[0].meta.output, "speech");
+  assert.equal(warnings[0].meta.expectedLength, 2 * 1 * 64);
+  assert.equal(warnings[0].meta.actualLength, 1);
+  assert.equal(identifier.vadStatePairs.ok, true, "the pairing itself is sound by name");
+});
+
+test("a clean run warns about nothing", async () => {
+  const session = fakeSession(["x", "h", "c", "sr"], ["prob", "new_h", "new_c"]);
+  const identifier = identifierWith(session);
+
+  const warnings = await captureWarnings(async (collected) => {
+    await identifier._getVadProbability(window512());
+    await identifier._getVadProbability(window512());
+    return collected;
+  });
+
+  assert.deepEqual(warnings, [], "a working VAD must not cry wolf 31 times a second");
+});
+
+test("the size-mismatch warning returns for the next meeting", async () => {
+  const session = fakeSession(["x", "h"], ["speech"]);
+  session.run = async () => ({ speech: { data: Float32Array.from([0.9]) } });
+  const identifier = new LiveSpeakerIdentifier();
+  identifier.session = session;
+  identifier.vadStateInputs = ["h"];
+  identifier.vadStateOutputs = ["speech"];
+
+  const perMeeting = async () => {
+    identifier._resetVadRuntimeState();
+    return captureWarnings(async (collected) => {
+      await identifier._getVadProbability(window512());
+      await identifier._getVadProbability(window512());
+      return collected;
+    });
+  };
+
+  assert.equal((await perMeeting()).length, 1);
+  assert.equal((await perMeeting()).length, 1, "a once-ever flag would hide the second meeting");
 });
 
 test("an unmatched state input leaves its state alone rather than taking a neighbour's", async () => {
