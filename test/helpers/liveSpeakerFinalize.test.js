@@ -484,25 +484,50 @@ test("a window at 0.4 does not open a segment, and 0.5 does", async () => {
   assert.equal(live.segmentStartSample, 512, "the segment starts at the window that opened it");
 });
 
-test("an open segment is held by 0.4 and released below 0.35", async () => {
+test("an open segment is held by 0.4, and a held window clears the hangover", async () => {
   const live = identifier();
   let probability = 0.9;
   live._getVadProbability = async () => probability;
   await live._processWindow(new Float32Array(512), 0, 512);
   assert.equal(live.speechActive, true);
 
+  // The hangover has to be NON-ZERO before the reset can be observed. Asserting
+  // it is 0 straight after the segment opened would pass whether or not the
+  // reset exists -- deleting it leaves the whole suite green, which is how this
+  // test was wrong the first time.
+  probability = 0.34;
+  await live._processWindow(new Float32Array(512), 512, 1024);
+  assert.equal(live.silenceWindows, 1, "0.34 is silence and starts the hangover");
+  assert.equal(live.speechActive, true, "one silent window does not end the segment");
+
   // 0.4 is below SPEECH_THRESHOLD but at or above SILENCE_THRESHOLD: Silero's
   // neg_threshold is deliberately lower than its onset, so a turn is not chopped
-  // in half by one quiet window.
+  // in half by a quiet stretch. Without the reset the counter would keep
+  // climbing across a whole turn and chop it at the 24th quiet window wherever
+  // they fell.
   probability = 0.4;
-  await live._processWindow(new Float32Array(512), 512, 1024);
-  assert.equal(live.speechActive, true, "0.4 must not end an open segment");
-  assert.equal(live.silenceWindows, 0, "and it must reset the hangover");
-
-  probability = 0.34;
   await live._processWindow(new Float32Array(512), 1024, 1536);
-  assert.equal(live.silenceWindows, 1, "0.34 is silence and starts the hangover");
-  assert.equal(live.speechActive, true, "but one silent window does not end the segment");
+  assert.equal(live.speechActive, true, "0.4 must not end an open segment");
+  assert.equal(live.silenceWindows, 0, "a held window clears the hangover");
+});
+
+test("the hangover ends a segment only after SILENCE_WINDOWS_TO_END silent windows", async () => {
+  const live = identifier();
+  let probability = 0.9;
+  live._getVadProbability = async () => probability;
+  await live._processWindow(new Float32Array(512), 0, 512);
+
+  // Below MIN_SEGMENT_SAMPLES, so _finalizeSpeechSegment returns early without
+  // touching the embedding model -- the segmentation is what is under test.
+  probability = 0.1;
+  for (let window = 0; window < 23; window += 1) {
+    await live._processWindow(new Float32Array(512), 512 + window * 512, 1024 + window * 512);
+  }
+  assert.equal(live.speechActive, true, "23 silent windows is not yet the end");
+  assert.equal(live.silenceWindows, 23);
+
+  await live._processWindow(new Float32Array(512), 512 + 23 * 512, 1024 + 23 * 512);
+  assert.equal(live.speechActive, false, "the 24th ends it");
 });
 
 // M7. Nothing set onSpeakerIdentified, so nothing asserted the user-visible
@@ -525,4 +550,40 @@ test("the identification emitted after a correction carries the corrected speake
   assert.equal(emitted.length, 1);
   assert.equal(emitted[0].speakerId, "speaker_0", "not the 1.6 s guess it replaced");
   assert.equal(emitted[0].displayName, "Alice");
+});
+
+// The runner-up is floored as well as the best match. Without it the duplicate
+// branch merges into a cluster the segment matched at 0.64 while the function
+// nominally enforces MATCH_THRESHOLD of 0.65 -- and this correction overrules a
+// label already stamped on the transcript, so it should not be the looser of the
+// two paths.
+test("a runner-up below MATCH_THRESHOLD does not trigger a duplicate merge", async () => {
+  const live = identifier();
+  // 0.66 and 0.64 against the segment: 0.02 apart, so acceptsMatch refuses, and
+  // 0.9997 to each other, so the duplicate test alone would fire.
+  seedCluster(live, "speaker_0", vec(0.66, 0.7513, 0));
+  seedCluster(live, "speaker_1", vec(0.64, 0.7684, 0));
+
+  const provisional = live._assignSpeakerId(ALICE);
+  live.currentSegmentSpeakerId = provisional;
+
+  await finalizeWith(live, ALICE);
+
+  assert.equal(
+    live.transientEmbeddings.size,
+    3,
+    "only one candidate cleared the floor, so there is no duplicate pair to merge"
+  );
+});
+
+// Unreachable from all three call sites today. It is guarded because the damage
+// is silent and total: set(keepId) followed by delete(removeId) on one id erases
+// the cluster, and the minted bookkeeping flips with it.
+test("a cluster cannot be merged into itself", () => {
+  const live = identifier();
+  seedCluster(live, "speaker_0", ALICE);
+
+  assert.equal(live._mergeTransientSpeakers("speaker_0", "speaker_0", 1.0), null);
+  assert.equal(live.transientEmbeddings.has("speaker_0"), true, "the cluster survives");
+  assert.equal(live.transientCounts.get("speaker_0"), 5, "and its history is untouched");
 });

@@ -314,6 +314,11 @@ class LiveSpeakerIdentifier {
   // Every per-speaker map has to move together, or the surviving id ends up half-owning
   // the merged speaker's state.
   _mergeTransientSpeakers(keepId, removeId, similarity) {
+    // Unreachable today from all three call sites, and it would erase the
+    // cluster outright -- set(keepId) then delete(removeId) on the same id --
+    // as well as flipping its minted status. One line to make that stay true.
+    if (keepId === removeId) return null;
+
     const keepEmb = this.transientEmbeddings.get(keepId);
     const removeEmb = this.transientEmbeddings.get(removeId);
     if (!keepEmb || !removeEmb) return null;
@@ -687,7 +692,7 @@ class LiveSpeakerIdentifier {
       //
       // expectedLength comes from DEFAULT_VAD_STATE_SHAPE rather than from the
       // model: session.inputMetadata is an ARRAY in onnxruntime-node, so the
-      // by-name lookup in _resetVadRuntimeState always misses. Correct for the
+      // by-name lookup in _getVadProbability always misses. Correct for the
       // bundled model, and a guess for any other.
       if (output?.data && output.data.length === expectedLength) {
         this.vadStates.set(inputName, new Float32Array(output.data));
@@ -827,7 +832,7 @@ class LiveSpeakerIdentifier {
     // change exists to correct. _resolveEstablishedMatch applies the same
     // duplicate test _performRecluster does, so a near-tie between two copies of
     // one voice resolves instead of blocking.
-    const matchId = this._resolveEstablishedMatch(embedding, this.segmentMintedSpeakerIds);
+    const matchId = this._resolveOrMergeEstablishedMatch(embedding, this.segmentMintedSpeakerIds);
 
     // No older cluster fits, or the two carry different identities: this really
     // is someone new, so the provisional survives. Deliberately routed back
@@ -866,7 +871,14 @@ class LiveSpeakerIdentifier {
   }
 
   /**
-   * The established cluster this segment belongs to, if one can be identified.
+   * The established cluster this segment belongs to, MERGING two duplicates of
+   * one speaker on the way if that is what the near-tie turns out to mean.
+   *
+   * Named for that write: it reads like a lookup and is not one, and the caller
+   * can still discard the answer afterwards on an identity conflict while the
+   * merge stands. The merge is sound in its own right -- it is a strict subset
+   * of what _performRecluster would do on its next tick -- but it is not safe to
+   * call this speculatively.
    *
    * _findTransientMatch alone cannot answer this in the state that matters
    * most. When one person holds eight or twelve duplicate clusters, the top two
@@ -887,7 +899,7 @@ class LiveSpeakerIdentifier {
    * there the alternative is minting yet another cluster, here the cluster
    * already exists, so guessing costs more than it saves.
    */
-  _resolveEstablishedMatch(embedding, excludedSpeakerIds = null) {
+  _resolveOrMergeEstablishedMatch(embedding, excludedSpeakerIds = null) {
     const { bestId, bestSimilarity, secondId, secondSimilarity } = this._findTopTransients(
       embedding,
       excludedSpeakerIds
@@ -901,7 +913,16 @@ class LiveSpeakerIdentifier {
       return bestId;
     }
 
-    if (!secondId || this._hasConflictingIdentity(bestId, secondId)) {
+    // The runner-up is floored too. Without this the duplicate branch could
+    // merge into a cluster the segment matched at 0.64 while the function
+    // nominally enforces 0.65 -- _assignOrForceCluster has the same gap, but a
+    // correction that overrules an already-stamped label should not be the
+    // looser of the two.
+    if (!secondId || secondSimilarity < MATCH_THRESHOLD) {
+      return null;
+    }
+
+    if (this._hasConflictingIdentity(bestId, secondId)) {
       return null;
     }
 
