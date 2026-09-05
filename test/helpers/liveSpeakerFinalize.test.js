@@ -428,3 +428,101 @@ test("clusters that do not match the segment are not merged on each other's acco
     "a segment that matches neither candidate is no reason to merge them"
   );
 });
+
+// M5. Both lifecycle clears of segmentMintedSpeakerIds are removable with the
+// suite green, because _finalizeSpeechSegment's clear covers the happy path.
+// They are load-bearing on its two EARLY RETURNS -- a segment below
+// MIN_SEGMENT_SAMPLES, and an embedding that comes back null -- neither of
+// which reaches that clear. A stale id surviving into the next segment is what
+// C1 is about, so these are not decorative.
+test("a segment too short to identify does not leak its minted ids into the next one", async () => {
+  const live = identifier();
+  const stale = live._assignSpeakerId(ALICE);
+
+  live.speechActive = true;
+  live.speechChunks = [new Float32Array(16000)]; // 1.0 s, below MIN_SEGMENT_SECONDS 1.5
+  live.segmentStartSample = 0;
+  live.segmentEndSample = 16000;
+  await live._finalizeSpeechSegment();
+
+  assert.equal(live.segmentMintedSpeakerIds.has(stale), true, "finalize returned early");
+
+  // The next window that opens a segment is what must clear it.
+  live._getVadProbability = async () => 0.9;
+  await live._processWindow(new Float32Array(512), 16000, 16512);
+
+  assert.equal(live.speechActive, true);
+  assert.deepEqual([...live.segmentMintedSpeakerIds], [], "a new segment starts with no guesses");
+});
+
+test("starting a meeting clears any minted ids left by the one before", () => {
+  const live = identifier();
+  live._assignSpeakerId(ALICE);
+  assert.equal(live.segmentMintedSpeakerIds.size, 1);
+
+  live._resetMeetingState();
+
+  assert.deepEqual([...live.segmentMintedSpeakerIds], []);
+});
+
+// M6. Nothing pinned SPEECH_THRESHOLD or SILENCE_THRESHOLD, and nothing
+// exercised _processWindow at all -- putting 0.5 back to 0.15 left the whole
+// suite green, on the riskiest change in this branch. These assert the
+// segmentation behaviour rather than the literals, so they survive a rename and
+// still fail on a value change.
+test("a window at 0.4 does not open a segment, and 0.5 does", async () => {
+  const live = identifier();
+  let probability = 0.4;
+  live._getVadProbability = async () => probability;
+
+  await live._processWindow(new Float32Array(512), 0, 512);
+  assert.equal(live.speechActive, false, "0.4 is below Silero's own 0.5 default");
+
+  probability = 0.5;
+  await live._processWindow(new Float32Array(512), 512, 1024);
+  assert.equal(live.speechActive, true);
+  assert.equal(live.segmentStartSample, 512, "the segment starts at the window that opened it");
+});
+
+test("an open segment is held by 0.4 and released below 0.35", async () => {
+  const live = identifier();
+  let probability = 0.9;
+  live._getVadProbability = async () => probability;
+  await live._processWindow(new Float32Array(512), 0, 512);
+  assert.equal(live.speechActive, true);
+
+  // 0.4 is below SPEECH_THRESHOLD but at or above SILENCE_THRESHOLD: Silero's
+  // neg_threshold is deliberately lower than its onset, so a turn is not chopped
+  // in half by one quiet window.
+  probability = 0.4;
+  await live._processWindow(new Float32Array(512), 512, 1024);
+  assert.equal(live.speechActive, true, "0.4 must not end an open segment");
+  assert.equal(live.silenceWindows, 0, "and it must reset the hangover");
+
+  probability = 0.34;
+  await live._processWindow(new Float32Array(512), 1024, 1536);
+  assert.equal(live.silenceWindows, 1, "0.34 is silence and starts the hangover");
+  assert.equal(live.speechActive, true, "but one silent window does not end the segment");
+});
+
+// M7. Nothing set onSpeakerIdentified, so nothing asserted the user-visible
+// outcome: that the identification emitted AFTER a correction carries the
+// merged-into id and that speaker's name. A correction that never reaches the
+// renderer relabels nothing.
+test("the identification emitted after a correction carries the corrected speaker", async () => {
+  const live = identifier();
+  seedCluster(live, "speaker_0", ALICE);
+  live.transientDisplayNames.set("speaker_0", "Alice");
+
+  const provisional = live._assignSpeakerId(ALICE_SHORT_WINDOW);
+  live.currentSegmentSpeakerId = provisional;
+
+  const emitted = [];
+  live.onSpeakerIdentified = (identification) => emitted.push(identification);
+
+  await finalizeWith(live, ALICE);
+
+  assert.equal(emitted.length, 1);
+  assert.equal(emitted[0].speakerId, "speaker_0", "not the 1.6 s guess it replaced");
+  assert.equal(emitted[0].displayName, "Alice");
+});
