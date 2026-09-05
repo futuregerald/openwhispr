@@ -294,3 +294,137 @@ test("a merge that cannot proceed leaves the minted set untouched", () => {
   assert.equal(live._mergeTransientSpeakers(minted, "speaker_gone", 0.9), null);
   assert.equal(live.segmentMintedSpeakerIds.has(minted), true);
 });
+
+// extractEmbeddingFromSamples rejects when the ONNX utility process crashes
+// (speakerEmbeddings.js), so stop()'s finalize can throw. It used to have no
+// try/catch, which meant one failed embedding cost the caller everything: the
+// transient state, the final merges, and the reset that the NEXT meeting needs.
+// stopLiveSpeakerIdentification's .catch(() => null) in ipcHandlers swallowed
+// it, so the loss was silent, and startLiveSpeakerIdentification awaits that
+// stop uncaught -- so the throw could also abort the next meeting's startup.
+test("stop() still returns the meeting's speakers when the last embedding fails", async () => {
+  const live = identifier();
+  seedCluster(live, "speaker_0", ALICE);
+  seedCluster(live, "speaker_1", BOB);
+
+  const provisional = live._assignSpeakerId(ALICE_SHORT_WINDOW);
+  live.currentSegmentSpeakerId = provisional;
+  live.speechActive = true;
+  live.speechChunks = [new Float32Array(16000 * 4)];
+  live.segmentEndSample = 16000 * 4;
+
+  const original = speakerEmbeddings.extractEmbeddingFromSamples;
+  speakerEmbeddings.extractEmbeddingFromSamples = async () => {
+    throw new Error("onnx worker exited");
+  };
+  let state;
+  try {
+    state = await live.stop();
+  } finally {
+    speakerEmbeddings.extractEmbeddingFromSamples = original;
+  }
+
+  assert.ok(
+    ["speaker_0", "speaker_1"].every((id) => id in state),
+    "the speakers identified before the crash must survive it"
+  );
+  assert.equal(live.speechActive, false, "the identifier is reset for the next meeting");
+  assert.equal(live.currentSegmentSpeakerId, null);
+  assert.equal(live.transientEmbeddings.size, 0);
+});
+
+// I6: finalize used plain nearest-neighbour, which cannot fire in the regime
+// this change exists for. When one person holds several duplicate clusters, the
+// top two candidates are both duplicates of that person -- within MATCH_MARGIN
+// of each other and below CONFIDENT_MATCH_THRESHOLD -- so acceptsMatch returns
+// false and no correction fires at all. This is a plausible mechanical reason
+// notes 22 and 23 stayed at 8 and 12 clusters for one real person.
+test("a segment matching two duplicate clusters of one person merges them", async () => {
+  const live = identifier();
+  // The band that matters, and it is narrow: both clusters score 0.707 and 0.735
+  // against the segment -- above MATCH_THRESHOLD 0.65, below
+  // CONFIDENT_MATCH_THRESHOLD 0.8 -- and 0.028 apart, inside MATCH_MARGIN 0.03.
+  // That combination is exactly what makes acceptsMatch refuse. Their centroids
+  // are 0.988 to each other, so they are two copies of one voice.
+  seedCluster(live, "speaker_0", vec(1, 1, 0));
+  seedCluster(live, "speaker_1", vec(1, 0.9, 0.2));
+
+  const provisional = live._assignSpeakerId(ALICE);
+  live.currentSegmentSpeakerId = provisional;
+
+  await finalizeWith(live, ALICE);
+
+  const survivors = [...live.transientEmbeddings.keys()];
+  assert.equal(survivors.length, 1, `one person, one cluster; got ${survivors.join(", ")}`);
+  assert.ok(
+    ["speaker_0", "speaker_1"].includes(survivors[0]),
+    "the survivor must be an established cluster, not this segment's guess"
+  );
+});
+
+// The other half of the same branch: two candidates that are near-tied against
+// the segment but genuinely UNLIKE each other are two different people. Merging
+// them is the failure mode of the fix above, so it must not happen.
+test("two near-tied candidates that are unlike each other are left as two people", async () => {
+  const live = identifier();
+  // Both ~0.707 to the segment embedding, but orthogonal to each other.
+  seedCluster(live, "speaker_0", ALICE);
+  seedCluster(live, "speaker_1", BOB);
+
+  const provisional = live._assignSpeakerId(vec(1, 0, 1));
+  live.currentSegmentSpeakerId = provisional;
+
+  await finalizeWith(live, vec(1, 0, 1));
+
+  assert.ok(
+    live.transientEmbeddings.has("speaker_0") && live.transientEmbeddings.has("speaker_1"),
+    "two unlike clusters are two people and must both survive"
+  );
+});
+
+// The duplicate-merge branch has to stay subordinate to identity. Two clusters
+// can look like copies of one voice and still be two people who have been named
+// -- a stored profile or a display name is stronger evidence than any cosine
+// score, which is the rule _performRecluster and _assignOrForceCluster already
+// follow.
+test("two near-tied clusters carrying different names are not merged by finalize", async () => {
+  const live = identifier();
+  seedCluster(live, "speaker_0", vec(1, 1, 0));
+  seedCluster(live, "speaker_1", vec(1, 0.9, 0.2));
+  live.transientDisplayNames.set("speaker_0", "Alice");
+  live.transientDisplayNames.set("speaker_1", "Bob");
+
+  const provisional = live._assignSpeakerId(ALICE);
+  live.currentSegmentSpeakerId = provisional;
+
+  await finalizeWith(live, ALICE);
+
+  assert.ok(
+    live.transientEmbeddings.has("speaker_0") && live.transientEmbeddings.has("speaker_1"),
+    "two named people must survive a cosine score that says they are one"
+  );
+  assert.equal(live.transientDisplayNames.get("speaker_0"), "Alice");
+  assert.equal(live.transientDisplayNames.get("speaker_1"), "Bob");
+});
+
+// The floor is what stops the duplicate-merge branch running on clusters that
+// have nothing to do with the speaker. Without it, a segment resembling NEITHER
+// candidate would still merge them, purely because they resemble each other.
+test("clusters that do not match the segment are not merged on each other's account", async () => {
+  const live = identifier();
+  // 0.447 and 0.477 against the segment: both well below MATCH_THRESHOLD, but
+  // 0.981 to each other, so the duplicate test alone would fire.
+  seedCluster(live, "speaker_0", vec(0.5, 1, 0));
+  seedCluster(live, "speaker_1", vec(0.5, 0.9, 0.2));
+
+  const provisional = live._assignSpeakerId(ALICE);
+  live.currentSegmentSpeakerId = provisional;
+
+  await finalizeWith(live, ALICE);
+
+  assert.equal(
+    live.transientEmbeddings.size,
+    3,
+    "a segment that matches neither candidate is no reason to merge them"
+  );
+});

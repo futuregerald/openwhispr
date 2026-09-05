@@ -225,7 +225,22 @@ class LiveSpeakerIdentifier {
     }
 
     if (this.speechActive) {
-      await this._finalizeSpeechSegment();
+      // extractEmbeddingFromSamples REJECTS when the ONNX worker crashes; it
+      // does not return null. Without this, the throw skips getTransientState,
+      // the final merges and _resetMeetingState, stopLiveSpeakerIdentification
+      // rejects, and ipcHandlers swallows it with .catch(() => null) -- losing
+      // the whole meeting's speaker state and leaving the identifier un-reset
+      // for the next meeting. The last utterance is worth less than everything
+      // before it.
+      try {
+        await this._finalizeSpeechSegment();
+      } catch (error) {
+        debugLogger.error("Finalizing the last speech segment failed", {
+          error: error.message,
+        });
+        this.speechActive = false;
+        this.speechChunks = [];
+      }
     }
 
     const transientState = this.getTransientState();
@@ -807,7 +822,12 @@ class LiveSpeakerIdentifier {
       return this._resolveSpeakerForEmbedding(embedding, { updateCentroid: true });
     }
 
-    const matchId = this._findTransientMatch(embedding, this.segmentMintedSpeakerIds);
+    // Not _findTransientMatch: plain nearest-neighbour cannot fire when one
+    // person holds several duplicate clusters, which is the state this whole
+    // change exists to correct. _resolveEstablishedMatch applies the same
+    // duplicate test _performRecluster does, so a near-tie between two copies of
+    // one voice resolves instead of blocking.
+    const matchId = this._resolveEstablishedMatch(embedding, this.segmentMintedSpeakerIds);
 
     // No older cluster fits, or the two carry different identities: this really
     // is someone new, so the provisional survives. Deliberately routed back
@@ -837,23 +857,66 @@ class LiveSpeakerIdentifier {
   }
 
   _findTransientMatch(embedding, excludedSpeakerIds = null) {
-    let bestSpeakerId = null;
-    let bestSimilarity = 0;
-    let secondBestSimilarity = 0;
+    const { bestId, bestSimilarity, secondSimilarity } = this._findTopTransients(
+      embedding,
+      excludedSpeakerIds
+    );
 
-    for (const [speakerId, centroid] of this.transientEmbeddings.entries()) {
-      if (excludedSpeakerIds?.has(speakerId)) continue;
-      const similarity = speakerEmbeddings.cosineSimilarity(embedding, centroid);
-      if (similarity > bestSimilarity) {
-        secondBestSimilarity = bestSimilarity;
-        bestSimilarity = similarity;
-        bestSpeakerId = speakerId;
-      } else if (similarity > secondBestSimilarity) {
-        secondBestSimilarity = similarity;
-      }
+    return acceptsMatch(bestSimilarity, secondSimilarity) ? bestId : null;
+  }
+
+  /**
+   * The established cluster this segment belongs to, if one can be identified.
+   *
+   * _findTransientMatch alone cannot answer this in the state that matters
+   * most. When one person holds eight or twelve duplicate clusters, the top two
+   * candidates are both duplicates of that person: within MATCH_MARGIN of each
+   * other and below CONFIDENT_MATCH_THRESHOLD, so acceptsMatch returns false and
+   * no correction fires — in exactly the case the correction exists for.
+   *
+   * _assignOrForceCluster already resolves this, and the test it uses is the one
+   * _performRecluster applies every 30 seconds: two candidates whose CENTROIDS
+   * are at or above MATCH_THRESHOLD to each other are duplicates of one speaker,
+   * so merging them is the answer rather than splitting further. Applying it
+   * here does not invent a policy — it applies the existing one a few seconds
+   * earlier, on the one occasion where it decides a correction.
+   *
+   * When the two are genuinely different people, no id is returned and the
+   * provisional survives. That is deliberately more conservative than
+   * _assignOrForceCluster, which returns its best match in the same situation:
+   * there the alternative is minting yet another cluster, here the cluster
+   * already exists, so guessing costs more than it saves.
+   */
+  _resolveEstablishedMatch(embedding, excludedSpeakerIds = null) {
+    const { bestId, bestSimilarity, secondId, secondSimilarity } = this._findTopTransients(
+      embedding,
+      excludedSpeakerIds
+    );
+
+    if (!bestId || bestSimilarity < MATCH_THRESHOLD) {
+      return null;
     }
 
-    return acceptsMatch(bestSimilarity, secondBestSimilarity) ? bestSpeakerId : null;
+    if (acceptsMatch(bestSimilarity, secondSimilarity)) {
+      return bestId;
+    }
+
+    if (!secondId || this._hasConflictingIdentity(bestId, secondId)) {
+      return null;
+    }
+
+    const clusterSimilarity = speakerEmbeddings.cosineSimilarity(
+      this.transientEmbeddings.get(bestId),
+      this.transientEmbeddings.get(secondId)
+    );
+    if (clusterSimilarity < MATCH_THRESHOLD) {
+      return null;
+    }
+
+    const keepFirst = this._preferredSurvivor(bestId, secondId);
+    const [keepId, removeId] = keepFirst ? [bestId, secondId] : [secondId, bestId];
+    this._mergeTransientSpeakers(keepId, removeId, clusterSimilarity);
+    return keepId;
   }
 
   _findStoredProfileMatch(embedding) {
@@ -1000,13 +1063,14 @@ class LiveSpeakerIdentifier {
     return (this.transientCounts.get(a) || 1) >= (this.transientCounts.get(b) || 1);
   }
 
-  _findTopTransients(embedding) {
+  _findTopTransients(embedding, excludedSpeakerIds = null) {
     let bestId = null;
     let bestSimilarity = -Infinity;
     let secondId = null;
     let secondSimilarity = -Infinity;
 
     for (const [speakerId, centroid] of this.transientEmbeddings.entries()) {
+      if (excludedSpeakerIds?.has(speakerId)) continue;
       const similarity = speakerEmbeddings.cosineSimilarity(embedding, centroid);
       if (similarity > bestSimilarity) {
         secondId = bestId;
