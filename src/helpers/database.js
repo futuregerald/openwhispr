@@ -659,9 +659,15 @@ class DatabaseManager {
   }
 
   // Drops the leftover cloud-sync columns from databases created before the
-  // hosted backend was removed. Failure is non-fatal: an undropped column is
-  // inert because nothing reads it.
+  // hosted backend was removed. Each failure is non-fatal: an undropped column
+  // is inert because nothing reads it.
+  //
+  // They are counted and reported together at the end, though. Logged one at a
+  // time and never totalled, a database where EVERY drop failed looked exactly
+  // like one where the work was already done -- both produce a launch that
+  // carries on and says nothing about the outcome.
   _dropCloudSyncColumns() {
+    const failures = [];
     const tables = [
       "transcriptions",
       "custom_dictionary",
@@ -681,6 +687,7 @@ class DatabaseManager {
       try {
         this.db.exec(`DROP INDEX IF EXISTS "${index.name}"`);
       } catch (error) {
+        failures.push({ target: `index ${index.name}`, error: error.message });
         debugLogger.error(
           "Failed to drop cloud sync index",
           { index: index.name, error: error.message },
@@ -698,6 +705,7 @@ class DatabaseManager {
         try {
           this.db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
         } catch (error) {
+          failures.push({ target: `${table}.${column}`, error: error.message });
           debugLogger.error(
             "Failed to drop cloud sync column",
             { table, column, error: error.message },
@@ -706,6 +714,19 @@ class DatabaseManager {
         }
       }
     }
+
+    if (failures.length > 0) {
+      debugLogger.warn(
+        "Some cloud sync columns could not be dropped",
+        {
+          count: failures.length,
+          targets: failures.map((failure) => failure.target),
+        },
+        "database"
+      );
+    }
+
+    return failures;
   }
 
   // Drains rows that the pre-removal cloud code soft-deleted. The cloud was the
