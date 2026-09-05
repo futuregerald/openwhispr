@@ -140,6 +140,66 @@ test("a failure is recorded rather than losing the job silently", async () => {
   assert.equal(row.last_error, "llama-server died");
 });
 
+// A `failed` row is a finished attempt, not a queued one. If it blocked new
+// requests, one failure would silently swallow every later enqueue for that
+// note -- a worse version of the bug this whole change exists to fix. It also
+// matters because _enqueuePostCallPipeline gates the large-model auto-download
+// on the return value.
+test("a failed job does not block a fresh request for the same note", async () => {
+  const { db, store } = freshStore();
+  const failing = queueWith(store, async () => {
+    throw new Error("llama-server died");
+  });
+
+  failing.queue.enqueueKind("post-call-80", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 80 });
+  await failing.queue.drain();
+  assert.equal(db.prepare("SELECT status FROM jobs WHERE job_key='post-call-80'").get().status, "failed");
+
+  const retry = queueWith(new JobStore(db));
+  assert.equal(
+    retry.queue.enqueueKind("post-call-80", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 80 }),
+    true,
+    "a new request must be accepted, not swallowed by the old failure"
+  );
+  await retry.queue.drain();
+
+  assert.deepEqual(retry.calls, [{ method: "run", noteId: 80 }]);
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE job_key='post-call-80'").get().n,
+    0,
+    "and it succeeded, so the row is gone"
+  );
+});
+
+test("reviving a failed job keeps its attempt count, so the bound still holds", async () => {
+  const { db, store } = freshStore();
+  const first = queueWith(store, async () => {
+    throw new Error("nope");
+  });
+  first.queue.enqueueKind("post-call-81", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 81 });
+  await first.queue.drain();
+
+  const revived = new JobStore(db).insert("post-call-81", JOB_KINDS.POST_CALL_PIPELINE, {
+    noteId: 81,
+  });
+
+  assert.equal(revived.status, "pending");
+  assert.equal(revived.attempts, 1, "the failed attempt still counts toward MAX_ATTEMPTS");
+  assert.equal(revived.last_error, null, "but the stale reason is cleared");
+});
+
+test("a job that is still queued is not revived out from under itself", () => {
+  const { store } = freshStore();
+  const row = store.insert("post-call-82", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 82 });
+  store.markRunning(row.id);
+
+  assert.equal(
+    store.insert("post-call-82", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 82 }),
+    null,
+    "a running job must not be re-queued and run twice"
+  );
+});
+
 test("enqueuing the same key twice runs the pipeline once", async () => {
   const { store } = freshStore();
   const { queue, calls } = queueWith(store);

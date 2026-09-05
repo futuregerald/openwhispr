@@ -24,23 +24,43 @@ class JobStore {
   }
 
   /**
-   * Records a job, or returns the existing row if this key is already queued.
+   * Records a job.
    *
-   * Returns null when the key is already present, so the caller can tell
-   * "queued" from "already queued" and not run the same pipeline twice.
+   * Returns the row to run, or null when this key is ALREADY QUEUED — which is
+   * what makes enqueuing "post-call-12" twice run the pipeline for note 12 once.
+   *
+   * A `failed` row is not "already queued": it is a finished attempt that did
+   * not work. Blocking a fresh request behind one would mean a single failure
+   * silently swallowed every later request for that note, which is a worse
+   * version of the bug this whole change exists to fix. So a failed row is
+   * revived with the new payload instead. `attempts` deliberately survives, so
+   * MAX_ATTEMPTS still bounds it.
    */
   insert(jobKey, kind, payload = {}) {
-    const result = this.db
-      .prepare(
-        `INSERT INTO jobs (job_key, kind, payload, status, attempts)
-         VALUES (?, ?, ?, '${PENDING}', 0)
-         ON CONFLICT(job_key) DO NOTHING`
-      )
-      .run(jobKey, kind, JSON.stringify(payload));
+    const existing = this.db.prepare("SELECT * FROM jobs WHERE job_key = ?").get(jobKey);
 
-    if (result.changes === 0) {
+    if (existing && existing.status !== FAILED) {
       return null;
     }
+
+    if (existing) {
+      this.db
+        .prepare(
+          `UPDATE jobs
+           SET status = '${PENDING}', kind = ?, payload = ?, last_error = NULL,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`
+        )
+        .run(kind, JSON.stringify(payload), existing.id);
+      return this.db.prepare("SELECT * FROM jobs WHERE id = ?").get(existing.id);
+    }
+
+    this.db
+      .prepare(
+        `INSERT INTO jobs (job_key, kind, payload, status, attempts)
+         VALUES (?, ?, ?, '${PENDING}', 0)`
+      )
+      .run(jobKey, kind, JSON.stringify(payload));
 
     return this.db.prepare("SELECT * FROM jobs WHERE job_key = ?").get(jobKey);
   }
