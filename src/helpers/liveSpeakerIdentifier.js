@@ -23,8 +23,14 @@ const LIVE_IDENTIFICATION_INTERVAL_SAMPLES = Math.round(
 );
 const MAX_EMBEDDING_SAMPLES = SAMPLE_RATE * MAX_EMBEDDING_SECONDS;
 const SPEECH_CHUNKS_MAX_SAMPLES = MAX_EMBEDDING_SAMPLES * 4;
-const SPEECH_THRESHOLD = 0.15;
-const SILENCE_THRESHOLD = 0.08;
+// Silero's own defaults: 0.5 to open a segment, and neg_threshold = 0.5 - 0.15
+// to keep one open. These have to move together with the VAD state fix below —
+// they were 0.15/0.08 because a stateless Silero peaks at 0.474 on real audio
+// and never once reaches 0.5, so they were percentiles of a crippled signal
+// rather than thresholds. Carrying the state without raising them would count
+// 13.4% of windows as speech where 9.6% are, which splits more, not less.
+const SPEECH_THRESHOLD = 0.5;
+const SILENCE_THRESHOLD = 0.35;
 const SILENCE_WINDOWS_TO_END = 24;
 const {
   MATCH_THRESHOLD,
@@ -124,6 +130,9 @@ class LiveSpeakerIdentifier {
     this.audioRemainder = new Float32Array(0);
     this.vadStateInputs = [];
     this.vadStateOutputs = [];
+    // Resolved once when the model loads: _updateVadState runs about 31 times a
+    // second and the answer cannot change while a session is open.
+    this.vadStatePairs = { ok: true, pairs: {}, unpaired: [] };
     this.vadStates = new Map();
     this.speechChunks = [];
     this.speechActive = false;
@@ -140,7 +149,9 @@ class LiveSpeakerIdentifier {
     this.nextLiveIndex = 0;
     this.currentSegmentSpeakerId = null;
     this.currentSegmentSpeakerName = null;
+    this.segmentMintedSpeakerIds = new Set();
     this.lastLiveIdentificationSample = 0;
+    this.finalMerges = [];
     this._diarizationManager = null;
     this.maxSpeakers = MAX_SPEAKER_COUNT;
     this.enabled = true;
@@ -214,11 +225,32 @@ class LiveSpeakerIdentifier {
     }
 
     if (this.speechActive) {
-      await this._finalizeSpeechSegment();
+      // extractEmbeddingFromSamples REJECTS when the ONNX worker crashes; it
+      // does not return null. Without this, the throw skips getTransientState,
+      // the final merges and _resetMeetingState, stopLiveSpeakerIdentification
+      // rejects, and ipcHandlers swallows it with .catch(() => null) -- losing
+      // the whole meeting's speaker state and leaving the identifier un-reset
+      // for the next meeting. The last utterance is worth less than everything
+      // before it.
+      try {
+        await this._finalizeSpeechSegment();
+      } catch (error) {
+        debugLogger.error("Finalizing the last speech segment failed", {
+          error: error.message,
+        });
+        this.speechActive = false;
+        this.speechChunks = [];
+      }
     }
 
     const transientState = this.getTransientState();
+    // The final utterance is assigned right above, after the caller's last
+    // recluster() — so any merge it produced is still pending, and
+    // _resetMeetingState is about to empty the list. Hand it to the caller
+    // instead of dropping every meeting's last correction on the floor.
+    const finalMerges = this._drainPendingMerges();
     this._resetMeetingState();
+    this.finalMerges = finalMerges;
     this.onSpeakerIdentified = null;
     this.getSpeakerProfiles = null;
     return transientState;
@@ -282,6 +314,11 @@ class LiveSpeakerIdentifier {
   // Every per-speaker map has to move together, or the surviving id ends up half-owning
   // the merged speaker's state.
   _mergeTransientSpeakers(keepId, removeId, similarity) {
+    // Unreachable today from all three call sites, and it would erase the
+    // cluster outright -- set(keepId) then delete(removeId) on the same id --
+    // as well as flipping its minted status. One line to make that stay true.
+    if (keepId === removeId) return null;
+
     const keepEmb = this.transientEmbeddings.get(keepId);
     const removeEmb = this.transientEmbeddings.get(removeId);
     if (!keepEmb || !removeEmb) return null;
@@ -309,6 +346,18 @@ class LiveSpeakerIdentifier {
         map.set(keepId, map.get(removeId));
       }
       map.delete(removeId);
+    }
+
+    // segmentMintedSpeakerIds answers "which clusters hold no evidence from
+    // before this segment", and a merge is the one operation that can make an
+    // id's membership disagree with that. The survivor has just absorbed
+    // removeId's whole history, so if removeId was established the survivor now
+    // is too — and _resolveFinalSegmentSpeaker must stop treating it as a 1.6 s
+    // guess it is free to overrule, which is how two real speakers became one.
+    const removeWasMinted = this.segmentMintedSpeakerIds.has(removeId);
+    this.segmentMintedSpeakerIds.delete(removeId);
+    if (!removeWasMinted) {
+      this.segmentMintedSpeakerIds.delete(keepId);
     }
 
     if (this.currentSegmentSpeakerId === removeId) {
@@ -344,6 +393,13 @@ class LiveSpeakerIdentifier {
     const drained = this.pendingMerges;
     this.pendingMerges = [];
     return drained;
+  }
+
+  // Merges recorded while stop() finalized the last utterance. Read once.
+  takeFinalMerges() {
+    const merges = this.finalMerges;
+    this.finalMerges = [];
+    return merges;
   }
 
   feedAudio(pcmBuffer) {
@@ -402,7 +458,17 @@ class LiveSpeakerIdentifier {
     this.vadStateOutputs = (this.session.outputNames || []).filter((name) =>
       /state|h|c/i.test(name)
     );
+
     this._resetVadRuntimeState();
+
+    if (!this.vadStatePairs.ok) {
+      debugLogger.warn("VAD recurrent state cannot be paired; running stateless", {
+        vadModelPath,
+        inputs: this.vadStateInputs,
+        outputs: this.vadStateOutputs,
+        unpaired: this.vadStatePairs.unpaired,
+      });
+    }
   }
 
   _resetMeetingState() {
@@ -423,12 +489,20 @@ class LiveSpeakerIdentifier {
     this.nextLiveIndex = 0;
     this.currentSegmentSpeakerId = null;
     this.currentSegmentSpeakerName = null;
+    this.segmentMintedSpeakerIds = new Set();
     this.lastLiveIdentificationSample = 0;
+    this.finalMerges = [];
     this._resetVadRuntimeState();
   }
 
   _resetVadRuntimeState() {
     this.vadStates = new Map();
+    this.warnedVadStateSizeMismatch = false;
+    // Resolved here rather than in _updateVadState, which runs about 31 times a
+    // second: the answer cannot change while the input and output name lists
+    // do not, and this is the one place that rebuilds everything derived from
+    // them.
+    this.vadStatePairs = this.describeVadStatePairing();
 
     if (!this.session) {
       return;
@@ -496,6 +570,7 @@ class LiveSpeakerIdentifier {
     this.silenceWindows = 0;
     this.currentSegmentSpeakerId = null;
     this.currentSegmentSpeakerName = null;
+    this.segmentMintedSpeakerIds.clear();
     this.lastLiveIdentificationSample = 0;
   }
 
@@ -546,20 +621,97 @@ class LiveSpeakerIdentifier {
     return typeof value === "number" ? value : 0;
   }
 
+  /**
+   * Which output tensor carries each state input's next value.
+   *
+   * Silero's exports name them inconsistently. The model bundled here says of
+   * itself "silero-vad v4 exported to onnx by k2-fsa" and pairs `h`/`c` with
+   * `new_h`/`new_c`; other exports use `hn`/`cn`, and the unified one turns
+   * `state` into `stateN`. So both a prefix and a suffix match are legitimate,
+   * and the prefix-only rule that shipped missed the bundled model in silence.
+   *
+   * Matching is by name only. Pairing by position instead would look tempting
+   * — ONNX Runtime reports names in the model's declared order — but the lists
+   * come from a substring filter, so an output merely containing an "h" or a
+   * "c", or outputs declared in a different order from the inputs, would pair a
+   * state input with someone else's tensor and say nothing. That is the same
+   * silent corruption this method exists to fix. An input that pairs with
+   * nothing is reported, not guessed at.
+   */
+  describeVadStatePairing() {
+    const pairs = {};
+    const unpaired = [];
+    const claimed = new Map();
+
+    for (const inputName of this.vadStateInputs) {
+      const expected = normalizeVadStateName(inputName);
+      const output = this.vadStateOutputs.find((outputName) => {
+        const actual = normalizeVadStateName(outputName);
+        return actual.startsWith(expected) || actual.endsWith(expected);
+      });
+
+      if (!output) {
+        unpaired.push(inputName);
+        continue;
+      }
+
+      // Two inputs matching one output means the names do not distinguish them,
+      // so neither pairing is trustworthy. Reported rather than resolved by
+      // arrival order, which would be a coin flip dressed as a decision.
+      const rival = claimed.get(output);
+      if (rival) {
+        delete pairs[rival];
+        unpaired.push(rival, inputName);
+        continue;
+      }
+
+      claimed.set(output, inputName);
+      pairs[inputName] = output;
+    }
+
+    return { ok: unpaired.length === 0, pairs, unpaired };
+  }
+
   _updateVadState(results) {
     if (!results) {
       return;
     }
 
-    for (const inputName of this.vadStateInputs) {
-      const expectedName = normalizeVadStateName(inputName);
-      const matchingOutput = this.vadStateOutputs.find((outputName) =>
-        normalizeVadStateName(outputName).startsWith(expectedName)
-      );
-      const output = (matchingOutput && results[matchingOutput]) || results[inputName];
+    const { pairs } = this.vadStatePairs;
 
-      if (output?.data) {
+    for (const inputName of this.vadStateInputs) {
+      const output = results[pairs[inputName]];
+      const expectedLength = this.vadStates.get(inputName)?.length;
+
+      // A name match is not proof of a state tensor: the output list comes from
+      // a substring filter, so a probability output whose name happens to end
+      // in "h" or "c" can pair with a state input. Feeding its one element back
+      // as state would throw on the next window; running stateless is the
+      // failure this whole method is fixing, but it is still the better of the
+      // two, and the size is the only honest way to tell them apart.
+      //
+      // expectedLength comes from DEFAULT_VAD_STATE_SHAPE rather than from the
+      // model: session.inputMetadata is an ARRAY in onnxruntime-node, so the
+      // by-name lookup in _getVadProbability always misses. Correct for the
+      // bundled model, and a guess for any other.
+      if (output?.data && output.data.length === expectedLength) {
         this.vadStates.set(inputName, new Float32Array(output.data));
+        continue;
+      }
+
+      // Dropping the tensor here means the VAD runs stateless, which is the
+      // exact failure this PR exists to remove -- reached on a different axis,
+      // and previously in silence, because describeVadStatePairing reports
+      // ok: true for a pairing that is sound by name. Warned once per meeting
+      // rather than 31 times a second.
+      if (!this.warnedVadStateSizeMismatch) {
+        this.warnedVadStateSizeMismatch = true;
+        debugLogger.warn("VAD state output has the wrong size; running stateless", {
+          input: inputName,
+          output: pairs[inputName] || null,
+          expectedLength,
+          actualLength: output?.data?.length ?? null,
+        });
       }
     }
   }
@@ -624,7 +776,7 @@ class LiveSpeakerIdentifier {
       return;
     }
 
-    const resolved = this._resolveSpeakerForEmbedding(embedding, { updateCentroid: true });
+    const resolved = this._resolveFinalSegmentSpeaker(embedding);
     if (!resolved?.speakerId) {
       return;
     }
@@ -647,26 +799,145 @@ class LiveSpeakerIdentifier {
 
     this.currentSegmentSpeakerId = null;
     this.currentSegmentSpeakerName = null;
+    this.segmentMintedSpeakerIds.clear();
     this.lastLiveIdentificationSample = 0;
   }
 
-  _findTransientMatch(embedding) {
-    let bestSpeakerId = null;
-    let bestSimilarity = 0;
-    let secondBestSimilarity = 0;
-
-    for (const [speakerId, centroid] of this.transientEmbeddings.entries()) {
-      const similarity = speakerEmbeddings.cosineSimilarity(embedding, centroid);
-      if (similarity > bestSimilarity) {
-        secondBestSimilarity = bestSimilarity;
-        bestSimilarity = similarity;
-        bestSpeakerId = speakerId;
-      } else if (similarity > secondBestSimilarity) {
-        secondBestSimilarity = similarity;
-      }
+  /**
+   * Who the segment belonged to, decided on the whole segment rather than on
+   * its first 1.6 seconds.
+   *
+   * The provisional decision is made as soon as a segment reaches 1.6 s, where
+   * 79% of same-speaker pairs score below MATCH_THRESHOLD; by 3 s only 2% do.
+   * Finalize already computes a far better embedding — the best window of the
+   * whole segment — and used to throw it away, because
+   * _resolveSpeakerForEmbedding short-circuits on currentSegmentSpeakerId.
+   *
+   * The provisional cluster is excluded from the comparison rather than merely
+   * deprioritised. Its centroid IS a window of this same segment, so it scores
+   * near-perfectly against the full-segment embedding and acceptsMatch takes
+   * anything at or above CONFIDENT_MATCH_THRESHOLD outright — the guess would
+   * vouch for itself and nothing would ever be corrected.
+   */
+  _resolveFinalSegmentSpeaker(embedding) {
+    const provisionalId = this.currentSegmentSpeakerId;
+    if (!provisionalId || !this.segmentMintedSpeakerIds.has(provisionalId)) {
+      // An established cluster is real evidence from before this segment, so it
+      // keeps the existing behaviour. Overruling it here would merge two people.
+      return this._resolveSpeakerForEmbedding(embedding, { updateCentroid: true });
     }
 
-    return acceptsMatch(bestSimilarity, secondBestSimilarity) ? bestSpeakerId : null;
+    // Not _findTransientMatch: plain nearest-neighbour cannot fire when one
+    // person holds several duplicate clusters, which is the state this whole
+    // change exists to correct. _resolveEstablishedMatch applies the same
+    // duplicate test _performRecluster does, so a near-tie between two copies of
+    // one voice resolves instead of blocking.
+    const matchId = this._resolveOrMergeEstablishedMatch(embedding, this.segmentMintedSpeakerIds);
+
+    // No older cluster fits, or the two carry different identities: this really
+    // is someone new, so the provisional survives. Deliberately routed back
+    // through _resolveSpeakerForEmbedding, whose currentSegmentSpeakerId
+    // short-circuit is what keeps it from minting a SECOND cluster for one
+    // segment. If that short-circuit is ever removed, the "no second cluster is
+    // minted" test in liveSpeakerFinalize.test.js is what says so.
+    if (!matchId || this._hasConflictingIdentity(matchId, provisionalId)) {
+      return this._resolveSpeakerForEmbedding(embedding, { updateCentroid: true });
+    }
+
+    const similarity = speakerEmbeddings.cosineSimilarity(
+      embedding,
+      this.transientEmbeddings.get(matchId)
+    );
+    // A merge, not a second identification: ipcHandlers.js only stamps a
+    // transcript segment while it is still a placeholder, and the provisional
+    // identification already confirmed it. Merges are the one channel that
+    // relabels a segment that has already been stamped.
+    this._mergeTransientSpeakers(matchId, provisionalId, similarity);
+    this._updateCentroid(matchId, embedding);
+
+    return {
+      speakerId: matchId,
+      displayName: this.transientDisplayNames.get(matchId) || null,
+    };
+  }
+
+  _findTransientMatch(embedding, excludedSpeakerIds = null) {
+    const { bestId, bestSimilarity, secondSimilarity } = this._findTopTransients(
+      embedding,
+      excludedSpeakerIds
+    );
+
+    return acceptsMatch(bestSimilarity, secondSimilarity) ? bestId : null;
+  }
+
+  /**
+   * The established cluster this segment belongs to, MERGING two duplicates of
+   * one speaker on the way if that is what the near-tie turns out to mean.
+   *
+   * Named for that write: it reads like a lookup and is not one, and the caller
+   * can still discard the answer afterwards on an identity conflict while the
+   * merge stands. The merge is sound in its own right -- it is a strict subset
+   * of what _performRecluster would do on its next tick -- but it is not safe to
+   * call this speculatively.
+   *
+   * _findTransientMatch alone cannot answer this in the state that matters
+   * most. When one person holds eight or twelve duplicate clusters, the top two
+   * candidates are both duplicates of that person: within MATCH_MARGIN of each
+   * other and below CONFIDENT_MATCH_THRESHOLD, so acceptsMatch returns false and
+   * no correction fires — in exactly the case the correction exists for.
+   *
+   * _assignOrForceCluster already resolves this, and the test it uses is the one
+   * _performRecluster applies every 30 seconds: two candidates whose CENTROIDS
+   * are at or above MATCH_THRESHOLD to each other are duplicates of one speaker,
+   * so merging them is the answer rather than splitting further. Applying it
+   * here does not invent a policy — it applies the existing one a few seconds
+   * earlier, on the one occasion where it decides a correction.
+   *
+   * When the two are genuinely different people, no id is returned and the
+   * provisional survives. That is deliberately more conservative than
+   * _assignOrForceCluster, which returns its best match in the same situation:
+   * there the alternative is minting yet another cluster, here the cluster
+   * already exists, so guessing costs more than it saves.
+   */
+  _resolveOrMergeEstablishedMatch(embedding, excludedSpeakerIds = null) {
+    const { bestId, bestSimilarity, secondId, secondSimilarity } = this._findTopTransients(
+      embedding,
+      excludedSpeakerIds
+    );
+
+    if (!bestId || bestSimilarity < MATCH_THRESHOLD) {
+      return null;
+    }
+
+    if (acceptsMatch(bestSimilarity, secondSimilarity)) {
+      return bestId;
+    }
+
+    // The runner-up is floored too. Without this the duplicate branch could
+    // merge into a cluster the segment matched at 0.64 while the function
+    // nominally enforces 0.65 -- _assignOrForceCluster has the same gap, but a
+    // correction that overrules an already-stamped label should not be the
+    // looser of the two.
+    if (!secondId || secondSimilarity < MATCH_THRESHOLD) {
+      return null;
+    }
+
+    if (this._hasConflictingIdentity(bestId, secondId)) {
+      return null;
+    }
+
+    const clusterSimilarity = speakerEmbeddings.cosineSimilarity(
+      this.transientEmbeddings.get(bestId),
+      this.transientEmbeddings.get(secondId)
+    );
+    if (clusterSimilarity < MATCH_THRESHOLD) {
+      return null;
+    }
+
+    const keepFirst = this._preferredSurvivor(bestId, secondId);
+    const [keepId, removeId] = keepFirst ? [bestId, secondId] : [secondId, bestId];
+    this._mergeTransientSpeakers(keepId, removeId, clusterSimilarity);
+    return keepId;
   }
 
   _findStoredProfileMatch(embedding) {
@@ -813,13 +1084,14 @@ class LiveSpeakerIdentifier {
     return (this.transientCounts.get(a) || 1) >= (this.transientCounts.get(b) || 1);
   }
 
-  _findTopTransients(embedding) {
+  _findTopTransients(embedding, excludedSpeakerIds = null) {
     let bestId = null;
     let bestSimilarity = -Infinity;
     let secondId = null;
     let secondSimilarity = -Infinity;
 
     for (const [speakerId, centroid] of this.transientEmbeddings.entries()) {
+      if (excludedSpeakerIds?.has(speakerId)) continue;
       const similarity = speakerEmbeddings.cosineSimilarity(embedding, centroid);
       if (similarity > bestSimilarity) {
         secondId = bestId;
@@ -850,6 +1122,10 @@ class LiveSpeakerIdentifier {
     this.nextLiveIndex += 1;
     this.transientEmbeddings.set(speakerId, cloneFloat32Array(embedding));
     this.transientCounts.set(speakerId, 1);
+    // Recorded here rather than at the call sites so that a cluster minted from
+    // 1.6 s of audio can never be mistaken, at finalize, for evidence that
+    // existed before this segment started.
+    this.segmentMintedSpeakerIds.add(speakerId);
     return speakerId;
   }
 

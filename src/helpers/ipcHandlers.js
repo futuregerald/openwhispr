@@ -5004,14 +5004,16 @@ class IPCHandlers {
       }
 
       meetingLiveSpeakerActive = false;
-      // Merges made since the last timer tick — including any made while assigning the
-      // final utterances — must land in meetingDiarizationSegments before it is
-      // snapshotted for the saved note.
-      applyLiveSpeakerMerges(
-        await liveSpeakerIdentifier.recluster(),
-        meetingLocalWin || this.windowManager.controlPanelWindow
-      );
+      const win = meetingLocalWin || this.windowManager.controlPanelWindow;
+      // Merges made since the last timer tick must land in
+      // meetingDiarizationSegments before it is snapshotted for the saved note.
+      applyLiveSpeakerMerges(await liveSpeakerIdentifier.recluster(), win);
       meetingLiveSpeakerState = await liveSpeakerIdentifier.stop();
+      // The last utterance of the meeting is assigned inside stop(), after the
+      // recluster above — so its merges are recorded too late for that drain and
+      // used to be discarded by _resetMeetingState. Every meeting lost the
+      // correction for its final segment.
+      applyLiveSpeakerMerges(liveSpeakerIdentifier.takeFinalMerges(), win);
       return meetingLiveSpeakerState;
     };
 
