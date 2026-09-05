@@ -231,24 +231,35 @@ export default function PersonalNotesView({
   // window was closed -- which is exactly the set of notes worth retrying.
   const [retrySteps, setRetrySteps] = useState<Record<number, string | null>>({});
 
-  useEffect(() => {
-    if (!window.electronAPI?.getNoteRetryStep) return;
-    let cancelled = false;
-    const meetings = notes.filter((n) => n.note_type === "meeting");
+  // Keyed on the ids rather than on `notes`, which is a fresh array on every
+  // render — depending on it directly would re-query on every keystroke.
+  const meetingIdsKey = useMemo(
+    () =>
+      notes
+        .filter((n) => n.note_type === "meeting")
+        .map((n) => n.id)
+        .join(","),
+    [notes]
+  );
 
+  useEffect(() => {
+    if (!window.electronAPI?.getNoteRetrySteps) return;
+    const meetingIds = meetingIdsKey ? meetingIdsKey.split(",").map(Number) : [];
+    if (meetingIds.length === 0) {
+      setRetrySteps({});
+      return;
+    }
+
+    let cancelled = false;
     (async () => {
-      const resolved: Record<number, string | null> = {};
-      for (const note of meetings) {
-        const result = await window.electronAPI?.getNoteRetryStep?.(note.id);
-        resolved[note.id] = result?.success ? (result.step ?? null) : null;
-      }
-      if (!cancelled) setRetrySteps(resolved);
+      const result = await window.electronAPI?.getNoteRetrySteps?.(meetingIds);
+      if (!cancelled && result?.success) setRetrySteps(result.steps ?? {});
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [notes]);
+  }, [meetingIdsKey]);
 
   // Retries just the step that failed. "Reprocess all meetings" re-runs
   // everything from re-transcription and overwrites every existing note, so it

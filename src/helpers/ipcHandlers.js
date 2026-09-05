@@ -7274,7 +7274,10 @@ class IPCHandlers {
       // An unrecognised step used to run the WHOLE pipeline, re-transcription
       // included, because STEP_ORDER.indexOf returns -1 and -1 <= 0. Refuse
       // rather than silently doing the most expensive possible thing.
-      if (fromStep !== undefined && !isPipelineStep(fromStep)) {
+      // null and undefined both mean "from the start", which is what
+      // postCallPipelineManager.run does with no fromStep. Only a non-empty
+      // value that is not a real step is refused.
+      if (fromStep != null && !isPipelineStep(fromStep)) {
         return { success: false, error: `Unknown pipeline step: ${fromStep}` };
       }
 
@@ -7286,17 +7289,26 @@ class IPCHandlers {
       return { success: true, queued };
     });
 
-    // Which step a note is actually stuck on.
+    // Which step each note is actually stuck on.
     //
     // The renderer's pipeline store is in-memory and fed by a live broadcast, so
     // it knows nothing about a run that failed while the control panel was shut
     // -- which is the situation of every meeting that currently has a transcript
     // and no notes. The note's own columns are the only durable record, so the
     // answer comes from them.
-    ipcMain.handle("get-note-retry-step", async (_event, noteId) => {
-      const note = this.databaseManager.getNote(noteId);
-      if (!note) return { success: false, error: "Note not found" };
-      return { success: true, ...resolveRetryStep(note) };
+    //
+    // Takes a LIST rather than one id: the notes list asks about every meeting
+    // it shows, and one round trip per note would be a few dozen on every
+    // change to the list.
+    ipcMain.handle("get-note-retry-steps", async (_event, noteIds) => {
+      if (!Array.isArray(noteIds)) return { success: false, error: "Expected a list of note ids" };
+
+      const steps = {};
+      for (const noteId of noteIds) {
+        const note = this.databaseManager.getNote(noteId);
+        steps[noteId] = note ? resolveRetryStep(note).step : null;
+      }
+      return { success: true, steps };
     });
 
     ipcMain.handle("reprocess-all-meetings", async () => {

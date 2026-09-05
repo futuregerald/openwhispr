@@ -440,12 +440,11 @@ declare global {
         noteId: number,
         fromStep: string
       ) => Promise<{ success: boolean; error?: string; queued?: boolean }>;
-      getNoteRetryStep?: (
-        noteId: number
+      getNoteRetrySteps?: (
+        noteIds: number[]
       ) => Promise<{
         success: boolean;
-        step?: string | null;
-        reason?: string;
+        steps?: Record<number, string | null>;
         error?: string;
       }>;
       reprocessAllMeetings?: () => Promise<{ success: boolean; count: number; error?: string }>;

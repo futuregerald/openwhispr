@@ -349,7 +349,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getPipelineStatus: () => ipcRenderer.invoke("get-pipeline-status"),
   retryPipelineStep: (noteId, fromStep) =>
     ipcRenderer.invoke("retry-pipeline-step", noteId, fromStep),
-  getNoteRetryStep: (noteId) => ipcRenderer.invoke("get-note-retry-step", noteId),
+  getNoteRetrySteps: (noteIds) => ipcRenderer.invoke("get-note-retry-steps", noteIds),
   reprocessAllMeetings: () => ipcRenderer.invoke("reprocess-all-meetings"),
   regenerateNotes: (noteId, meetingTypeId) =>
     ipcRenderer.invoke("regenerate-notes", noteId, meetingTypeId),
