@@ -5,6 +5,8 @@ const os = require("os");
 const crypto = require("crypto");
 const debugLogger = require("./debugLogger");
 const { JOB_KINDS } = require("./jobDispatch");
+const { isPipelineStep } = require("./postCallPipelineManager");
+const { resolveRetryStep } = require("./noteRetryStep");
 const meetingDetectionHealth = require("./meetingDetectionHealth");
 const { BYOK_API_KEYS } = require("../config/secretKeys");
 const { classifyAndLog } = require("./networkErrors");
@@ -7269,12 +7271,32 @@ class IPCHandlers {
     }));
 
     ipcMain.handle("retry-pipeline-step", async (_event, noteId, fromStep) => {
+      // An unrecognised step used to run the WHOLE pipeline, re-transcription
+      // included, because STEP_ORDER.indexOf returns -1 and -1 <= 0. Refuse
+      // rather than silently doing the most expensive possible thing.
+      if (fromStep !== undefined && !isPipelineStep(fromStep)) {
+        return { success: false, error: `Unknown pipeline step: ${fromStep}` };
+      }
+
       const queued = this.backgroundJobQueue.enqueueKind(
         `post-call-retry-${noteId}`,
         JOB_KINDS.POST_CALL_PIPELINE,
         { noteId, fromStep }
       );
       return { success: true, queued };
+    });
+
+    // Which step a note is actually stuck on.
+    //
+    // The renderer's pipeline store is in-memory and fed by a live broadcast, so
+    // it knows nothing about a run that failed while the control panel was shut
+    // -- which is the situation of every meeting that currently has a transcript
+    // and no notes. The note's own columns are the only durable record, so the
+    // answer comes from them.
+    ipcMain.handle("get-note-retry-step", async (_event, noteId) => {
+      const note = this.databaseManager.getNote(noteId);
+      if (!note) return { success: false, error: "Note not found" };
+      return { success: true, ...resolveRetryStep(note) };
     });
 
     ipcMain.handle("reprocess-all-meetings", async () => {

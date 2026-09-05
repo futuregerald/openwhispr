@@ -8,6 +8,14 @@ const { runNoteAction } = require("./noteActionRunner");
 
 const STEP_ORDER = ["retranscribe", "title", "classify", "notes"];
 
+// STEP_ORDER.indexOf returns -1 for anything unrecognised, and -1 <= 0, so an
+// unvalidated fromStep silently ran the ENTIRE pipeline including
+// re-transcription -- the most expensive thing the app does, in response to a
+// typo. Callers validate first.
+function isPipelineStep(step) {
+  return STEP_ORDER.includes(step);
+}
+
 const TITLE_PLACEHOLDER_KEYS = [
   "notes.list.untitledNote",
   "notes.list.newNote",
@@ -572,4 +580,10 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
   }
 }
 
-module.exports = { PostCallPipelineManager, GENERIC_NOTES_PROMPT, buildTypedNotesPrompt };
+module.exports = {
+  PostCallPipelineManager,
+  GENERIC_NOTES_PROMPT,
+  buildTypedNotesPrompt,
+  STEP_ORDER,
+  isPipelineStep,
+};

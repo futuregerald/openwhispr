@@ -1952,7 +1952,15 @@
       "searchFolders": "Rechercher des dossiers...",
       "noResults": "Aucun dossier trouvé",
       "newFolder": "Nouveau dossier",
-      "showInFileManager": "Afficher dans {{manager}}"
+      "showInFileManager": "Afficher dans {{manager}}",
+      "retry": {
+        "retranscribe": "Relancer la transcription",
+        "title": "Relancer le titre",
+        "classify": "Relancer le type de réunion",
+        "notes": "Relancer les notes"
+      },
+      "retryQueued": "Mise en file pour retraitement",
+      "retryFailed": "Impossible de mettre cette note en file"
     },
     "actions": {
       "done": "Terminé",

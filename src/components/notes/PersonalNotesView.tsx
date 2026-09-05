@@ -225,6 +225,48 @@ export default function PersonalNotesView({
     });
   }, [showConfirmDialog, toast, t]);
 
+  // Which pipeline step each note is stuck on, if any. Resolved in the main
+  // process from the note's own columns rather than from the pipeline store,
+  // which is in-memory and therefore blank for every run that failed while this
+  // window was closed -- which is exactly the set of notes worth retrying.
+  const [retrySteps, setRetrySteps] = useState<Record<number, string | null>>({});
+
+  useEffect(() => {
+    if (!window.electronAPI?.getNoteRetryStep) return;
+    let cancelled = false;
+    const meetings = notes.filter((n) => n.note_type === "meeting");
+
+    (async () => {
+      const resolved: Record<number, string | null> = {};
+      for (const note of meetings) {
+        const result = await window.electronAPI?.getNoteRetryStep?.(note.id);
+        resolved[note.id] = result?.success ? (result.step ?? null) : null;
+      }
+      if (!cancelled) setRetrySteps(resolved);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [notes]);
+
+  // Retries just the step that failed. "Reprocess all meetings" re-runs
+  // everything from re-transcription and overwrites every existing note, so it
+  // was never a way to fix one meeting.
+  const handleRetryPipeline = useCallback(
+    async (noteId: number) => {
+      const step = retrySteps[noteId];
+      if (!step) return;
+      const result = await window.electronAPI?.retryPipelineStep?.(noteId, step);
+      toast({
+        title: result?.success
+          ? t("notes.context.retryQueued")
+          : t("notes.context.retryFailed"),
+      });
+    },
+    [retrySteps, toast, t]
+  );
+
   const activeNote = notes.find((n) => n.id === activeNoteId) ?? null;
 
   // Derive folder name and calendar event name for the metadata chips
@@ -969,6 +1011,8 @@ export default function PersonalNotesView({
                   dragHandlers={noteDragHandlers(note.id, note.title)}
                   isDragging={dragState.draggingNoteId === note.id}
                   noteFilesEnabled={noteFilesEnabled}
+                  retryStep={retrySteps[note.id] ?? null}
+                  onRetryPipeline={handleRetryPipeline}
                 />
               ))
             )}

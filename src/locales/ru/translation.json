@@ -1896,7 +1896,15 @@
       "searchFolders": "Поиск папок...",
       "noResults": "Папки не найдены",
       "newFolder": "Новая папка",
-      "showInFileManager": "Показать в {{manager}}"
+      "showInFileManager": "Показать в {{manager}}",
+      "retry": {
+        "retranscribe": "Повторить расшифровку",
+        "title": "Повторить заголовок",
+        "classify": "Повторить тип встречи",
+        "notes": "Повторить заметки"
+      },
+      "retryQueued": "В очереди на повторную обработку",
+      "retryFailed": "Не удалось поставить заметку в очередь"
     },
     "actions": {
       "manage": "Управление действиями...",

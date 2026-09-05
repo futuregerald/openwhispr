@@ -8,6 +8,7 @@ import {
   Plus,
   Search,
   ExternalLink,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "../ui/button";
 import {
@@ -47,6 +48,15 @@ interface NoteListItemProps {
   };
   isDragging?: boolean;
   noteFilesEnabled?: boolean;
+  onRetryPipeline?: (noteId: number) => void;
+  /**
+   * Which pipeline step this note is stuck on, or null when there is nothing to
+   * retry. Resolved in the main process from the note's own columns, because
+   * the renderer's pipeline store is in-memory and knows nothing about a run
+   * that failed while this window was closed -- which is the state of every
+   * meeting that has a transcript and no notes.
+   */
+  retryStep?: string | null;
 }
 
 function stripMarkdown(text: string): string {
@@ -91,6 +101,8 @@ export default function NoteListItem({
   dragHandlers,
   isDragging,
   noteFilesEnabled,
+  onRetryPipeline,
+  retryStep,
 }: NoteListItemProps) {
   const { t } = useTranslation();
   const preview = stripMarkdown(note.content);
@@ -267,6 +279,24 @@ export default function NoteListItem({
                     )}
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
+                {retryStep && onRetryPipeline && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRetryPipeline(note.id);
+                      }}
+                      className="text-xs gap-2 rounded-lg px-2.5 py-1.5 cursor-pointer focus:bg-foreground/5"
+                    >
+                      <RefreshCw
+                        size={12}
+                        className="text-muted-foreground/80 dark:text-muted-foreground/60"
+                      />
+                      {t(`notes.context.retry.${retryStep}`)}
+                    </DropdownMenuItem>
+                  </>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={(e) => {
