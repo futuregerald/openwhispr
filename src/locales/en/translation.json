@@ -1990,7 +1990,15 @@
       "searchFolders": "Search folders...",
       "noResults": "No folders found",
       "newFolder": "New folder",
-      "showInFileManager": "Show in {{manager}}"
+      "showInFileManager": "Show in {{manager}}",
+      "retry": {
+        "retranscribe": "Retry transcription",
+        "title": "Retry title",
+        "notes": "Retry notes"
+      },
+      "retryQueued": "Queued for reprocessing",
+      "retryFailed": "Could not queue this note",
+      "retryAlreadyQueued": "Already being reprocessed"
     },
     "actions": {
       "done": "Done",

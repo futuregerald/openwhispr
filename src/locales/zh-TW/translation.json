@@ -1896,7 +1896,15 @@
       "searchFolders": "搜尋資料夾...",
       "noResults": "找不到資料夾",
       "newFolder": "新增資料夾",
-      "showInFileManager": "在{{manager}}中顯示"
+      "showInFileManager": "在{{manager}}中顯示",
+      "retry": {
+        "retranscribe": "重新轉錄",
+        "title": "重新產生標題",
+        "notes": "重新產生筆記"
+      },
+      "retryQueued": "已加入重新處理佇列",
+      "retryFailed": "無法將此筆記加入佇列",
+      "retryAlreadyQueued": "已在重新處理中"
     },
     "actions": {
       "manage": "管理動作...",

@@ -1896,7 +1896,15 @@
       "searchFolders": "搜索文件夹...",
       "noResults": "未找到文件夹",
       "newFolder": "新建文件夹",
-      "showInFileManager": "在{{manager}}中显示"
+      "showInFileManager": "在{{manager}}中显示",
+      "retry": {
+        "retranscribe": "重新转录",
+        "title": "重新生成标题",
+        "notes": "重新生成笔记"
+      },
+      "retryQueued": "已加入重新处理队列",
+      "retryFailed": "无法将此笔记加入队列",
+      "retryAlreadyQueued": "已在重新处理中"
     },
     "actions": {
       "manage": "管理操作...",

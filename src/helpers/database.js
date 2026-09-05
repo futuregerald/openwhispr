@@ -624,6 +624,29 @@ class DatabaseManager {
         if (!err.message.includes("duplicate column")) throw err;
       }
 
+      // Background jobs survive a quit. Everything the queue held used to live
+      // in memory, so quitting with work pending lost it with nothing recorded
+      // and no retry -- which is why meetings ended up with a transcript and no
+      // notes, silently.
+      //
+      // job_key is UNIQUE because the keys already identify one unit of work per
+      // note ("post-call-12"). Enqueuing the same key twice used to run the
+      // pipeline twice; now it does not.
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS jobs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          job_key TEXT NOT NULL UNIQUE,
+          kind TEXT NOT NULL,
+          payload TEXT NOT NULL DEFAULT '{}',
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      this.db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, id)");
+
       // Seed built-in meeting types
       const { seedMeetingTypes } = require("./meetingTypesData");
       seedMeetingTypes(this.db);
@@ -636,9 +659,15 @@ class DatabaseManager {
   }
 
   // Drops the leftover cloud-sync columns from databases created before the
-  // hosted backend was removed. Failure is non-fatal: an undropped column is
-  // inert because nothing reads it.
+  // hosted backend was removed. Each failure is non-fatal: an undropped column
+  // is inert because nothing reads it.
+  //
+  // They are counted and reported together at the end, though. Logged one at a
+  // time and never totalled, a database where EVERY drop failed looked exactly
+  // like one where the work was already done -- both produce a launch that
+  // carries on and says nothing about the outcome.
   _dropCloudSyncColumns() {
+    const failures = [];
     const tables = [
       "transcriptions",
       "custom_dictionary",
@@ -658,6 +687,7 @@ class DatabaseManager {
       try {
         this.db.exec(`DROP INDEX IF EXISTS "${index.name}"`);
       } catch (error) {
+        failures.push({ target: `index ${index.name}`, error: error.message });
         debugLogger.error(
           "Failed to drop cloud sync index",
           { index: index.name, error: error.message },
@@ -675,6 +705,7 @@ class DatabaseManager {
         try {
           this.db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
         } catch (error) {
+          failures.push({ target: `${table}.${column}`, error: error.message });
           debugLogger.error(
             "Failed to drop cloud sync column",
             { table, column, error: error.message },
@@ -683,6 +714,19 @@ class DatabaseManager {
         }
       }
     }
+
+    if (failures.length > 0) {
+      debugLogger.warn(
+        "Some cloud sync columns could not be dropped",
+        {
+          count: failures.length,
+          targets: failures.map((failure) => failure.target),
+        },
+        "database"
+      );
+    }
+
+    return failures;
   }
 
   // Drains rows that the pre-removal cloud code soft-deleted. The cloud was the

@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { enqueueMeetingReprocess } = require("../../src/helpers/reprocessMeetings");
+const { JOB_KINDS, runJob } = require("../../src/helpers/jobDispatch");
 
 function fakeDb(rows) {
   return {
@@ -14,9 +15,17 @@ function fakeDb(rows) {
   };
 }
 
+// Jobs are {kind, payload} rows now, not closures -- a row cannot hold a
+// function, which is why quitting used to lose every pending reprocess.
 function fakeQueue() {
   const jobs = [];
-  return { jobs, enqueue: (id, fn) => jobs.push({ id, fn }) };
+  return {
+    jobs,
+    enqueueKind: (id, kind, payload) => {
+      jobs.push({ id, kind, payload });
+      return true;
+    },
+  };
 }
 
 test("enqueues one reprocess job per meeting with saved audio", () => {
@@ -47,9 +56,12 @@ test("each queued job runs the full pipeline from the retranscribe step", () => 
 
   enqueueMeetingReprocess({ db, backgroundJobQueue: queue, postCallPipelineManager: pipeline });
 
-  // Jobs are deferred — nothing runs until the queue invokes the thunk.
+  // Jobs are deferred — nothing runs until the queue dispatches the row.
   assert.equal(runCalls.length, 0);
-  queue.jobs[0].fn();
+  assert.equal(queue.jobs[0].kind, JOB_KINDS.POST_CALL_PIPELINE);
+  assert.deepEqual(queue.jobs[0].payload, { noteId: 5, fromStep: "retranscribe" });
+
+  runJob({ postCallPipelineManager: pipeline }, queue.jobs[0].kind, queue.jobs[0].payload);
   assert.deepEqual(runCalls, [{ noteId: 5, opts: { fromStep: "retranscribe" } }]);
 });
 

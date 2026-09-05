@@ -387,6 +387,14 @@ async function startApp() {
   await environmentManager.init();
   registerSidecars();
 
+  // Before any window exists, so a meeting interrupted by the last quit is
+  // already queued rather than needing the user to ask.
+  try {
+    ipcHandlers?.recoverBackgroundJobs();
+  } catch (error) {
+    debugLogger.error("Background job recovery failed", { error: error.message });
+  }
+
   cliBridge = new CliBridge(ipcHandlers);
   cliBridge.start().catch((err) => {
     debugLogger.error("CLI bridge failed to start", { error: err.message });

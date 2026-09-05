@@ -1,5 +1,7 @@
 "use strict";
 
+const { JOB_KINDS } = require("./jobDispatch");
+
 /**
  * Enqueue a full post-call pipeline re-run for every meeting note that still
  * has saved audio on disk. Kept as a pure, injectable helper (db + queue +
@@ -20,8 +22,10 @@ function enqueueMeetingReprocess({ db, backgroundJobQueue, postCallPipelineManag
     .all();
 
   for (const { id } of rows) {
-    backgroundJobQueue.enqueue(`post-call-reprocess-${id}`, () =>
-      postCallPipelineManager.run(id, { fromStep: "retranscribe" })
+    backgroundJobQueue.enqueueKind(
+      `post-call-reprocess-${id}`,
+      JOB_KINDS.POST_CALL_PIPELINE,
+      { noteId: id, fromStep: "retranscribe" }
     );
   }
 

@@ -1896,7 +1896,15 @@
       "searchFolders": "Ordner suchen...",
       "noResults": "Keine Ordner gefunden",
       "newFolder": "Neuer Ordner",
-      "showInFileManager": "Im {{manager}} anzeigen"
+      "showInFileManager": "Im {{manager}} anzeigen",
+      "retry": {
+        "retranscribe": "Transkription erneut versuchen",
+        "title": "Titel erneut versuchen",
+        "notes": "Notizen erneut versuchen"
+      },
+      "retryQueued": "Zur erneuten Verarbeitung eingereiht",
+      "retryFailed": "Diese Notiz konnte nicht eingereiht werden",
+      "retryAlreadyQueued": "Wird bereits neu verarbeitet"
     },
     "actions": {
       "manage": "Aktionen verwalten...",

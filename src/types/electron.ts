@@ -439,7 +439,14 @@ declare global {
       retryPipelineStep?: (
         noteId: number,
         fromStep: string
-      ) => Promise<{ success: boolean; error?: string }>;
+      ) => Promise<{ success: boolean; error?: string; queued?: boolean }>;
+      getNoteRetrySteps?: (
+        noteIds: number[]
+      ) => Promise<{
+        success: boolean;
+        steps?: Record<number, string | null>;
+        error?: string;
+      }>;
       reprocessAllMeetings?: () => Promise<{ success: boolean; count: number; error?: string }>;
       checkWhisperModelDownloaded?: (model: string) => Promise<{ downloaded: boolean }>;
       retryTranscription: (

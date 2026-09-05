@@ -4,6 +4,9 @@ const fs = require("fs");
 const os = require("os");
 const crypto = require("crypto");
 const debugLogger = require("./debugLogger");
+const { JOB_KINDS } = require("./jobDispatch");
+const { isPipelineStep } = require("./postCallPipelineManager");
+const { resolveRetryStep } = require("./noteRetryStep");
 const meetingDetectionHealth = require("./meetingDetectionHealth");
 const { BYOK_API_KEYS } = require("../config/secretKeys");
 const { classifyAndLog } = require("./networkErrors");
@@ -3823,10 +3826,15 @@ class IPCHandlers {
     // Post-call pipeline initialization
     const { PostCallPipelineManager } = require("./postCallPipelineManager");
     const { BackgroundJobQueue } = require("./backgroundJobQueue");
+    const { JobStore } = require("./jobStore");
     const { MainProcessInference } = require("./mainProcessInference");
     const { convertToWav } = require("./ffmpegUtils");
 
     this.backgroundJobQueue = new BackgroundJobQueue();
+    // The queue writes its work down, so a quit no longer loses it. Attached
+    // here rather than in the constructor because postCallPipelineManager is
+    // what a persisted row dispatches into, and it is built just below.
+    this._jobStore = new JobStore(this.databaseManager.db);
     this._largeModelDownloadTriggered = false;
     this._autoPostCallPipelineDisabled = false;
     this._parakeetAutoDownloadActive = false;
@@ -3845,6 +3853,10 @@ class IPCHandlers {
       // actually has, instead of truncating the transcript to fit a guess.
       resolveModelContext: (modelId) =>
         require("./modelManagerBridge").default.resolveModelContext(modelId),
+    });
+
+    this.backgroundJobQueue.usePersistence(this._jobStore, {
+      postCallPipelineManager: this.postCallPipelineManager,
     });
 
     // Observe pipeline status events for pending retranscription tracking
@@ -7261,10 +7273,44 @@ class IPCHandlers {
     }));
 
     ipcMain.handle("retry-pipeline-step", async (_event, noteId, fromStep) => {
-      this.backgroundJobQueue.enqueue(`post-call-retry-${noteId}`, () =>
-        this.postCallPipelineManager.run(noteId, { fromStep })
+      // An unrecognised step used to run the WHOLE pipeline, re-transcription
+      // included, because STEP_ORDER.indexOf returns -1 and -1 <= 0. Refuse
+      // rather than silently doing the most expensive possible thing.
+      // null and undefined both mean "from the start", which is what
+      // postCallPipelineManager.run does with no fromStep. Only a non-empty
+      // value that is not a real step is refused.
+      if (fromStep != null && !isPipelineStep(fromStep)) {
+        return { success: false, error: `Unknown pipeline step: ${fromStep}` };
+      }
+
+      const queued = this.backgroundJobQueue.enqueueKind(
+        `post-call-retry-${noteId}`,
+        JOB_KINDS.POST_CALL_PIPELINE,
+        { noteId, fromStep }
       );
-      return { success: true };
+      return { success: true, queued };
+    });
+
+    // Which step each note is actually stuck on.
+    //
+    // The renderer's pipeline store is in-memory and fed by a live broadcast, so
+    // it knows nothing about a run that failed while the control panel was shut
+    // -- which is the situation of every meeting that currently has a transcript
+    // and no notes. The note's own columns are the only durable record, so the
+    // answer comes from them.
+    //
+    // Takes a LIST rather than one id: the notes list asks about every meeting
+    // it shows, and one round trip per note would be a few dozen on every
+    // change to the list.
+    ipcMain.handle("get-note-retry-steps", async (_event, noteIds) => {
+      if (!Array.isArray(noteIds)) return { success: false, error: "Expected a list of note ids" };
+
+      const steps = {};
+      for (const noteId of noteIds) {
+        const note = this.databaseManager.getNote(noteId);
+        steps[noteId] = note ? resolveRetryStep(note).step : null;
+      }
+      return { success: true, steps };
     });
 
     ipcMain.handle("reprocess-all-meetings", async () => {
@@ -7285,8 +7331,10 @@ class IPCHandlers {
       if (meetingTypeId !== undefined) {
         this.databaseManager.updateNote(noteId, { meeting_type_id: meetingTypeId });
       }
-      this.backgroundJobQueue.enqueue(`regenerate-notes-${noteId}`, () =>
-        this.postCallPipelineManager.runSingleStep(noteId, "notes")
+      this.backgroundJobQueue.enqueueKind(
+        `regenerate-notes-${noteId}`,
+        JOB_KINDS.REGENERATE_NOTES,
+        { noteId }
       );
       return { success: true };
     });
@@ -7571,10 +7619,27 @@ class IPCHandlers {
       const audioPath = note.system_audio_path || note.mic_audio_path;
       if (!audioPath || !fs.existsSync(audioPath)) continue;
 
-      this.backgroundJobQueue.enqueue(`post-call-retry-${noteId}`, () =>
-        this.postCallPipelineManager.run(noteId)
+      this.backgroundJobQueue.enqueueKind(
+        `post-call-retry-${noteId}`,
+        JOB_KINDS.POST_CALL_PIPELINE,
+        { noteId }
       );
     }
+  }
+
+  /**
+   * Re-queues background work a previous run left behind.
+   *
+   * Called once at startup, before any window exists. Everything goes into the
+   * same single-slot queue, so several recovered meetings process one at a time
+   * rather than all at once.
+   */
+  recoverBackgroundJobs() {
+    const count = this.backgroundJobQueue.recover();
+    if (count > 0) {
+      debugLogger.info("Re-queued background jobs from a previous run", { count }, "meeting");
+    }
+    return count;
   }
 
   // Only the retranscribe step's own outcome decides whether a note is still waiting for

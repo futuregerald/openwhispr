@@ -1896,7 +1896,15 @@
       "searchFolders": "Pesquisar pastas...",
       "noResults": "Nenhuma pasta encontrada",
       "newFolder": "Nova pasta",
-      "showInFileManager": "Mostrar no {{manager}}"
+      "showInFileManager": "Mostrar no {{manager}}",
+      "retry": {
+        "retranscribe": "Repetir transcrição",
+        "title": "Repetir título",
+        "notes": "Repetir notas"
+      },
+      "retryQueued": "Na fila para reprocessamento",
+      "retryFailed": "Não foi possível enfileirar esta nota",
+      "retryAlreadyQueued": "Já está sendo reprocessado"
     },
     "actions": {
       "manage": "Gerenciar ações...",

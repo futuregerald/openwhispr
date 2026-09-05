@@ -225,6 +225,70 @@ export default function PersonalNotesView({
     });
   }, [showConfirmDialog, toast, t]);
 
+  // Which pipeline step each note is stuck on, if any. Resolved in the main
+  // process from the note's own columns rather than from the pipeline store,
+  // which is in-memory and therefore blank for every run that failed while this
+  // window was closed -- which is exactly the set of notes worth retrying.
+  const [retrySteps, setRetrySteps] = useState<Record<number, string | null>>({});
+
+  // Keyed on the ids rather than on `notes`, which is a fresh array on every
+  // render — depending on it directly would re-query on every keystroke.
+  const meetingIdsKey = useMemo(
+    () =>
+      notes
+        .filter((n) => n.note_type === "meeting")
+        .map((n) => n.id)
+        .join(","),
+    [notes]
+  );
+
+  useEffect(() => {
+    if (!window.electronAPI?.getNoteRetrySteps) return;
+    const meetingIds = meetingIdsKey ? meetingIdsKey.split(",").map(Number) : [];
+    if (meetingIds.length === 0) {
+      setRetrySteps({});
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      const result = await window.electronAPI?.getNoteRetrySteps?.(meetingIds);
+      if (!cancelled && result?.success) setRetrySteps(result.steps ?? {});
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [meetingIdsKey]);
+
+  // Retries just the step that failed. "Reprocess all meetings" re-runs
+  // everything from re-transcription and overwrites every existing note, so it
+  // was never a way to fix one meeting.
+  const handleRetryPipeline = useCallback(
+    async (noteId: number) => {
+      const step = retrySteps[noteId];
+      if (!step) return;
+      const result = await window.electronAPI?.retryPipelineStep?.(noteId, step);
+
+      // `queued: false` means this note's job was already on the queue. Saying
+      // "queued for reprocessing" then would report work that did not happen.
+      const title = !result?.success
+        ? t("notes.context.retryFailed")
+        : result.queued === false
+          ? t("notes.context.retryAlreadyQueued")
+          : t("notes.context.retryQueued");
+      toast({ title });
+
+      // The menu is driven by the note's stored columns, which the retry is
+      // about to change. Without this the "Retry notes" item stays offered on a
+      // note that is now being reprocessed.
+      if (result?.success) {
+        setRetrySteps((current) => ({ ...current, [noteId]: null }));
+      }
+    },
+    [retrySteps, toast, t]
+  );
+
   const activeNote = notes.find((n) => n.id === activeNoteId) ?? null;
 
   // Derive folder name and calendar event name for the metadata chips
@@ -969,6 +1033,8 @@ export default function PersonalNotesView({
                   dragHandlers={noteDragHandlers(note.id, note.title)}
                   isDragging={dragState.draggingNoteId === note.id}
                   noteFilesEnabled={noteFilesEnabled}
+                  retryStep={retrySteps[note.id] ?? null}
+                  onRetryPipeline={handleRetryPipeline}
                 />
               ))
             )}

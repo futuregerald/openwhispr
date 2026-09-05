@@ -1896,7 +1896,15 @@
       "searchFolders": "Cerca cartelle...",
       "noResults": "Nessuna cartella trovata",
       "newFolder": "Nuova cartella",
-      "showInFileManager": "Mostra in {{manager}}"
+      "showInFileManager": "Mostra in {{manager}}",
+      "retry": {
+        "retranscribe": "Riprova trascrizione",
+        "title": "Riprova titolo",
+        "notes": "Riprova note"
+      },
+      "retryQueued": "In coda per la rielaborazione",
+      "retryFailed": "Impossibile mettere in coda questa nota",
+      "retryAlreadyQueued": "Rielaborazione già in corso"
     },
     "actions": {
       "manage": "Gestisci azioni...",

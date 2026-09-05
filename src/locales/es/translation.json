@@ -1896,7 +1896,15 @@
       "searchFolders": "Buscar carpetas...",
       "noResults": "No se encontraron carpetas",
       "newFolder": "Nueva carpeta",
-      "showInFileManager": "Mostrar en {{manager}}"
+      "showInFileManager": "Mostrar en {{manager}}",
+      "retry": {
+        "retranscribe": "Reintentar transcripción",
+        "title": "Reintentar título",
+        "notes": "Reintentar notas"
+      },
+      "retryQueued": "En cola para reprocesar",
+      "retryFailed": "No se pudo poner esta nota en cola",
+      "retryAlreadyQueued": "Ya se está reprocesando"
     },
     "actions": {
       "manage": "Gestionar acciones...",

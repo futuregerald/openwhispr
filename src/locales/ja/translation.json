@@ -1789,7 +1789,15 @@
       "searchFolders": "フォルダを検索...",
       "noResults": "フォルダが見つかりません",
       "newFolder": "新しいフォルダ",
-      "showInFileManager": "{{manager}}で表示"
+      "showInFileManager": "{{manager}}で表示",
+      "retry": {
+        "retranscribe": "文字起こしを再実行",
+        "title": "タイトルを再生成",
+        "notes": "ノートを再生成"
+      },
+      "retryQueued": "再処理のキューに追加しました",
+      "retryFailed": "このノートをキューに追加できませんでした",
+      "retryAlreadyQueued": "すでに再処理中です"
     },
     "actions": {
       "manage": "アクションを管理...",

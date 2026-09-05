@@ -3,6 +3,7 @@ const fsPromises = require("fs").promises;
 const path = require("path");
 const { spawn } = require("child_process");
 const debugLogger = require("./debugLogger");
+const { resolveDiarizationThreads } = require("./diarizationThreads");
 const { downloadFile, createDownloadSignal, checkDiskSpace } = require("./downloadUtils");
 const { resolveBinaryPath, gracefulStopProcess } = require("../utils/serverUtils");
 const { getModelsDirForService } = require("./modelDirUtils");
@@ -70,9 +71,13 @@ const FLUIDAUDIO_MODE_ENV = "OPENWHISPR_FLUIDAUDIO_MODE"; // "streaming" (defaul
 
 class DiarizationManager {
   constructor() {
-    // Meeting post-processing and upload/batch diarization can overlap, so
-    // track every live process, not a single slot.
+    // diarize() now runs one call at a time, but a download and a diarization
+    // can still be live together, and cancellation has to reach either.
     this._processes = new Set();
+    // Serialises diarize(); see the comment there. Starts resolved so the first
+    // call runs immediately.
+    this._diarizeGate = Promise.resolve();
+    this._shuttingDown = false;
     this.currentDownloadProcess = null;
     this.cachedBinaryPath = null;
     // undefined = not resolved yet; null = resolved-but-absent (cache the miss).
@@ -353,10 +358,58 @@ class DiarizationManager {
     return { success: false, error: "No active download to cancel" };
   }
 
-  // Public entry point. Routes to the active engine; both return the same
-  // Array<{ start:number, end:number, speaker:string }> contract (seconds), or
-  // [] on any failure. Callers (IPC + meeting pipeline) depend only on that shape.
+  /**
+   * Public entry point. Routes to the active engine; both return the same
+   * Array<{ start:number, end:number, speaker:string }> contract (seconds), or
+   * [] on any failure. Callers (IPC + meeting pipeline) depend only on that shape.
+   *
+   * Runs one at a time. Three callers reach this without passing through the
+   * single-slot job queue -- the diarize-audio-file IPC handler, the
+   * retranscribe path, and the live meeting's own post-call diarization -- so
+   * two of them overlapping spawned two model processes at once with nothing
+   * bounding the pair. Queuing them was not an option: all three need the return
+   * value, and the job queue is fire-and-forget. A gate here covers every caller
+   * without any of them having to know, including the live path, which cannot be
+   * queued because the note needs its result before the pipeline is enqueued.
+   *
+   * Serialising is not the same as rejecting: a second call waits and then runs.
+   */
   async diarize(wavPath, options = {}) {
+    const queuedAt = Date.now();
+    const runWhenFree = this._diarizeGate
+      .catch(() => {})
+      .then(() => {
+        // FIFO with no priority: a live meeting's diarization can sit behind a
+        // long batch one. That is the trade the gate exists to make -- two model
+        // processes at once is what made the machine unusable -- but a silent
+        // multi-minute wait is not diagnosable, so it is logged.
+        // A call parked here has not spawned anything yet, so shutdown()'s sweep
+        // of _processes cannot see it -- and letting it through would spawn a
+        // model process during teardown that outlives the app. Before the gate
+        // existed every call spawned immediately and was always in _processes
+        // when shutdown ran, so this hazard came in with the gate.
+        if (this._shuttingDown) {
+          debugLogger.info("Diarization abandoned: the app is shutting down");
+          return [];
+        }
+
+        const waited = Date.now() - queuedAt;
+        if (waited > 1000) {
+          debugLogger.info("Diarization waited for another to finish", { waitedMs: waited });
+        }
+        return this._diarizeNow(wavPath, options);
+      });
+
+    // Stores the same promise rather than a derived one: a derived promise would
+    // be a SECOND reference to the rejection and would need its own handler.
+    // What keeps one failure from blocking every later diarization is the
+    // .catch() the next call chains onto this, above.
+    this._diarizeGate = runWhenFree;
+
+    return runWhenFree;
+  }
+
+  async _diarizeNow(wavPath, options = {}) {
     if (this.getDiarizationEngine() === "fluidaudio") {
       if (this.getFluidAudioBinaryPath()) {
         return this._diarizeFluidAudio(wavPath, options);
@@ -542,9 +595,12 @@ class DiarizationManager {
     const segPath = this._resolveModelPath(SEGMENTATION_ONNX);
     const embPath = this._resolveModelPath(EMBEDDING_ONNX);
 
+    const threads = resolveDiarizationThreads();
     const args = [
       `--segmentation.pyannote-model=${segPath}`,
       `--embedding.model=${embPath}`,
+      `--segmentation.num-threads=${threads}`,
+      `--embedding.num-threads=${threads}`,
       `--clustering.num-clusters=${numSpeakers}`,
       `--clustering.cluster-threshold=${threshold}`,
       "--min-duration-on=0.2",
@@ -556,6 +612,7 @@ class DiarizationManager {
       binaryPath,
       numSpeakers,
       threshold,
+      threads,
       wavPath,
     });
 
@@ -815,6 +872,7 @@ class DiarizationManager {
   }
 
   async shutdown() {
+    this._shuttingDown = true;
     const procs = [...this._processes];
     this._processes.clear();
     await Promise.all(procs.map((p) => gracefulStopProcess(p)));
