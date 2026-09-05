@@ -624,6 +624,29 @@ class DatabaseManager {
         if (!err.message.includes("duplicate column")) throw err;
       }
 
+      // Background jobs survive a quit. Everything the queue held used to live
+      // in memory, so quitting with work pending lost it with nothing recorded
+      // and no retry -- which is why meetings ended up with a transcript and no
+      // notes, silently.
+      //
+      // job_key is UNIQUE because the keys already identify one unit of work per
+      // note ("post-call-12"). Enqueuing the same key twice used to run the
+      // pipeline twice; now it does not.
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS jobs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          job_key TEXT NOT NULL UNIQUE,
+          kind TEXT NOT NULL,
+          payload TEXT NOT NULL DEFAULT '{}',
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      this.db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, id)");
+
       // Seed built-in meeting types
       const { seedMeetingTypes } = require("./meetingTypesData");
       seedMeetingTypes(this.db);

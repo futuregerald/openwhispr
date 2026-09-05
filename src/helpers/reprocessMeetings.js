@@ -1,3 +1,5 @@
+const { JOB_KINDS } = require("./jobDispatch");
+
 "use strict";
 
 /**
@@ -20,8 +22,10 @@ function enqueueMeetingReprocess({ db, backgroundJobQueue, postCallPipelineManag
     .all();
 
   for (const { id } of rows) {
-    backgroundJobQueue.enqueue(`post-call-reprocess-${id}`, () =>
-      postCallPipelineManager.run(id, { fromStep: "retranscribe" })
+    backgroundJobQueue.enqueueKind(
+      `post-call-reprocess-${id}`,
+      JOB_KINDS.POST_CALL_PIPELINE,
+      { noteId: id, fromStep: "retranscribe" }
     );
   }
 

@@ -1,3 +1,5 @@
+const { JOB_KINDS } = require("./jobDispatch");
+
 "use strict";
 
 /**
@@ -28,8 +30,9 @@ function enqueuePostCallPipeline({
   }
   if (noteId === null || noteId === undefined) return false;
 
-  backgroundJobQueue.enqueue(`post-call-${noteId}`, () => postCallPipelineManager.run(noteId));
-  return true;
+  return backgroundJobQueue.enqueueKind(`post-call-${noteId}`, JOB_KINDS.POST_CALL_PIPELINE, {
+    noteId,
+  });
 }
 
 module.exports = { enqueuePostCallPipeline };

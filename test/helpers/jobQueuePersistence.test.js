@@ -1,0 +1,249 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const { requireSqlite } = require("../support/sqlite.js");
+
+const { JobStore, MAX_ATTEMPTS } = require("../../src/helpers/jobStore.js");
+const { BackgroundJobQueue } = require("../../src/helpers/backgroundJobQueue.js");
+const { JOB_KINDS, runJob, isKnownJobKind } = require("../../src/helpers/jobDispatch.js");
+
+const Database = requireSqlite();
+
+// The same DDL database.js creates in its idempotent bootstrap. Duplicated
+// rather than booting DatabaseManager because these tests are about the job
+// rows, not about the other nineteen tables — but it has to stay in step, and
+// the last test in this file is what says so if it does not.
+const JOBS_DDL = `
+  CREATE TABLE IF NOT EXISTS jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_key TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`;
+
+function freshStore() {
+  const db = new Database(":memory:");
+  db.exec(JOBS_DDL);
+  return { db, store: new JobStore(db) };
+}
+
+function queueWith(store, run) {
+  const queue = new BackgroundJobQueue();
+  const calls = [];
+  queue.usePersistence(store, {
+    postCallPipelineManager: {
+      run: async (noteId, options = {}) => {
+        calls.push({ method: "run", noteId, ...options });
+        if (run) await run(noteId, options);
+      },
+      runSingleStep: async (noteId, step) => {
+        calls.push({ method: "runSingleStep", noteId, step });
+        if (run) await run(noteId, { step });
+      },
+    },
+  });
+  return { queue, calls };
+}
+
+test("a queued job is recorded, run, and removed", async () => {
+  const { db, store } = freshStore();
+  const { queue, calls } = queueWith(store);
+
+  assert.equal(queue.enqueueKind("post-call-12", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 12 }), true);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM jobs").get().n, 1);
+
+  await queue.drain();
+
+  assert.deepEqual(calls, [{ method: "run", noteId: 12 }]);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM jobs").get().n, 0, "a done job leaves no row");
+});
+
+// The whole point: quitting used to lose everything pending, with nothing
+// recorded and no retry. That is why meetings ended up with a transcript and no
+// notes and nothing ever tried again.
+test("work pending at quit is still there on the next launch", async () => {
+  const { db, store } = freshStore();
+  const first = queueWith(store);
+
+  first.queue.enqueueKind("post-call-20", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 20 });
+  first.queue.enqueueKind("post-call-21", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 21 });
+  // Quit: main.js calls cancelPending(), which empties the in-memory array.
+  first.queue.cancelPending();
+
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM jobs").get().n, 2, "the rows survive");
+
+  const second = queueWith(new JobStore(db));
+  assert.equal(second.queue.recover(), 2);
+  await second.queue.drain();
+
+  assert.deepEqual(
+    second.calls.map((c) => c.noteId).sort(),
+    [20, 21],
+    "both meetings are picked up by the next launch"
+  );
+});
+
+test("a job interrupted mid-flight comes back as pending, not as a failure", () => {
+  const { db, store } = freshStore();
+  const row = store.insert("post-call-30", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 30 });
+  store.markRunning(row.id);
+
+  // The app is killed here. Nothing marks it failed, because nothing rejected.
+  const recovered = new JobStore(db).recoverInterrupted();
+
+  assert.equal(recovered.length, 1);
+  assert.equal(recovered[0].job_key, "post-call-30");
+  assert.equal(recovered[0].attempts, 1, "the attempt it did make still counts");
+});
+
+// A job that can never succeed must not be retried forever across launches --
+// which is worse than losing it, because it runs at every startup and the user
+// cannot see why.
+test("a job that always fails is retried a bounded number of times", async () => {
+  const { db, store } = freshStore();
+  store.insert("post-call-40", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 40 });
+
+  let launches = 0;
+  for (let launch = 0; launch < MAX_ATTEMPTS + 3; launch += 1) {
+    const { queue } = queueWith(new JobStore(db), async () => {
+      throw new Error("model missing");
+    });
+    if (queue.recover() > 0) launches += 1;
+    await queue.drain();
+  }
+
+  assert.equal(launches, MAX_ATTEMPTS, `tried on ${MAX_ATTEMPTS} launches, then stopped`);
+
+  const row = db.prepare("SELECT * FROM jobs WHERE job_key = 'post-call-40'").get();
+  assert.equal(row.status, "failed");
+  assert.equal(row.attempts, MAX_ATTEMPTS);
+  assert.equal(row.last_error, "model missing", "and it says why, instead of vanishing");
+});
+
+test("a failure is recorded rather than losing the job silently", async () => {
+  const { db, store } = freshStore();
+  const { queue } = queueWith(store, async () => {
+    throw new Error("llama-server died");
+  });
+
+  queue.enqueueKind("post-call-50", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 50 });
+  await queue.drain();
+
+  const row = db.prepare("SELECT * FROM jobs WHERE job_key = 'post-call-50'").get();
+  assert.equal(row.status, "failed");
+  assert.equal(row.attempts, 1);
+  assert.equal(row.last_error, "llama-server died");
+});
+
+test("enqueuing the same key twice runs the pipeline once", async () => {
+  const { store } = freshStore();
+  const { queue, calls } = queueWith(store);
+
+  assert.equal(queue.enqueueKind("post-call-60", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 60 }), true);
+  assert.equal(
+    queue.enqueueKind("post-call-60", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 60 }),
+    false,
+    "the second says so rather than pretending it queued"
+  );
+
+  await queue.drain();
+  assert.equal(calls.length, 1);
+});
+
+test("one job at a time, whatever recovery hands it", async () => {
+  const { db, store } = freshStore();
+  for (const noteId of [1, 2, 3, 4]) {
+    store.insert(`post-call-${noteId}`, JOB_KINDS.POST_CALL_PIPELINE, { noteId });
+  }
+
+  let concurrent = 0;
+  let peak = 0;
+  const { queue } = queueWith(new JobStore(db), async () => {
+    concurrent += 1;
+    peak = Math.max(peak, concurrent);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    concurrent -= 1;
+  });
+
+  queue.recover();
+  await queue.drain();
+
+  assert.equal(peak, 1, "recovery must not launch four pipelines at once");
+});
+
+test("fromStep travels with the job", async () => {
+  const { store } = freshStore();
+  const { queue, calls } = queueWith(store);
+
+  queue.enqueueKind("post-call-retry-70", JOB_KINDS.POST_CALL_PIPELINE, {
+    noteId: 70,
+    fromStep: "notes",
+  });
+  queue.enqueueKind("regenerate-notes-71", JOB_KINDS.REGENERATE_NOTES, { noteId: 71 });
+  await queue.drain();
+
+  assert.deepEqual(calls, [
+    { method: "run", noteId: 70, fromStep: "notes" },
+    { method: "runSingleStep", noteId: 71, step: "notes" },
+  ]);
+});
+
+// A row written by a newer version and read by an older one is a real
+// possibility after a downgrade. Doing nothing quietly is the failure this
+// whole change exists to remove.
+test("an unknown job kind fails loudly instead of disappearing", async () => {
+  const { db, store } = freshStore();
+  store.insert("weird-1", "kind-from-the-future", { noteId: 1 });
+
+  const { queue } = queueWith(new JobStore(db));
+  queue.recover();
+  await queue.drain();
+
+  const row = db.prepare("SELECT * FROM jobs WHERE job_key = 'weird-1'").get();
+  assert.equal(row.status, "failed");
+  assert.match(row.last_error, /Unknown job kind/);
+});
+
+test("without a store the queue behaves exactly as it did before", async () => {
+  const queue = new BackgroundJobQueue();
+  const ran = [];
+  queue.enqueue("plain", async () => ran.push("plain"));
+  await queue.drain();
+  assert.deepEqual(ran, ["plain"]);
+});
+
+test("every dispatchable kind is one the dispatcher knows", () => {
+  for (const kind of Object.values(JOB_KINDS)) {
+    assert.equal(isKnownJobKind(kind), true, `${kind} has no handler`);
+  }
+  assert.throws(() => runJob({}, "not-a-kind", {}), /Unknown job kind/);
+});
+
+// The DDL above is a copy. If database.js's version drifts, these tests keep
+// passing against a schema the app does not have -- so compare them.
+test("the jobs schema here matches the one the app creates", () => {
+  const fs = require("node:fs");
+  const source = fs.readFileSync(require.resolve("../../src/helpers/database.js"), "utf8");
+  const appDdl = source.slice(
+    source.indexOf("CREATE TABLE IF NOT EXISTS jobs"),
+    source.indexOf(")", source.indexOf("updated_at DATETIME DEFAULT CURRENT_TIMESTAMP", source.indexOf("jobs")))
+  );
+  const normalise = (text) => text.replace(/\s+/g, " ").trim();
+
+  for (const column of [
+    "job_key TEXT NOT NULL UNIQUE",
+    "kind TEXT NOT NULL",
+    "payload TEXT NOT NULL DEFAULT '{}'",
+    "status TEXT NOT NULL DEFAULT 'pending'",
+    "attempts INTEGER NOT NULL DEFAULT 0",
+    "last_error TEXT",
+  ]) {
+    assert.ok(normalise(appDdl).includes(column), `database.js is missing: ${column}`);
+    assert.ok(normalise(JOBS_DDL).includes(column), `this test file is missing: ${column}`);
+  }
+});

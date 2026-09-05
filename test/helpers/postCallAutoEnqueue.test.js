@@ -2,18 +2,28 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { enqueuePostCallPipeline } = require("../../src/helpers/postCallAutoEnqueue.js");
+const { JOB_KINDS, runJob } = require("../../src/helpers/jobDispatch.js");
 
+// Jobs are {kind, payload} rows now rather than closures -- a row cannot store
+// a function, which is why quitting used to lose everything pending. The fake
+// records what would be written; runJob is how a row becomes work again.
 function harness({ disabled = false } = {}) {
   const jobs = [];
   const ran = [];
   return {
     jobs,
     ran,
+    run: (job) => runJob({ postCallPipelineManager: { run: (id) => ran.push(id) } }, job.kind, job.payload),
     call: (noteId) =>
       enqueuePostCallPipeline({
         noteId,
         disabled,
-        backgroundJobQueue: { enqueue: (id, fn) => jobs.push({ id, fn }) },
+        backgroundJobQueue: {
+          enqueueKind: (id, kind, payload) => {
+            jobs.push({ id, kind, payload });
+            return true;
+          },
+        },
         postCallPipelineManager: { run: (id) => ran.push(id) },
       }),
   };
@@ -25,6 +35,8 @@ test("a finished meeting queues the post-call pipeline", () => {
   assert.equal(h.call(42), true);
   assert.equal(h.jobs.length, 1, "the pipeline must actually be kicked off when a call ends");
   assert.equal(h.jobs[0].id, "post-call-42");
+  assert.equal(h.jobs[0].kind, JOB_KINDS.POST_CALL_PIPELINE);
+  assert.deepEqual(h.jobs[0].payload, { noteId: 42 });
 });
 
 test("the queued job runs the pipeline for that note", () => {
@@ -32,7 +44,7 @@ test("the queued job runs the pipeline for that note", () => {
   h.call(42);
 
   assert.deepEqual(h.ran, [], "the run is deferred to the queue, not executed inline");
-  h.jobs[0].fn();
+  h.run(h.jobs[0]);
   assert.deepEqual(h.ran, [42]);
 });
 
