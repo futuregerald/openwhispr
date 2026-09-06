@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.18.0] - 2026-09-05
 
+### Added
+- **Any meeting can now be re-run from the step that actually failed.** The `⋯` menu on a meeting in the notes list offers to retry just the part that did not work — usually the notes themselves, using the transcript the app already has. Until now the only repair was "Reprocess all meetings", which re-transcribed every meeting from scratch and overwrote the notes that had worked.
+
+### Changed
+- **Work waiting to be processed now survives quitting the app.** Meetings queued for processing were held only in memory, so quitting lost them with nothing recorded and nothing to retry — which is why meetings could end up with a transcript and no notes and never recover. The queue is now written down and picked up again at the next launch, one meeting at a time. A meeting that fails repeatedly stops being retried rather than being attempted forever.
+- **The app no longer runs two speaker-identification passes at once.** Re-processing a saved recording while a meeting was ending could start two of them together, which is what made the machine unresponsive. They now take turns.
+
 ### Fixed
 - **Live speaker labels invented people.** A two-person call could come back as five or six speakers, and the worst recorded case put 22 different labels on a 94-minute call between two people. Two separate faults were behind it. The voice-activity detector, which decides where one person's turn starts and ends, is a model that has to be given its own memory of the previous fraction of a second — and it never was, because of a name mismatch that silently did nothing. It was running blind, and the two sensitivity settings around it had been quietly tuned to compensate for a signal that could never reach its own normal range. Separately, the app decided who was speaking from the first 1.6 seconds of a turn and then refused to reconsider — even though it goes on to compute a far better read of the voice from the whole turn, which it was throwing away. It now uses that better read, and when it changes its mind, the label already shown is corrected rather than left behind.
 - Measured over 13.7 hours of real calls containing 46 people: distinct speakers reported fell by roughly a third, and on the five calls compared directly against the previous version the labels shown fell from 115 to 79. Speech the app finds at all went **up** slightly rather than down, and the stretches it discards as too short to identify fell by a sixth. Meetings also finish processing far faster, because the app no longer compares each voice against hundreds of invented speakers.
