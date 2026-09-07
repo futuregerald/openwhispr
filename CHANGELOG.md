@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.18.0] - 2026-09-05
+## [1.18.1] - 2026-09-06
 
 ### Added
 - **Any meeting can now be re-run from the step that actually failed.** The `⋯` menu on a meeting in the notes list offers to retry just the part that did not work — usually the notes themselves, using the transcript the app already has. Until now the only repair was "Reprocess all meetings", which re-transcribed every meeting from scratch and overwrote the notes that had worked.
