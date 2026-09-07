@@ -1,5 +1,10 @@
 # Dependencies
 node_modules/
+# Without the slash-less rule a SYMLINK named node_modules is not matched --
+# `node_modules/` matches directories only -- so `git add -A` will happily commit
+# one. That is how an absolute-path symlink to this very directory reached main
+# and made every build fail silently.
+node_modules
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
