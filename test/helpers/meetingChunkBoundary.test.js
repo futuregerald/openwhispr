@@ -11,9 +11,7 @@ const {
 const SYLLABLE_HZ = 4;
 const SYLLABLE_DIP = 0.35;
 
-// 24 kHz mono s16le PCM. "Speech" is white noise under a 4 Hz syllabic
-// envelope; "silence" is a flat room-noise bed.
-function buildPcm(runs, { amplitude = 0.2, floorAmplitude = 0.0005 } = {}) {
+function buildSyllabicSpeechPcm(runs, { amplitude = 0.2, floorAmplitude = 0.0005 } = {}) {
   const total = runs.reduce((sum, run) => sum + Math.round((run.ms / 1000) * SAMPLE_RATE), 0);
   const buffer = Buffer.alloc(total * 2);
   let offset = 0;
@@ -41,64 +39,74 @@ const msOf = (samples) => (samples / SAMPLE_RATE) * 1000;
 
 test("does not cut a buffer shorter than the minimum chunk", () => {
   const finder = createChunkBoundaryFinder();
-  const pcm = buildPcm([
+  const pcm = buildSyllabicSpeechPcm([
     { ms: 1200, speech: true },
     { ms: 400, speech: false },
   ]);
-  assert.deepEqual(finder.findCut(pcm), { cutSample: null, reason: "below_min" });
+  assert.deepEqual(finder.findCut(pcm), {
+    cutSampleAt24k: null,
+    reason: "below_min",
+    threshold: null,
+  });
 });
 
 test("cuts inside the last silence gap, not at the buffer end", () => {
   const finder = createChunkBoundaryFinder();
-  const pcm = buildPcm([
+  const pcm = buildSyllabicSpeechPcm([
     { ms: 2500, speech: true },
     { ms: 400, speech: false },
     { ms: 1300, speech: true },
     { ms: 400, speech: false },
     { ms: 400, speech: true },
   ]);
-  const { cutSample, reason } = finder.findCut(pcm);
+  const { cutSampleAt24k, reason } = finder.findCut(pcm);
   assert.equal(reason, "silence");
-  const cutMs = msOf(cutSample);
+  const cutMs = msOf(cutSampleAt24k);
   assert.ok(cutMs > 4200 && cutMs < 4600, `cut at ${cutMs}ms, expected inside 4200-4600ms`);
 });
 
 test("never emits a chunk shorter than the minimum, even when the gap straddles it", () => {
   const finder = createChunkBoundaryFinder();
-  const pcm = buildPcm([
+  const pcm = buildSyllabicSpeechPcm([
     { ms: 300, speech: true },
     { ms: 1800, speech: false },
     { ms: 3000, speech: true },
   ]);
-  const { cutSample, reason } = finder.findCut(pcm);
+  const { cutSampleAt24k, reason } = finder.findCut(pcm);
   assert.equal(reason, "silence");
-  assert.ok(msOf(cutSample) >= MIN_CHUNK_MS, `cut at ${msOf(cutSample)}ms, below MIN_CHUNK_MS`);
-  assert.ok(msOf(cutSample) < 2100, `cut at ${msOf(cutSample)}ms, expected still inside the gap`);
+  assert.ok(
+    msOf(cutSampleAt24k) >= MIN_CHUNK_MS,
+    `cut at ${msOf(cutSampleAt24k)}ms, below MIN_CHUNK_MS`
+  );
+  assert.ok(
+    msOf(cutSampleAt24k) < 2100,
+    `cut at ${msOf(cutSampleAt24k)}ms, expected still inside the gap`
+  );
 });
 
 test("ignores a silence gap that ends before the minimum chunk", () => {
   const finder = createChunkBoundaryFinder();
-  const pcm = buildPcm([
+  const pcm = buildSyllabicSpeechPcm([
     { ms: 300, speech: true },
     { ms: 400, speech: false },
     { ms: 4300, speech: true },
   ]);
-  const { cutSample, reason } = finder.findCut(pcm);
+  const { cutSampleAt24k, reason } = finder.findCut(pcm);
   assert.equal(reason, "no_boundary");
-  assert.equal(cutSample, null);
+  assert.equal(cutSampleAt24k, null);
 });
 
 test("falls back to a hard cut at the cap when speech never pauses", () => {
   const finder = createChunkBoundaryFinder();
-  const pcm = buildPcm([{ ms: 8000, speech: true }]);
-  const { cutSample, reason } = finder.findCut(pcm);
+  const pcm = buildSyllabicSpeechPcm([{ ms: 8000, speech: true }]);
+  const { cutSampleAt24k, reason } = finder.findCut(pcm);
   assert.equal(reason, "max_chunk");
-  assert.equal(msOf(cutSample), MAX_CHUNK_MS);
+  assert.equal(msOf(cutSampleAt24k), MAX_CHUNK_MS);
 });
 
 test("a speech-dense window cannot be mistaken for one long silence", () => {
   const finder = createChunkBoundaryFinder();
-  const flat = buildPcm([{ ms: 8000, speech: true }], { amplitude: 0.2 });
+  const flat = buildSyllabicSpeechPcm([{ ms: 8000, speech: true }], { amplitude: 0.2 });
   assert.equal(finder.findCut(flat).reason, "max_chunk");
   assert.equal(
     finder.getNoiseFloorRms(),
@@ -109,7 +117,7 @@ test("a speech-dense window cannot be mistaken for one long silence", () => {
 
 test("cuts correctly for a quiet speaker", () => {
   const finder = createChunkBoundaryFinder();
-  const pcm = buildPcm(
+  const pcm = buildSyllabicSpeechPcm(
     [
       { ms: 2500, speech: true },
       { ms: 400, speech: false },
@@ -117,23 +125,23 @@ test("cuts correctly for a quiet speaker", () => {
     ],
     { amplitude: 0.008, floorAmplitude: 0.0004 }
   );
-  const { cutSample, reason } = finder.findCut(pcm);
+  const { cutSampleAt24k, reason } = finder.findCut(pcm);
   assert.equal(reason, "silence");
-  const cutMs = msOf(cutSample);
+  const cutMs = msOf(cutSampleAt24k);
   assert.ok(cutMs > 2500 && cutMs < 2900, `cut at ${cutMs}ms, expected inside 2500-2900ms`);
 });
 
 test("the gap boundary is not knife-edge on frame count", () => {
   for (const gapMs of [220, 260, 300, 380, 400, 460]) {
     const finder = createChunkBoundaryFinder();
-    const pcm = buildPcm([
+    const pcm = buildSyllabicSpeechPcm([
       { ms: 2500, speech: true },
       { ms: gapMs, speech: false },
       { ms: 1000, speech: true },
     ]);
-    const { cutSample, reason } = finder.findCut(pcm);
+    const { cutSampleAt24k, reason } = finder.findCut(pcm);
     assert.equal(reason, "silence", `gap ${gapMs}ms gave ${reason}`);
-    const cutMs = msOf(cutSample);
+    const cutMs = msOf(cutSampleAt24k);
     const intoGap = (cutMs - 2500) / gapMs;
     assert.ok(
       intoGap >= 0.35 && intoGap <= 0.65,
@@ -144,15 +152,15 @@ test("the gap boundary is not knife-edge on frame count", () => {
 
 test("final flush emits everything", () => {
   const finder = createChunkBoundaryFinder();
-  const pcm = buildPcm([{ ms: 900, speech: true }]);
-  const { cutSample, reason } = finder.findCut(pcm, { final: true });
+  const pcm = buildSyllabicSpeechPcm([{ ms: 900, speech: true }]);
+  const { cutSampleAt24k, reason } = finder.findCut(pcm, { final: true });
   assert.equal(reason, "final");
-  assert.equal(cutSample, pcm.length / 2);
+  assert.equal(cutSampleAt24k, pcm.length / 2);
 });
 
 test("finds the gap in a noisy room, where the absolute floor alone cannot", () => {
   const finder = createChunkBoundaryFinder();
-  const pcm = buildPcm(
+  const pcm = buildSyllabicSpeechPcm(
     [
       { ms: 2500, speech: true },
       { ms: 400, speech: false },
@@ -160,19 +168,19 @@ test("finds the gap in a noisy room, where the absolute floor alone cannot", () 
     ],
     { amplitude: 0.12, floorAmplitude: 0.006 }
   );
-  const { cutSample, reason } = finder.findCut(pcm);
+  const { cutSampleAt24k, reason } = finder.findCut(pcm);
   assert.equal(reason, "silence");
   assert.ok(
     finder.getNoiseFloorRms() * 2.5 > 0.0015,
     "the learned floor must be the operative threshold here"
   );
-  const cutMs = msOf(cutSample);
+  const cutMs = msOf(cutSampleAt24k);
   assert.ok(cutMs > 2500 && cutMs < 2900, `cut at ${cutMs}ms, expected inside 2500-2900ms`);
 });
 
 test("ignores a gap shorter than the silence hold", () => {
   const finder = createChunkBoundaryFinder();
-  const pcm = buildPcm([
+  const pcm = buildSyllabicSpeechPcm([
     { ms: 2500, speech: true },
     { ms: 100, speech: false },
     { ms: 1000, speech: true },
@@ -182,7 +190,7 @@ test("ignores a gap shorter than the silence hold", () => {
 
 test("learns a noise floor and carries it across calls", () => {
   const finder = createChunkBoundaryFinder();
-  const quiet = buildPcm(
+  const quiet = buildSyllabicSpeechPcm(
     [
       { ms: 2500, speech: true },
       { ms: 400, speech: false },
@@ -194,7 +202,7 @@ test("learns a noise floor and carries it across calls", () => {
   const first = finder.getNoiseFloorRms();
   assert.ok(first > 0, "a window with separation must teach the finder a floor");
 
-  const louder = buildPcm(
+  const louder = buildSyllabicSpeechPcm(
     [
       { ms: 2500, speech: true },
       { ms: 400, speech: false },
@@ -210,7 +218,7 @@ test("learns a noise floor and carries it across calls", () => {
 
 test("reset clears a learned noise floor", () => {
   const finder = createChunkBoundaryFinder();
-  const pcm = buildPcm(
+  const pcm = buildSyllabicSpeechPcm(
     [
       { ms: 2500, speech: true },
       { ms: 400, speech: false },
@@ -225,7 +233,7 @@ test("reset clears a learned noise floor", () => {
 });
 
 test("a threshold that swallows the whole window is not a boundary", () => {
-  const pcm = buildPcm([
+  const pcm = buildSyllabicSpeechPcm([
     { ms: 2500, speech: true },
     { ms: 400, speech: false },
     { ms: 1000, speech: true },
@@ -233,7 +241,68 @@ test("a threshold that swallows the whole window is not a boundary", () => {
   assert.equal(createChunkBoundaryFinder().findCut(pcm).reason, "silence");
 
   const swallowed = createChunkBoundaryFinder({ silenceFloorMultiplier: 1000 });
-  const { cutSample, reason } = swallowed.findCut(pcm);
+  const { cutSampleAt24k, reason } = swallowed.findCut(pcm);
   assert.equal(reason, "no_boundary");
-  assert.equal(cutSample, null);
+  assert.equal(cutSampleAt24k, null);
+});
+
+test("never emits a chunk longer than the cap when the pause arrives late", () => {
+  const finder = createChunkBoundaryFinder();
+  const pcm = buildSyllabicSpeechPcm([
+    { ms: 8000, speech: true },
+    { ms: 500, speech: false },
+    { ms: 1500, speech: true },
+  ]);
+  const { cutSampleAt24k, reason } = finder.findCut(pcm);
+  assert.ok(
+    msOf(cutSampleAt24k) <= MAX_CHUNK_MS,
+    `cut at ${msOf(cutSampleAt24k)}ms, above MAX_CHUNK_MS`
+  );
+  assert.equal(reason, "max_chunk", "a pause beyond the cap is not a boundary this chunk can use");
+});
+
+test("cuts at the cap inside a silence run that straddles it", () => {
+  const finder = createChunkBoundaryFinder();
+  const pcm = buildSyllabicSpeechPcm([
+    { ms: 5800, speech: true },
+    { ms: 1000, speech: false },
+    { ms: 4200, speech: true },
+  ]);
+  const { cutSampleAt24k, reason } = finder.findCut(pcm);
+  assert.equal(reason, "silence");
+  const cutMs = msOf(cutSampleAt24k);
+  assert.ok(cutMs <= MAX_CHUNK_MS, `cut at ${cutMs}ms, above MAX_CHUNK_MS`);
+  assert.ok(cutMs > 5800, `cut at ${cutMs}ms, expected inside the straddling gap`);
+});
+
+test("a pause at the start of the window is a real boundary", () => {
+  const finder = createChunkBoundaryFinder();
+  const pcm = buildSyllabicSpeechPcm([
+    { ms: 3000, speech: false },
+    { ms: 4000, speech: true },
+  ]);
+  const { cutSampleAt24k, reason } = finder.findCut(pcm);
+  assert.equal(reason, "silence");
+  const cutMs = msOf(cutSampleAt24k);
+  assert.ok(cutMs < 3000, `cut at ${cutMs}ms, expected inside the leading pause`);
+});
+
+test("reports the operative threshold it used", () => {
+  const finder = createChunkBoundaryFinder();
+  const pcm = buildSyllabicSpeechPcm([
+    { ms: 2500, speech: true },
+    { ms: 400, speech: false },
+    { ms: 1000, speech: true },
+  ]);
+  const { threshold } = finder.findCut(pcm);
+  assert.ok(threshold > 0, "a scanned window must report the threshold in force");
+  assert.equal(threshold, Math.max(finder.getNoiseFloorRms() * 2.5, 0.0015));
+});
+
+test("reports no threshold on the paths that never compute one", () => {
+  const finder = createChunkBoundaryFinder();
+  const short = buildSyllabicSpeechPcm([{ ms: 900, speech: true }]);
+  assert.equal(finder.findCut(short).reason, "below_min");
+  assert.equal(finder.findCut(short).threshold, null);
+  assert.equal(finder.findCut(short, { final: true }).threshold, null);
 });
