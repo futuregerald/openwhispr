@@ -4041,18 +4041,22 @@ class IPCHandlers {
     const DUPLICATE_TRANSCRIPT_MERGE_LIMIT = 3;
     const STREAMING_RISKY_MIC_SEGMENT_HOLDBACK_MS = 3000;
     const LOCAL_MEETING_CHUNK_INTERVAL_MS = 5000;
-    // Mic and system each cut on their own silence boundary, so one spoken
-    // moment can reach the two sources up to a tick plus a full chunk apart.
-    // Every window that compares them, and the holdback that waits for the
-    // confirming system transcript, must outlast that skew.
+    // In local mode mic and system each cut on their own silence boundary, so
+    // one spoken moment can reach the two sources up to a tick plus a full
+    // chunk apart. Streaming gets both timestamps from one provider inside a
+    // single run and keeps the narrower windows below.
     const MAX_CROSS_SOURCE_SKEW_MS = LOCAL_MEETING_CHUNK_INTERVAL_MS + MAX_CHUNK_MS + 1000;
     const MAX_LOCAL_CHUNK_EMISSIONS_PER_TICK = 4;
     const MAX_LOCAL_FINAL_FLUSH_EMISSIONS = 32;
     const MAX_LOCAL_BUFFER_MS = 60000;
     const MAX_LOCAL_BUFFER_BYTES = (MAX_LOCAL_BUFFER_MS / 1000) * 24000 * 2;
-    const DUPLICATE_TRANSCRIPT_WINDOW_MS = MAX_CROSS_SOURCE_SKEW_MS;
+    const DUPLICATE_TRANSCRIPT_WINDOW_MS = 6000;
+    const RACING_MIC_RETRACT_WINDOW_MS = 4000;
     const LOCAL_RISKY_MIC_SEGMENT_HOLDBACK_MS = MAX_CROSS_SOURCE_SKEW_MS;
-    const RACING_MIC_RETRACT_WINDOW_MS = MAX_CROSS_SOURCE_SKEW_MS;
+    const duplicateTranscriptWindowMs = () =>
+      meetingLocalMode ? MAX_CROSS_SOURCE_SKEW_MS : DUPLICATE_TRANSCRIPT_WINDOW_MS;
+    const racingMicRetractWindowMs = () =>
+      meetingLocalMode ? MAX_CROSS_SOURCE_SKEW_MS : RACING_MIC_RETRACT_WINDOW_MS;
 
     const buildNearbyTranscriptCandidates = (
       targetSource,
@@ -4067,7 +4071,7 @@ class IPCHandlers {
       return buildMergedCandidates({
         segments: relevant,
         timestamp,
-        windowMs: DUPLICATE_TRANSCRIPT_WINDOW_MS,
+        windowMs: duplicateTranscriptWindowMs(),
         mergeLimit: DUPLICATE_TRANSCRIPT_MERGE_LIMIT,
         extraSegment,
       });
@@ -4127,8 +4131,8 @@ class IPCHandlers {
         if (systemTimestamp != null) {
           const windowMs =
             candidate.hasBleedEvidence || candidate.likelyRenderBleed
-              ? DUPLICATE_TRANSCRIPT_WINDOW_MS
-              : RACING_MIC_RETRACT_WINDOW_MS;
+              ? duplicateTranscriptWindowMs()
+              : racingMicRetractWindowMs();
           if (!isWithinRetractWindow({ candidate, systemTimestamp, windowMs })) {
             continue;
           }
