@@ -1,7 +1,12 @@
-import type { TranscriptSegment } from "../stores/meetingRecordingStore";
+// @ts-check
+// Shared by the renderer and the main process. Main `require()`s this file, so it must
+// not reach for any renderer global — that is why the parse helper takes an `onError`
+// callback instead of importing a logger.
 
-export type TranscriptSpeakerStatus = "provisional" | "confirmed" | "suggested" | "locked";
-export type TranscriptSpeakerLockSource = "user" | "diarization" | "suggestion";
+/** @typedef {import("../stores/meetingRecordingStore").TranscriptSegment} TranscriptSegment */
+/** @typedef {Pick<TranscriptSegment, "speaker" | "speakerName" | "speakerIsPlaceholder" | "suggestedName" | "suggestedProfileId" | "speakerStatus" | "speakerLocked" | "speakerLockSource">} SpeakerStateFields */
+/** @typedef {"provisional" | "confirmed" | "suggested" | "locked"} TranscriptSpeakerStatus */
+/** @typedef {"user" | "diarization" | "suggestion"} TranscriptSpeakerLockSource */
 
 const SPEAKER_STATE_FIELDS = [
   "speaker",
@@ -12,20 +17,28 @@ const SPEAKER_STATE_FIELDS = [
   "speakerStatus",
   "speakerLocked",
   "speakerLockSource",
-] as const;
+];
 
-type SpeakerStateField = (typeof SPEAKER_STATE_FIELDS)[number];
+/**
+ * @param {TranscriptSegment} segment
+ * @returns {Record<string, unknown>}
+ */
+const asFields = (segment) => /** @type {any} */ (segment);
 
-const normalizeText = (text: string) => text.trim().replace(/\s+/g, " ");
+/** @param {string} text */
+const normalizeText = (text) => text.trim().replace(/\s+/g, " ");
 
-const getSegmentMatchKey = (segment: TranscriptSegment) =>
+/** @param {TranscriptSegment} segment */
+const getSegmentMatchKey = (segment) =>
   [segment.source, segment.timestamp ?? "", normalizeText(segment.text)].join("|");
 
-const canonicalizeTranscriptSpeakerStatus = (
-  status?: string,
-  speakerLocked?: boolean,
-  speakerLockSource?: TranscriptSpeakerLockSource
-): TranscriptSpeakerStatus | undefined => {
+/**
+ * @param {string} [status]
+ * @param {boolean} [speakerLocked]
+ * @param {TranscriptSpeakerLockSource} [speakerLockSource]
+ * @returns {TranscriptSpeakerStatus | undefined}
+ */
+const canonicalizeTranscriptSpeakerStatus = (status, speakerLocked, speakerLockSource) => {
   if (speakerLocked || speakerLockSource === "user") {
     return "locked";
   }
@@ -47,7 +60,11 @@ const canonicalizeTranscriptSpeakerStatus = (
   }
 };
 
-const pickSpeakerStatus = (segment: TranscriptSegment): TranscriptSpeakerStatus | undefined => {
+/**
+ * @param {TranscriptSegment} segment
+ * @returns {TranscriptSpeakerStatus | undefined}
+ */
+const pickSpeakerStatus = (segment) => {
   const normalizedStatus = canonicalizeTranscriptSpeakerStatus(
     segment.speakerStatus,
     segment.speakerLocked,
@@ -60,12 +77,17 @@ const pickSpeakerStatus = (segment: TranscriptSegment): TranscriptSpeakerStatus 
   return undefined;
 };
 
-export const isTranscriptSpeakerLocked = (segment: TranscriptSegment) =>
+/** @param {TranscriptSegment} segment */
+export const isTranscriptSpeakerLocked = (segment) =>
   !!segment.speakerLocked ||
   segment.speakerLockSource === "user" ||
   canonicalizeTranscriptSpeakerStatus(segment.speakerStatus) === "locked";
 
-export const normalizeTranscriptSegment = (segment: TranscriptSegment): TranscriptSegment => {
+/**
+ * @param {TranscriptSegment} segment
+ * @returns {TranscriptSegment}
+ */
+export const normalizeTranscriptSegment = (segment) => {
   const speakerStatus = pickSpeakerStatus(segment);
   const speakerLocked =
     !!segment.speakerLocked || segment.speakerLockSource === "user" || speakerStatus === "locked";
@@ -79,18 +101,22 @@ export const normalizeTranscriptSegment = (segment: TranscriptSegment): Transcri
   };
 };
 
-export const normalizeTranscriptSegments = (segments: TranscriptSegment[]) =>
+/** @param {TranscriptSegment[]} segments */
+export const normalizeTranscriptSegments = (segments) =>
   segments.map((segment) => normalizeTranscriptSegment(segment));
 
-export const applyTranscriptSpeakerPatch = (
-  segment: TranscriptSegment,
-  patch: Partial<Pick<TranscriptSegment, SpeakerStateField>>
-) => normalizeTranscriptSegment({ ...segment, ...patch });
+/**
+ * @param {TranscriptSegment} segment
+ * @param {Partial<SpeakerStateFields>} patch
+ */
+export const applyTranscriptSpeakerPatch = (segment, patch) =>
+  normalizeTranscriptSegment({ ...segment, ...patch });
 
-export const lockTranscriptSpeaker = (
-  segment: TranscriptSegment,
-  patch: Partial<Pick<TranscriptSegment, SpeakerStateField>> = {}
-) =>
+/**
+ * @param {TranscriptSegment} segment
+ * @param {Partial<SpeakerStateFields>} [patch]
+ */
+export const lockTranscriptSpeaker = (segment, patch = {}) =>
   normalizeTranscriptSegment({
     ...segment,
     ...patch,
@@ -99,10 +125,14 @@ export const lockTranscriptSpeaker = (
     speakerLockSource: "user",
   });
 
-const mergeSpeakerFields = (existing: TranscriptSegment, incoming: TranscriptSegment) => {
-  const merged = { ...incoming } as TranscriptSegment;
-  const existingFields = existing as Record<SpeakerStateField, unknown>;
-  const mergedFields = merged as Record<SpeakerStateField, unknown>;
+/**
+ * @param {TranscriptSegment} existing
+ * @param {TranscriptSegment} incoming
+ */
+const mergeSpeakerFields = (existing, incoming) => {
+  const merged = { ...incoming };
+  const existingFields = asFields(existing);
+  const mergedFields = asFields(merged);
 
   for (const field of SPEAKER_STATE_FIELDS) {
     if (mergedFields[field] === undefined && existingFields[field] !== undefined) {
@@ -124,10 +154,12 @@ const mergeSpeakerFields = (existing: TranscriptSegment, incoming: TranscriptSeg
   return normalizeTranscriptSegment(merged);
 };
 
-export const mergeTranscriptSegments = (
-  existingSegments: TranscriptSegment[],
-  incomingSegments: TranscriptSegment[]
-) => {
+/**
+ * @param {TranscriptSegment[]} existingSegments
+ * @param {TranscriptSegment[]} incomingSegments
+ * @returns {TranscriptSegment[]}
+ */
+export const mergeTranscriptSegments = (existingSegments, incomingSegments) => {
   if (incomingSegments.length === 0) {
     return normalizeTranscriptSegments(existingSegments);
   }
@@ -137,8 +169,10 @@ export const mergeTranscriptSegments = (
     );
   }
 
-  const existingById = new Map<string, number>();
-  const existingByKey = new Map<string, number[]>();
+  /** @type {Map<string, number>} */
+  const existingById = new Map();
+  /** @type {Map<string, number[]>} */
+  const existingByKey = new Map();
 
   existingSegments.forEach((segment, index) => {
     if (segment.id) existingById.set(segment.id, index);
@@ -148,12 +182,16 @@ export const mergeTranscriptSegments = (
     else existingByKey.set(key, [index]);
   });
 
-  const usedIndexes = new Set<number>();
-  const enrichedByIndex = new Map<number, TranscriptSegment>();
-  const unmatchedIncoming: TranscriptSegment[] = [];
+  /** @type {Set<number>} */
+  const usedIndexes = new Set();
+  /** @type {Map<number, TranscriptSegment>} */
+  const enrichedByIndex = new Map();
+  /** @type {TranscriptSegment[]} */
+  const unmatchedIncoming = [];
 
   incomingSegments.forEach((segment, index) => {
-    const findUnused = (candidates?: number[]) =>
+    /** @param {number[]} [candidates] */
+    const findUnused = (candidates) =>
       candidates?.find((candidateIndex) => !usedIndexes.has(candidateIndex));
 
     let matchIndex = segment.id ? existingById.get(segment.id) : undefined;
@@ -190,7 +228,8 @@ export const mergeTranscriptSegments = (
   return [...preserved, ...unmatchedIncoming];
 };
 
-export const serializeTranscriptSegments = (segments: TranscriptSegment[]) =>
+/** @param {TranscriptSegment[]} segments */
+export const serializeTranscriptSegments = (segments) =>
   JSON.stringify(
     segments.map((segment) => ({
       text: segment.text,
@@ -206,3 +245,37 @@ export const serializeTranscriptSegments = (segments: TranscriptSegment[]) =>
       speakerLockSource: segment.speakerLockSource,
     }))
   );
+
+/**
+ * Ids are not persisted, so they are re-synthesised on every read. Callers rely on
+ * `stored-${i}` being stable for a given transcript.
+ *
+ * @param {string} raw
+ * @param {(message: string, error: unknown) => void} [onError]
+ * @returns {TranscriptSegment[]}
+ */
+export const parseTranscriptSegments = (raw, onError) => {
+  if (!raw || !raw.startsWith("[")) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return normalizeTranscriptSegments(
+      parsed.map((s, i) => ({
+        id: `stored-${i}`,
+        text: s.text,
+        source: s.source,
+        timestamp: s.timestamp,
+        speaker: s.speaker,
+        speakerName: s.speakerName,
+        speakerIsPlaceholder: s.speakerIsPlaceholder,
+        suggestedName: s.suggestedName,
+        suggestedProfileId: s.suggestedProfileId,
+        speakerStatus: s.speakerStatus,
+        speakerLocked: s.speakerLocked,
+        speakerLockSource: s.speakerLockSource,
+      }))
+    );
+  } catch (e) {
+    onError?.("Failed to parse transcript segments", e);
+    return [];
+  }
+};

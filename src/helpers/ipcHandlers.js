@@ -351,6 +351,19 @@ class IPCHandlers {
     });
   }
 
+  // A note write that skips this loses the `note-updated` broadcast, and the renderer's
+  // note store has no other live refresh path — it would keep serving the pre-write
+  // transcript and write it back over this one on the next speaker edit.
+  _updateNoteAndNotify(id, updates) {
+    const result = this.databaseManager.updateNote(id, updates);
+    if (result?.success && result?.note) {
+      setImmediate(() => this.broadcastToWindows("note-updated", result.note));
+      this._asyncVectorUpsert(result.note);
+      this._asyncMirrorWrite(result.note);
+    }
+    return result;
+  }
+
   _asyncMirrorWrite(note) {
     if (!this._noteFilesEnabled) {
       debugLogger.debug(
@@ -1037,12 +1050,9 @@ class IPCHandlers {
     });
 
     ipcMain.handle("db-update-note", async (event, id, updates) => {
-      const result = this.databaseManager.updateNote(id, updates);
-      if (result?.success && result?.note) {
-        setImmediate(() => this.broadcastToWindows("note-updated", result.note));
-        this._asyncVectorUpsert(result.note);
-        this._asyncMirrorWrite(result.note);
-        if (updates.participants) this._tryAutoLabelOneOnOne(id);
+      const result = this._updateNoteAndNotify(id, updates);
+      if (result?.success && result?.note && updates.participants) {
+        this._tryAutoLabelOneOnOne(id);
       }
       return result;
     });
@@ -8245,6 +8255,86 @@ class IPCHandlers {
     return saved;
   }
 
+  // The diarized result is computed in main and was, until now, saved only by a React
+  // callback in the renderer — which is skipped whenever the window is gone, the note
+  // has been switched, or the session id has already been cleared. Main writes it.
+  _persistDiarizedTranscript(noteId, segments, speakerEmbeddings) {
+    if (!noteId || !segments?.length) {
+      debugLogger.notice("Diarization persist skipped", {
+        noteId,
+        segmentCount: segments?.length ?? 0,
+      });
+      return segments;
+    }
+
+    try {
+      const {
+        mergeTranscriptSegments,
+        parseTranscriptSegments,
+        serializeTranscriptSegments,
+      } = require("./transcriptSpeakerState");
+
+      const persisted = this.databaseManager.getNote(noteId);
+      const existing = parseTranscriptSegments(persisted?.transcript ?? "", (message, error) =>
+        debugLogger.warn(message, { error: error?.message, noteId })
+      );
+      const incoming = segments.map((segment, index) => ({
+        ...segment,
+        id: segment.id || `diarized-${index}`,
+      }));
+      const merged = mergeTranscriptSegments(existing, incoming);
+
+      this._updateNoteAndNotify(noteId, { transcript: serializeTranscriptSegments(merged) });
+
+      debugLogger.notice("Diarization transcript persisted in main", {
+        noteId,
+        existingSegmentCount: existing.length,
+        incomingSegmentCount: incoming.length,
+        persistedSegmentCount: merged.length,
+      });
+
+      // Deliberately outside the transcript's try: an embedding write that fails must
+      // not discard a transcript that was already written, which would hand the renderer
+      // the un-merged segments to save back over it.
+      this._persistSpeakerEmbeddings(noteId, speakerEmbeddings);
+
+      return merged;
+    } catch (err) {
+      debugLogger.error("Diarization transcript persist failed", { noteId, error: err.message });
+      this._persistSpeakerEmbeddings(noteId, speakerEmbeddings);
+      return segments;
+    }
+  }
+
+  // The centroids are plain number arrays. better-sqlite3 binds a plain Array as a
+  // parameter spread rather than a BLOB and throws, so they must be converted exactly
+  // as the save-note-speaker-embeddings IPC handler does.
+  _persistSpeakerEmbeddings(noteId, speakerEmbeddings) {
+    if (!noteId || !speakerEmbeddings || !Object.keys(speakerEmbeddings).length) return false;
+
+    try {
+      const buffers = {};
+      for (const [speakerId, values] of Object.entries(speakerEmbeddings)) {
+        buffers[speakerId] = Buffer.from(new Float32Array(values).buffer);
+      }
+      this.databaseManager.saveNoteSpeakerEmbeddings(noteId, buffers);
+      // Matches the IPC handler: a fresh embedding set is what makes a calendar
+      // attendee auto-labellable on a 1:1.
+      this._tryAutoLabelOneOnOne(noteId);
+      debugLogger.notice("Diarization speaker embeddings persisted in main", {
+        noteId,
+        speakerCount: Object.keys(buffers).length,
+      });
+      return true;
+    } catch (err) {
+      debugLogger.error("Diarization speaker embedding persist failed", {
+        noteId,
+        error: err.message,
+      });
+      return false;
+    }
+  }
+
   _startOrSkipDiarization(
     sessionId,
     rawPcmPath,
@@ -8272,12 +8362,11 @@ class IPCHandlers {
     const diarizationEnabled = (sessionConfig?.enabled ?? this.speakerDiarizationEnabled) !== false;
 
     if (!diarizationEnabled || !this.diarizationManager?.isAvailable() || !rawPcmPath) {
-      send({
-        segments: transcriptSegments.map((segment, index) => ({
-          ...segment,
-          id: segment.id || `segment-${index}`,
-        })),
-      });
+      const skipped = transcriptSegments.map((segment, index) => ({
+        ...segment,
+        id: segment.id || `segment-${index}`,
+      }));
+      send({ segments: this._persistDiarizedTranscript(noteId, skipped, null) });
       if (noteId) {
         this._enqueuePostCallPipeline(noteId);
       }
@@ -8448,7 +8537,12 @@ class IPCHandlers {
           }
         }
 
-        send({ segments: enrichedSegments, speakerEmbeddings: speakerEmbeddingsMap });
+        const persistedSegments = this._persistDiarizedTranscript(
+          noteId,
+          enrichedSegments,
+          speakerEmbeddingsMap
+        );
+        send({ segments: persistedSegments, speakerEmbeddings: speakerEmbeddingsMap });
         if (noteId) {
           this._enqueuePostCallPipeline(noteId);
         }
@@ -8457,6 +8551,16 @@ class IPCHandlers {
         // Enqueue before send: webContents.send can still throw if the window is
         // destroyed between the guard and the call, and that must not cost the note
         // its title, meeting type and notes.
+        // Persist before enqueueing: the queue runs inline when idle, and the pipeline's
+        // first statement reads the note's transcript.
+        this._persistDiarizedTranscript(
+          noteId,
+          transcriptSegments.map((segment, index) => ({
+            ...segment,
+            id: segment.id || `segment-${index}`,
+          })),
+          null
+        );
         if (noteId) {
           this._enqueuePostCallPipeline(noteId);
         }
