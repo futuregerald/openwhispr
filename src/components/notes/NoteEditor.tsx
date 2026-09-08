@@ -40,6 +40,8 @@ import NoteBottomBar from "./NoteBottomBar";
 import EmbeddedChat, { type EmbeddedChatMode } from "./EmbeddedChat";
 import { useEmbeddedChat } from "../../hooks/useEmbeddedChat";
 import { normalizeDbDate } from "../../utils/dateFormatting";
+import { classifyDiarizationPayload } from "../../utils/diarizationPayloadGuard";
+import logger from "../../utils/logger";
 import { parseTranscriptSegments } from "../../utils/parseTranscriptSegments";
 import {
   applyTranscriptSpeakerPatch,
@@ -397,9 +399,24 @@ export default function NoteEditor({
   useEffect(() => {
     const expectedSession = diarizationSessionId;
     const cleanup = window.electronAPI?.onMeetingDiarizationComplete?.(async (data) => {
-      if (!expectedSession || data?.sessionId !== expectedSession) return;
+      const verdict = classifyDiarizationPayload(data, {
+        sessionId: expectedSession,
+        noteId: note.id,
+      });
+      const belongsToThisSession = verdict.accepted || verdict.reason === "note-mismatch";
+      if (!belongsToThisSession) return;
 
       setIsDiarizing(false);
+
+      if (!verdict.accepted) {
+        logger.notice("Diarization result refused: it belongs to a different note", {
+          payloadNoteId: data?.noteId,
+          openNoteId: note.id,
+          sessionId: data?.sessionId,
+          segmentCount: data?.segments?.length ?? 0,
+        });
+        return;
+      }
 
       if (!data?.segments?.length) return;
 
@@ -422,6 +439,14 @@ export default function NoteEditor({
       if (data.speakerEmbeddings) {
         window.electronAPI?.saveNoteSpeakerEmbeddings?.(note.id, data.speakerEmbeddings);
       }
+
+      logger.notice("Diarization result persisted", {
+        noteId: note.id,
+        sessionId: data?.sessionId,
+        incomingSegmentCount: data.segments.length,
+        persistedSegmentCount: enriched.length,
+        hasSpeakerEmbeddings: Boolean(data.speakerEmbeddings),
+      });
 
       const autoMappings: Record<string, string> = {};
       for (const s of enriched) {

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.2] - 2026-09-08
+
+### Fixed
+- **One meeting's speakers could be written into a different note.** Working out who spoke takes several seconds after a recording stops, and the result was delivered to whichever note happened to be open when it arrived — not the note it was computed for. Clicking away to another note inside that window merged the finished meeting's entire transcript into the note you had just opened, which is how one note ended up holding two meetings. The result now carries the note it belongs to and is refused by any other.
+- **Speaker identification left no trace in the log unless debug logging was on**, so a meeting that lost its speakers looked exactly like a meeting that never tried. Starting and finishing speaker identification, reconciling the names assigned during the call, and whether the result reached the note are now recorded on every install.
+
 ## [1.18.1] - 2026-09-06
 
 ### Added

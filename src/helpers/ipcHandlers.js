@@ -8057,6 +8057,10 @@ class IPCHandlers {
 
   _reconcileLiveSpeakerState(liveSpeakerState, speakerEmbeddingsMap, enrichedSegments) {
     if (!liveSpeakerState || !speakerEmbeddingsMap) {
+      debugLogger.notice("Live speaker reconciliation skipped", {
+        hasLiveSpeakerState: Boolean(liveSpeakerState),
+        hasSpeakerEmbeddings: Boolean(speakerEmbeddingsMap),
+      });
       return new Set();
     }
 
@@ -8137,6 +8141,12 @@ class IPCHandlers {
 
       this._applySpeakerName(enrichedSegments, mappedId, displayName);
     }
+
+    debugLogger.notice("Live speaker reconciliation complete", {
+      liveSpeakers: liveEntries.length,
+      diarizedSpeakers: Object.keys(speakerEmbeddingsMap).length,
+      reconciledSpeakers: reconciledSpeakers.size,
+    });
 
     return reconciledSpeakers;
   }
@@ -8246,9 +8256,17 @@ class IPCHandlers {
     noteId = null
   ) {
     const send = (payload) => {
-      if (win && !win.isDestroyed()) {
-        win.webContents.send("meeting-diarization-complete", { sessionId, ...payload });
+      const delivered = Boolean(win && !win.isDestroyed());
+      if (delivered) {
+        win.webContents.send("meeting-diarization-complete", { sessionId, noteId, ...payload });
       }
+      debugLogger.notice("Diarization result handed to the renderer", {
+        sessionId,
+        noteId,
+        segmentCount: payload?.segments?.length ?? 0,
+        hasSpeakerEmbeddings: Boolean(payload?.speakerEmbeddings),
+        delivered,
+      });
     };
 
     const diarizationEnabled = (sessionConfig?.enabled ?? this.speakerDiarizationEnabled) !== false;

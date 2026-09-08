@@ -1,9 +1,10 @@
-type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+type LogLevel = "trace" | "debug" | "info" | "notice" | "warn" | "error" | "fatal";
 
 const LOG_LEVELS: Record<LogLevel, number> = {
   trace: 10,
   debug: 20,
   info: 30,
+  notice: 35,
   warn: 40,
   error: 50,
   fatal: 60,
@@ -90,6 +91,7 @@ const logger = {
   trace: (message: string, meta?: any, scope?: string) => log("trace", message, meta, scope),
   debug: (message: string, meta?: any, scope?: string) => log("debug", message, meta, scope),
   info: (message: string, meta?: any, scope?: string) => log("info", message, meta, scope),
+  notice: (message: string, meta?: any, scope?: string) => log("notice", message, meta, scope),
   warn: (message: string, meta?: any, scope?: string) => log("warn", message, meta, scope),
   error: (message: string, meta?: any, scope?: string) => log("error", message, meta, scope),
   fatal: (message: string, meta?: any, scope?: string) => log("fatal", message, meta, scope),
