@@ -10,7 +10,12 @@ const FLOOR_RISE_WEIGHT = 0.1;
 
 const FRAME_SAMPLES = (FRAME_MS / 1000) * SAMPLE_RATE;
 
-const frameRmsSeries = (pcm24k, frameSamples = FRAME_SAMPLES) => {
+const frameRmsSeries = (pcm24k, frameSamples) => {
+  if (!Number.isInteger(frameSamples) || frameSamples <= 0) {
+    throw new RangeError(
+      `frameRmsSeries requires an explicit positive integer frameSamples, got ${frameSamples}`
+    );
+  }
   const frames = [];
   const frameBytes = frameSamples * 2;
   for (let offset = 0; offset + frameBytes <= pcm24k.length; offset += frameBytes) {
@@ -34,6 +39,17 @@ const createChunkBoundaryFinder = ({
   floorSeparationRatio = FLOOR_SEPARATION_RATIO,
   floorRiseWeight = FLOOR_RISE_WEIGHT,
 } = {}) => {
+  if (!Number.isInteger(frameMs) || frameMs <= 0) {
+    throw new RangeError(
+      `frameMs must be a positive integer number of milliseconds, got ${frameMs}`
+    );
+  }
+  if (!(maxChunkMs > minChunkMs)) {
+    throw new RangeError(
+      `maxChunkMs (${maxChunkMs}) must be greater than minChunkMs (${minChunkMs})`
+    );
+  }
+
   const frameSamples = (frameMs / 1000) * SAMPLE_RATE;
   const holdFrames = Math.ceil(silenceHoldMs / frameMs);
   const minFrame = Math.ceil(minChunkMs / frameMs);
@@ -47,6 +63,9 @@ const createChunkBoundaryFinder = ({
     },
     getNoiseFloorRms() {
       return noiseFloorRms;
+    },
+    getFrameSamples() {
+      return frameSamples;
     },
     findCut(pcm24k, { final = false } = {}) {
       const totalSamples = Math.floor(pcm24k.length / 2);
@@ -77,8 +96,8 @@ const createChunkBoundaryFinder = ({
 
       const threshold = Math.max(noiseFloorRms * silenceFloorMultiplier, absoluteSilenceRms);
 
-      let bestStart = -1;
-      let bestEnd = -1;
+      let lastQualifyingRunStart = -1;
+      let lastQualifyingRunEnd = -1;
       if (loudest >= threshold) {
         let runStart = -1;
         for (let i = 0; i <= frames.length; i += 1) {
@@ -89,17 +108,26 @@ const createChunkBoundaryFinder = ({
           }
           if (runStart !== -1) {
             if (i - runStart >= holdFrames && i > minFrame && runStart < maxFrame) {
-              bestStart = runStart;
-              bestEnd = i;
+              lastQualifyingRunStart = runStart;
+              lastQualifyingRunEnd = i;
             }
             runStart = -1;
           }
         }
       }
 
-      if (bestStart !== -1) {
-        const midFrame = Math.floor((bestStart + bestEnd) / 2);
-        const cutFrame = Math.min(Math.max(midFrame, minFrame), bestEnd - 1, maxFrame);
+      if (lastQualifyingRunStart === 0) {
+        const cutFrame = Math.min(lastQualifyingRunEnd, maxFrame);
+        return {
+          cutSampleAt24k: cutFrame * frameSamples,
+          reason: "leading_silence",
+          threshold,
+        };
+      }
+
+      if (lastQualifyingRunStart > 0) {
+        const midFrame = Math.floor((lastQualifyingRunStart + lastQualifyingRunEnd) / 2);
+        const cutFrame = Math.min(Math.max(midFrame, minFrame), lastQualifyingRunEnd - 1, maxFrame);
         return { cutSampleAt24k: cutFrame * frameSamples, reason: "silence", threshold };
       }
 

@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   createChunkBoundaryFinder,
+  frameRmsSeries,
   SAMPLE_RATE,
   MIN_CHUNK_MS,
   MAX_CHUNK_MS,
@@ -275,16 +276,16 @@ test("cuts at the cap inside a silence run that straddles it", () => {
   assert.ok(cutMs > 5800, `cut at ${cutMs}ms, expected inside the straddling gap`);
 });
 
-test("a pause at the start of the window is a real boundary", () => {
+test("a leading pause is consumed whole, so the next chunk starts at speech", () => {
   const finder = createChunkBoundaryFinder();
   const pcm = buildSyllabicSpeechPcm([
     { ms: 3000, speech: false },
     { ms: 4000, speech: true },
   ]);
   const { cutSampleAt24k, reason } = finder.findCut(pcm);
-  assert.equal(reason, "silence");
+  assert.equal(reason, "leading_silence");
   const cutMs = msOf(cutSampleAt24k);
-  assert.ok(cutMs < 3000, `cut at ${cutMs}ms, expected inside the leading pause`);
+  assert.ok(cutMs >= 2980 && cutMs <= 3020, `cut at ${cutMs}ms, expected the end of the pause`);
 });
 
 test("reports the operative threshold it used", () => {
@@ -305,4 +306,90 @@ test("reports no threshold on the paths that never compute one", () => {
   assert.equal(finder.findCut(short).reason, "below_min");
   assert.equal(finder.findCut(short).threshold, null);
   assert.equal(finder.findCut(short, { final: true }).threshold, null);
+});
+
+test("prefers the last pause below the cap over one beyond it", () => {
+  const finder = createChunkBoundaryFinder();
+  const pcm = buildSyllabicSpeechPcm([
+    { ms: 2500, speech: true },
+    { ms: 400, speech: false },
+    { ms: 3200, speech: true },
+    { ms: 500, speech: false },
+    { ms: 1000, speech: true },
+  ]);
+  const { cutSampleAt24k, reason } = finder.findCut(pcm);
+  assert.equal(reason, "silence");
+  const cutMs = msOf(cutSampleAt24k);
+  assert.ok(cutMs > 2500 && cutMs < 2900, `cut at ${cutMs}ms, expected inside the 2500-2900ms gap`);
+});
+
+test("a silence cut never emits a chunk that is entirely below the threshold", () => {
+  const finder = createChunkBoundaryFinder();
+  const pcm = buildSyllabicSpeechPcm([
+    { ms: 2500, speech: false },
+    { ms: 4000, speech: true },
+    { ms: 400, speech: false },
+    { ms: 1000, speech: true },
+  ]);
+  const { cutSampleAt24k, reason, threshold } = finder.findCut(pcm);
+  assert.notEqual(
+    reason,
+    "silence",
+    "a window opening mid-pause must not be cut as a speech boundary"
+  );
+
+  const emitted = pcm.subarray(0, cutSampleAt24k * 2);
+  const loudest = Math.max(...frameRmsSeries(emitted, finder.getFrameSamples()));
+  if (reason === "leading_silence") {
+    assert.ok(loudest < threshold, "a leading_silence chunk is silence by construction");
+  } else {
+    assert.ok(
+      loudest >= threshold,
+      `emitted region peaked at ${loudest}, below threshold ${threshold}`
+    );
+  }
+});
+
+test("a mid-window silence cut emits audio that contains speech", () => {
+  const finder = createChunkBoundaryFinder();
+  const pcm = buildSyllabicSpeechPcm([
+    { ms: 2500, speech: true },
+    { ms: 400, speech: false },
+    { ms: 1300, speech: true },
+  ]);
+  const { cutSampleAt24k, reason, threshold } = finder.findCut(pcm);
+  assert.equal(reason, "silence");
+  const emitted = pcm.subarray(0, cutSampleAt24k * 2);
+  const loudest = Math.max(...frameRmsSeries(emitted, finder.getFrameSamples()));
+  assert.ok(
+    loudest >= threshold,
+    `emitted region peaked at ${loudest}, below threshold ${threshold}`
+  );
+});
+
+test("frameRmsSeries requires an explicit frame size", () => {
+  const pcm = buildSyllabicSpeechPcm([{ ms: 100, speech: true }]);
+  assert.throws(() => frameRmsSeries(pcm), RangeError);
+  assert.throws(() => frameRmsSeries(pcm, 0), RangeError);
+  assert.throws(() => frameRmsSeries(pcm, 20.5), RangeError);
+  assert.equal(frameRmsSeries(pcm, 480).length, 5);
+});
+
+test("the finder reports the frame size it actually uses", () => {
+  assert.equal(createChunkBoundaryFinder().getFrameSamples(), 480);
+  assert.equal(createChunkBoundaryFinder({ frameMs: 30 }).getFrameSamples(), 720);
+});
+
+test("the factory rejects parameters that would fail silently or hang", () => {
+  assert.throws(() => createChunkBoundaryFinder({ frameMs: 0 }), RangeError);
+  assert.throws(() => createChunkBoundaryFinder({ frameMs: 20.1 }), RangeError);
+  assert.throws(() => createChunkBoundaryFinder({ frameMs: -20 }), RangeError);
+  assert.throws(
+    () => createChunkBoundaryFinder({ minChunkMs: 3000, maxChunkMs: 2500 }),
+    RangeError
+  );
+  assert.throws(
+    () => createChunkBoundaryFinder({ minChunkMs: 2000, maxChunkMs: 2000 }),
+    RangeError
+  );
 });
