@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   createChunkBoundaryFinder,
   frameRmsSeries,
+  splitEntriesAtByte,
   SAMPLE_RATE,
   MIN_CHUNK_MS,
   MAX_CHUNK_MS,
@@ -462,5 +463,86 @@ test("speechLikely is true for every chunk a silence cut emits", () => {
     const emitted = pcm.subarray(0, cutSampleAt24k * 2);
     const loudest = Math.max(...frameRmsSeries(emitted, finder.getFrameSamples()));
     assert.ok(loudest >= threshold, `gap ${gapMs}ms: emitted region peaked below the threshold`);
+  }
+});
+
+const entryOf = (bytes, receivedAt, fill) => ({
+  buffer: Buffer.alloc(bytes, fill),
+  receivedAt,
+});
+
+const threeEntries = () => [entryOf(4, 100, 0x11), entryOf(4, 200, 0x22), entryOf(4, 300, 0x33)];
+
+test("splitEntriesAtByte cuts exactly on an entry boundary without touching the rest", () => {
+  const entries = threeEntries();
+  const { emitted, remaining, chunkStartedAt, chunkEndedAt } = splitEntriesAtByte(entries, 8);
+
+  assert.deepEqual(emitted, Buffer.concat([entries[0].buffer, entries[1].buffer]));
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0], entries[2], "an untouched entry is carried over by reference");
+  assert.equal(chunkStartedAt, 100);
+  assert.equal(chunkEndedAt, 200, "chunkEndedAt is the last emitted entry's receivedAt");
+});
+
+test("splitEntriesAtByte splits a straddling entry and leads the carry-over with its tail", () => {
+  const entries = threeEntries();
+  const { emitted, remaining, chunkStartedAt, chunkEndedAt } = splitEntriesAtByte(entries, 6);
+
+  assert.deepEqual(emitted, Buffer.concat([entries[0].buffer, Buffer.alloc(2, 0x22)]));
+  assert.equal(remaining.length, 2);
+  assert.deepEqual(remaining[0].buffer, Buffer.alloc(2, 0x22));
+  assert.equal(remaining[0].receivedAt, 200, "the tail keeps the straddling entry's receivedAt");
+  assert.equal(remaining[1], entries[2]);
+  assert.equal(chunkStartedAt, 100);
+  assert.equal(chunkEndedAt, 200, "chunkEndedAt is the straddling entry's receivedAt");
+
+  assert.equal(
+    Buffer.concat([emitted, ...remaining.map((entry) => entry.buffer)]).length,
+    12,
+    "no bytes are lost or duplicated across the split"
+  );
+});
+
+test("splitEntriesAtByte consuming every entry leaves nothing behind", () => {
+  const entries = threeEntries();
+  const { emitted, remaining, chunkStartedAt, chunkEndedAt } = splitEntriesAtByte(entries, 12);
+
+  assert.equal(emitted.length, 12);
+  assert.deepEqual(remaining, []);
+  assert.equal(chunkStartedAt, 100);
+  assert.equal(chunkEndedAt, 300);
+});
+
+test("splitEntriesAtByte handles a single entry whole and split", () => {
+  const whole = splitEntriesAtByte([entryOf(4, 700, 0x44)], 4);
+  assert.equal(whole.emitted.length, 4);
+  assert.deepEqual(whole.remaining, []);
+  assert.equal(whole.chunkStartedAt, 700);
+  assert.equal(whole.chunkEndedAt, 700);
+
+  const split = splitEntriesAtByte([entryOf(4, 700, 0x44)], 2);
+  assert.equal(split.emitted.length, 2);
+  assert.equal(split.remaining.length, 1);
+  assert.equal(split.remaining[0].buffer.length, 2);
+  assert.equal(split.remaining[0].receivedAt, 700);
+  assert.equal(split.chunkStartedAt, 700);
+  assert.equal(split.chunkEndedAt, 700);
+});
+
+test("splitEntriesAtByte on an empty array reports no timestamps", () => {
+  const { emitted, remaining, chunkStartedAt, chunkEndedAt } = splitEntriesAtByte([], 8);
+  assert.equal(emitted.length, 0);
+  assert.deepEqual(remaining, []);
+  assert.equal(chunkStartedAt, null);
+  assert.equal(chunkEndedAt, null);
+});
+
+test("splitEntriesAtByte throws on a cutByte that would fail silently", () => {
+  for (const cutByte of [NaN, -2, 3, undefined, 1.5]) {
+    assert.throws(
+      () => splitEntriesAtByte(threeEntries(), cutByte),
+      TypeError,
+      `cutByte ${cutByte} was accepted instead of throwing`
+    );
   }
 });

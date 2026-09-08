@@ -185,9 +185,47 @@ const createChunkBoundaryFinder = ({
   };
 };
 
+const splitEntriesAtByte = (entries, cutByte) => {
+  if (!Number.isInteger(cutByte) || cutByte < 0 || cutByte % 2 !== 0) {
+    throw new TypeError(
+      `splitEntriesAtByte: cutByte must be a non-negative even integer, got ${cutByte}`
+    );
+  }
+  if (!entries.length) {
+    return { emitted: Buffer.alloc(0), remaining: [], chunkStartedAt: null, chunkEndedAt: null };
+  }
+
+  const chunkStartedAt = entries[0].receivedAt;
+  let chunkEndedAt = entries[0].receivedAt;
+  let scanned = 0;
+  const emittedParts = [];
+  const remaining = [];
+
+  for (const entry of entries) {
+    const entryEnd = scanned + entry.buffer.length;
+    if (entryEnd <= cutByte) {
+      emittedParts.push(entry.buffer);
+      chunkEndedAt = entry.receivedAt;
+    } else if (scanned >= cutByte) {
+      remaining.push(entry);
+    } else {
+      emittedParts.push(entry.buffer.subarray(0, cutByte - scanned));
+      chunkEndedAt = entry.receivedAt;
+      remaining.push({
+        buffer: entry.buffer.subarray(cutByte - scanned),
+        receivedAt: entry.receivedAt,
+      });
+    }
+    scanned = entryEnd;
+  }
+
+  return { emitted: Buffer.concat(emittedParts), remaining, chunkStartedAt, chunkEndedAt };
+};
+
 module.exports = {
   createChunkBoundaryFinder,
   frameRmsSeries,
+  splitEntriesAtByte,
   SAMPLE_RATE,
   FRAME_MS,
   FRAME_SAMPLES,
