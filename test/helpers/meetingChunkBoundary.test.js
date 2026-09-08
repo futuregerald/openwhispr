@@ -537,6 +537,11 @@ test("splitEntriesAtByte on an empty array reports no timestamps", () => {
   assert.equal(chunkEndedAt, null);
 });
 
+test("splitEntriesAtByte throws on a cut past the end of the entries", () => {
+  assert.throws(() => splitEntriesAtByte(threeEntries(), 14), TypeError);
+  assert.doesNotThrow(() => splitEntriesAtByte(threeEntries(), 12));
+});
+
 test("splitEntriesAtByte throws on a cutByte that would fail silently", () => {
   for (const cutByte of [NaN, -2, 3, undefined, 1.5]) {
     assert.throws(
@@ -545,4 +550,44 @@ test("splitEntriesAtByte throws on a cutByte that would fail silently", () => {
       `cutByte ${cutByte} was accepted instead of throwing`
     );
   }
+});
+
+test("a learned noise floor can still fall, so a loud room cannot poison the rest of the meeting", () => {
+  const loudRoom = buildSyllabicSpeechPcm(
+    [
+      { ms: 2500, speech: true },
+      { ms: 400, speech: false },
+      { ms: 1000, speech: true },
+    ],
+    { amplitude: 0.6, floorAmplitude: 0.1 }
+  );
+  const quietFlat = buildSyllabicSpeechPcm([{ ms: 6000, speech: true }], {
+    amplitude: 0.02,
+    floorAmplitude: 0.02,
+  });
+
+  const finder = createChunkBoundaryFinder();
+  finder.findCut(loudRoom);
+  const learnedFloor = finder.getNoiseFloorRms();
+  assert.ok(learnedFloor > 0.02, `expected a high floor to be learned, got ${learnedFloor}`);
+
+  const frames = frameRmsSeries(quietFlat, finder.getFrameSamples());
+  assert.ok(
+    Math.min(...frames) > Math.max(...frames) * 0.25,
+    "this window must fail the separation guard for the test to exercise the frozen case"
+  );
+
+  let threshold = null;
+  for (let i = 0; i < 8; i += 1) {
+    ({ threshold } = finder.findCut(quietFlat));
+  }
+
+  assert.ok(
+    finder.getNoiseFloorRms() < learnedFloor,
+    "a window with no separation left the floor frozen at its learned high value"
+  );
+  assert.ok(
+    threshold < learnedFloor,
+    `threshold ${threshold} is still governed by the stale loud-room floor ${learnedFloor}`
+  );
 });

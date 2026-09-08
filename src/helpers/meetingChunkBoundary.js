@@ -102,12 +102,13 @@ const createChunkBoundaryFinder = ({
         if (rms > loudest) loudest = rms;
       }
 
-      if (quietest <= loudest * floorSeparationRatio) {
-        if (noiseFloorRms === 0 || quietest < noiseFloorRms) {
-          noiseFloorRms = quietest;
-        } else {
-          noiseFloorRms = noiseFloorRms * (1 - floorRiseWeight) + quietest * floorRiseWeight;
-        }
+      if (noiseFloorRms > 0 && quietest < noiseFloorRms) {
+        noiseFloorRms = quietest;
+      } else if (quietest <= loudest * floorSeparationRatio) {
+        noiseFloorRms =
+          noiseFloorRms === 0
+            ? quietest
+            : noiseFloorRms * (1 - floorRiseWeight) + quietest * floorRiseWeight;
       }
 
       const threshold = Math.max(noiseFloorRms * silenceFloorMultiplier, absoluteSilenceRms);
@@ -193,6 +194,14 @@ const splitEntriesAtByte = (entries, cutByte) => {
   }
   if (!entries.length) {
     return { emitted: Buffer.alloc(0), remaining: [], chunkStartedAt: null, chunkEndedAt: null };
+  }
+
+  let totalBytes = 0;
+  for (const entry of entries) totalBytes += entry.buffer.length;
+  if (cutByte > totalBytes) {
+    throw new TypeError(
+      `splitEntriesAtByte: cutByte ${cutByte} exceeds the ${totalBytes} bytes held`
+    );
   }
 
   const chunkStartedAt = entries[0].receivedAt;

@@ -1,6 +1,6 @@
 const SAMPLE_RATE = 24000;
-const MAX_SYSTEM_HISTORY_MS = 6000;
-const MAX_MIC_HISTORY_MS = 12000;
+const MAX_SYSTEM_HISTORY_MS = 20000;
+const MAX_MIC_HISTORY_MS = 30000;
 const MIN_RMS = 0.006;
 const MIN_SYSTEM_RMS = 0.004;
 const MAX_LAG_MS = 500;
@@ -238,7 +238,7 @@ class MeetingEchoLeakDetector {
     );
 
     if (relevant.length < 2) {
-      return { suppress: false, reason: "insufficient_signal" };
+      return { suppress: false, reason: "insufficient_signal", systemSpeaking };
     }
 
     const doubleTalk = relevant.filter((entry) => entry.state === "double_talk");

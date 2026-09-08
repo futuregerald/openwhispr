@@ -752,7 +752,8 @@ class DiarizationManager {
 
       if (seg.source === "system" && seg.timestamp != null) {
         const segStart = seg.startedAt ?? seg.timestamp;
-        const segEnd = nextSystemTimestampAt(index) ?? segStart + 2.5;
+        const segEnd =
+          seg.startedAt != null ? seg.timestamp : (nextSystemTimestampAt(index) ?? segStart + 2.5);
         const midpoint = segStart + (segEnd - segStart) / 2;
         let bestSpeaker = null;
         let bestOverlap = 0;

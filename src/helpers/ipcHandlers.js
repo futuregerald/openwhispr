@@ -4038,15 +4038,21 @@ class IPCHandlers {
     let meetingTranscriptionPrepareInProgress = false;
     let meetingTranscriptionPreparePromise = null;
 
-    const DUPLICATE_TRANSCRIPT_WINDOW_MS = 6000;
     const DUPLICATE_TRANSCRIPT_MERGE_LIMIT = 3;
     const STREAMING_RISKY_MIC_SEGMENT_HOLDBACK_MS = 3000;
     const LOCAL_MEETING_CHUNK_INTERVAL_MS = 5000;
-    // Must outlast the worst-case wait for the confirming system transcript: one
-    // tick that emitted nothing, plus a full chunk.
-    const LOCAL_RISKY_MIC_SEGMENT_HOLDBACK_MS =
-      LOCAL_MEETING_CHUNK_INTERVAL_MS + MAX_CHUNK_MS + 1000;
-    const RACING_MIC_RETRACT_WINDOW_MS = 4000;
+    // Mic and system each cut on their own silence boundary, so one spoken
+    // moment can reach the two sources up to a tick plus a full chunk apart.
+    // Every window that compares them, and the holdback that waits for the
+    // confirming system transcript, must outlast that skew.
+    const MAX_CROSS_SOURCE_SKEW_MS = LOCAL_MEETING_CHUNK_INTERVAL_MS + MAX_CHUNK_MS + 1000;
+    const MAX_LOCAL_CHUNK_EMISSIONS_PER_TICK = 4;
+    const MAX_LOCAL_FINAL_FLUSH_EMISSIONS = 32;
+    const MAX_LOCAL_BUFFER_MS = 60000;
+    const MAX_LOCAL_BUFFER_BYTES = (MAX_LOCAL_BUFFER_MS / 1000) * 24000 * 2;
+    const DUPLICATE_TRANSCRIPT_WINDOW_MS = MAX_CROSS_SOURCE_SKEW_MS;
+    const LOCAL_RISKY_MIC_SEGMENT_HOLDBACK_MS = MAX_CROSS_SOURCE_SKEW_MS;
+    const RACING_MIC_RETRACT_WINDOW_MS = MAX_CROSS_SOURCE_SKEW_MS;
 
     const buildNearbyTranscriptCandidates = (
       targetSource,
@@ -4124,7 +4130,6 @@ class IPCHandlers {
               ? DUPLICATE_TRANSCRIPT_WINDOW_MS
               : RACING_MIC_RETRACT_WINDOW_MS;
           if (!isWithinRetractWindow({ candidate, systemTimestamp, windowMs })) {
-            if (candidate.timestamp < systemTimestamp - DUPLICATE_TRANSCRIPT_WINDOW_MS) break;
             continue;
           }
         }
@@ -4162,7 +4167,10 @@ class IPCHandlers {
     const buildOrderedTranscriptText = (segments) =>
       segments
         .slice()
-        .sort((left, right) => (left.timestamp ?? 0) - (right.timestamp ?? 0))
+        .sort(
+          (left, right) =>
+            (left.startedAt ?? left.timestamp ?? 0) - (right.startedAt ?? right.timestamp ?? 0)
+        )
         .map((segment) => segment.text)
         .join(" ")
         .trim();
@@ -4846,9 +4854,29 @@ class IPCHandlers {
       }
     };
 
+    const enforceLocalBufferCap = (source) => {
+      const entries = meetingLocalBuffers[source];
+      let bufferedBytes = 0;
+      for (const entry of entries) bufferedBytes += entry.buffer.length;
+      if (bufferedBytes <= MAX_LOCAL_BUFFER_BYTES) return;
+
+      let droppedBytes = 0;
+      while (entries.length > 0 && bufferedBytes - droppedBytes > MAX_LOCAL_BUFFER_BYTES) {
+        droppedBytes += entries[0].buffer.length;
+        entries.shift();
+      }
+      debugLogger.warn("Local meeting buffer exceeded its ceiling; dropped the oldest audio", {
+        source,
+        droppedMs: Math.round((droppedBytes / 2 / 24000) * 1000),
+        bufferedMs: Math.round(((bufferedBytes - droppedBytes) / 2 / 24000) * 1000),
+        ceilingMs: MAX_LOCAL_BUFFER_MS,
+      });
+    };
+
     const dispatchMeetingAudioBuffer = (buffer, source) => {
       if (meetingLocalMode) {
         meetingLocalBuffers[source].push({ buffer, receivedAt: Date.now() });
+        enforceLocalBufferCap(source);
         return;
       }
 
@@ -5130,49 +5158,83 @@ class IPCHandlers {
       return started;
     };
 
-    const transcribeLocalMeetingChunk = async (source, { final = false } = {}) => {
+    const transcribeOneLocalChunk = async (source, { final = false } = {}) => {
       const entries = meetingLocalBuffers[source];
-      if (!entries.length) return;
+      if (!entries.length) return "held";
 
-      const pcm24k = Buffer.concat(entries.map((entry) => entry.buffer));
-      const {
-        cutSampleAt24k: cutSample,
-        reason,
-        threshold,
-        speechLikely,
-      } = meetingChunkBoundaryFinders[source].findCut(pcm24k, { final });
+      let advanced = false;
+      let emitted;
+      let chunkStartedAt;
+      let chunkEndedAt;
+      let emittedDurationMs;
+      let windowStart;
+      let windowEnd;
+      let pcm16k;
 
-      if (cutSample === null || cutSample <= 0) {
-        debugLogger.debug("Holding local meeting chunk for a speech boundary", {
-          source,
+      try {
+        const pcm24k = Buffer.concat(entries.map((entry) => entry.buffer));
+        const {
+          cutSampleAt24k: cutSample,
           reason,
           threshold,
-          bufferedMs: Math.round((pcm24k.length / 2 / 24000) * 1000),
-        });
-        return;
+          speechLikely,
+        } = meetingChunkBoundaryFinders[source].findCut(pcm24k, { final });
+
+        if (cutSample === null || cutSample <= 0) {
+          debugLogger.debug("Holding local meeting chunk for a speech boundary", {
+            source,
+            reason,
+            threshold,
+            bufferedMs: Math.round((pcm24k.length / 2 / 24000) * 1000),
+          });
+          return "held";
+        }
+
+        ({
+          emitted,
+          remaining: meetingLocalBuffers[source],
+          chunkStartedAt,
+          chunkEndedAt,
+        } = splitEntriesAtByte(entries, cutSample * 2));
+        advanced = true;
+
+        if (!speechLikely) {
+          emittedDurationMs = (emitted.length / 2 / 24000) * 1000;
+          debugLogger.debug("Dropping local meeting chunk that holds no speech", {
+            source,
+            reason,
+            threshold,
+            emittedMs: Math.round(emittedDurationMs),
+          });
+          return "dropped";
+        }
+
+        emittedDurationMs = (emitted.length / 2 / 24000) * 1000;
+        windowStart = chunkEndedAt - emittedDurationMs;
+        windowEnd = chunkEndedAt;
+        pcm16k = downsample24kTo16k(emitted);
+      } catch (error) {
+        if (!advanced) {
+          const discardedMs = Math.round(
+            (meetingLocalBuffers[source].reduce((sum, entry) => sum + entry.buffer.length, 0) /
+              2 /
+              24000) *
+              1000
+          );
+          meetingLocalBuffers[source] = [];
+          debugLogger.error("Local meeting chunk preparation failed; discarding buffered audio", {
+            source,
+            discardedMs,
+            error: error.message,
+          });
+        } else {
+          debugLogger.error("Local meeting chunk preparation failed after the cut", {
+            source,
+            error: error.message,
+          });
+        }
+        return "dropped";
       }
-
-      const { emitted, remaining, chunkStartedAt, chunkEndedAt } = splitEntriesAtByte(
-        entries,
-        cutSample * 2
-      );
-      meetingLocalBuffers[source] = remaining;
-
-      const emittedDurationMs = (emitted.length / 2 / 24000) * 1000;
-      const windowStart = chunkEndedAt - emittedDurationMs;
-      const windowEnd = chunkEndedAt;
-
-      if (!speechLikely) {
-        debugLogger.debug("Dropping local meeting chunk that holds no speech", {
-          source,
-          reason,
-          threshold,
-          emittedMs: Math.round(emittedDurationMs),
-        });
-        return;
-      }
-
-      const pcm16k = downsample24kTo16k(emitted);
 
       const samples = new Int16Array(pcm16k.buffer, pcm16k.byteOffset, pcm16k.length / 2);
       let sumSq = 0;
@@ -5190,7 +5252,7 @@ class IPCHandlers {
           rms: rms.toFixed(4),
           peak: peak.toFixed(4),
         });
-        return;
+        return "dropped";
       }
 
       if (
@@ -5204,7 +5266,7 @@ class IPCHandlers {
           rms: rms.toFixed(4),
           peak: peak.toFixed(4),
         });
-        return;
+        return "dropped";
       }
 
       const wav = pcm16ToWav(pcm16k);
@@ -5247,7 +5309,7 @@ class IPCHandlers {
                 averageResidual: micSuppression.averageResidual?.toFixed(3),
                 text: text.slice(0, 80),
               });
-              return;
+              return "dropped";
             }
 
             if (shouldSkipDuplicateMicSegment(text, segTimestamp, micSuppression)) {
@@ -5256,7 +5318,7 @@ class IPCHandlers {
                 averageCorrelation: micSuppression.averageCorrelation?.toFixed(3),
                 averageResidual: micSuppression.averageResidual?.toFixed(3),
               });
-              return;
+              return "dropped";
             }
           } else {
             debugLogger.debug("Local meeting transcription candidate", {
@@ -5292,7 +5354,7 @@ class IPCHandlers {
 
           const sendLocalSegment = (channel, payload) => {
             if (channel !== "meeting-transcription-segment") {
-              return;
+              return "dropped";
             }
 
             if (meetingLocalWin && !meetingLocalWin.isDestroyed()) {
@@ -5317,12 +5379,13 @@ class IPCHandlers {
                   text,
                   source,
                   timestamp: segTimestamp,
+                  startedAt: chunkStartedAt,
                   micSuppression,
                   send: sendLocalSegment,
                   includeInLocalTranscript: true,
                 }),
             });
-            return;
+            return "dropped";
           }
 
           sendMeetingFinalSegment({
@@ -5343,6 +5406,20 @@ class IPCHandlers {
         if (meetingLocalWin && !meetingLocalWin.isDestroyed()) {
           meetingLocalWin.webContents.send("meeting-transcription-error", error.message);
         }
+      }
+      return "emitted";
+    };
+
+    const transcribeLocalMeetingChunk = async (source, { final = false } = {}) => {
+      const maxEmissions = final
+        ? MAX_LOCAL_FINAL_FLUSH_EMISSIONS
+        : MAX_LOCAL_CHUNK_EMISSIONS_PER_TICK;
+      for (let emission = 0; emission < maxEmissions; emission += 1) {
+        const status = await transcribeOneLocalChunk(source, { final: false });
+        if (status === "held") break;
+      }
+      if (final) {
+        await transcribeOneLocalChunk(source, { final: true });
       }
     };
 
