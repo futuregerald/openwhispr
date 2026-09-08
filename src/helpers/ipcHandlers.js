@@ -4045,10 +4045,11 @@ class IPCHandlers {
     // one spoken moment can reach the two sources up to a tick plus a full
     // chunk apart. Streaming gets both timestamps from one provider inside a
     // single run and keeps the narrower windows below.
+    let meetingLocalMode = false;
     const MAX_CROSS_SOURCE_SKEW_MS = LOCAL_MEETING_CHUNK_INTERVAL_MS + MAX_CHUNK_MS + 1000;
     const MAX_LOCAL_CHUNK_EMISSIONS_PER_TICK = 4;
     const MAX_LOCAL_FINAL_FLUSH_EMISSIONS = 32;
-    const MAX_LOCAL_BUFFER_MS = 60000;
+    const MAX_LOCAL_BUFFER_MS = 600000;
     const MAX_LOCAL_BUFFER_BYTES = (MAX_LOCAL_BUFFER_MS / 1000) * 24000 * 2;
     const DUPLICATE_TRANSCRIPT_WINDOW_MS = 6000;
     const RACING_MIC_RETRACT_WINDOW_MS = 4000;
@@ -4113,6 +4114,9 @@ class IPCHandlers {
         return true;
       }
       if (suppression?.systemSpeaking) {
+        return true;
+      }
+      if (suppression?.systemCoverage === "unknown") {
         return true;
       }
       return (
@@ -4755,6 +4759,8 @@ class IPCHandlers {
     let meetingDiarizationPath = null;
     let meetingDiarizationStartedAt = null;
     let meetingDiarizationSegments = [];
+    let meetingDroppedAudioSpans = [];
+    let meetingCeilingNoticeSent = false;
     let meetingMicPcmStream = null;
     let meetingMicPcmPath = null;
     let meetingLiveSpeakerActive = false;
@@ -4775,7 +4781,6 @@ class IPCHandlers {
       };
     };
 
-    let meetingLocalMode = false;
     let meetingLocalBuffers = { mic: [], system: [] };
     const meetingChunkBoundaryFinders = {
       mic: createChunkBoundaryFinder(),
@@ -4858,23 +4863,65 @@ class IPCHandlers {
       }
     };
 
+    const formatDroppedAudioMarker = ({ source, droppedMs }) =>
+      `[${Math.round(droppedMs / 1000)}s of ${source} audio was not transcribed: the local model could not keep up]`;
+
+    const recordDroppedMeetingAudio = ({ source, startedAt, endedAt, droppedMs }) => {
+      const last = meetingDroppedAudioSpans[meetingDroppedAudioSpans.length - 1];
+      if (
+        last &&
+        last.source === source &&
+        startedAt - last.endedAt <= LOCAL_MEETING_CHUNK_INTERVAL_MS
+      ) {
+        last.endedAt = endedAt;
+        last.droppedMs += droppedMs;
+        last.marker.text = formatDroppedAudioMarker(last);
+      } else {
+        const span = { source, startedAt, endedAt, droppedMs, marker: null };
+        span.marker = {
+          text: formatDroppedAudioMarker(span),
+          source: "gap",
+          timestamp: endedAt,
+          startedAt,
+          committedAt: Date.now(),
+        };
+        meetingDiarizationSegments.push(span.marker);
+        meetingDroppedAudioSpans.push(span);
+      }
+
+      if (meetingCeilingNoticeSent) return;
+      meetingCeilingNoticeSent = true;
+      if (meetingLocalWin && !meetingLocalWin.isDestroyed()) {
+        meetingLocalWin.webContents.send(
+          "meeting-transcription-error",
+          "Transcription is falling behind the meeting audio, so the oldest audio is being dropped from the transcript. Switch to a faster local model to avoid gaps."
+        );
+      }
+    };
+
     const enforceLocalBufferCap = (source) => {
       const entries = meetingLocalBuffers[source];
       let bufferedBytes = 0;
       for (const entry of entries) bufferedBytes += entry.buffer.length;
       if (bufferedBytes <= MAX_LOCAL_BUFFER_BYTES) return;
 
+      const droppedFrom = entries[0].receivedAt;
+      let droppedTo = entries[0].receivedAt;
       let droppedBytes = 0;
       while (entries.length > 0 && bufferedBytes - droppedBytes > MAX_LOCAL_BUFFER_BYTES) {
         droppedBytes += entries[0].buffer.length;
+        droppedTo = entries[0].receivedAt;
         entries.shift();
       }
+      const droppedMs = Math.round((droppedBytes / 2 / 24000) * 1000);
       debugLogger.warn("Local meeting buffer exceeded its ceiling; dropped the oldest audio", {
         source,
-        droppedMs: Math.round((droppedBytes / 2 / 24000) * 1000),
+        droppedMs,
         bufferedMs: Math.round(((bufferedBytes - droppedBytes) / 2 / 24000) * 1000),
         ceilingMs: MAX_LOCAL_BUFFER_MS,
       });
+
+      recordDroppedMeetingAudio({ source, startedAt: droppedFrom, endedAt: droppedTo, droppedMs });
     };
 
     const dispatchMeetingAudioBuffer = (buffer, source) => {
@@ -5358,7 +5405,7 @@ class IPCHandlers {
 
           const sendLocalSegment = (channel, payload) => {
             if (channel !== "meeting-transcription-segment") {
-              return "dropped";
+              return;
             }
 
             if (meetingLocalWin && !meetingLocalWin.isDestroyed()) {
@@ -5482,6 +5529,8 @@ class IPCHandlers {
       }
       meetingDiarizationStartedAt = null;
       meetingDiarizationSegments = [];
+      meetingDroppedAudioSpans = [];
+      meetingCeilingNoticeSent = false;
       meetingLocalWin = null;
       meetingLocalTranscript = "";
       meetingLocalProvider = null;
@@ -5859,6 +5908,8 @@ class IPCHandlers {
           meetingLocalBuffers = { mic: [], system: [] };
           meetingChunkBoundaryFinders.mic.reset();
           meetingChunkBoundaryFinders.system.reset();
+          meetingDroppedAudioSpans = [];
+          meetingCeilingNoticeSent = false;
           meetingLocalTranscript = "";
 
           await startLiveSpeakerIdentification(meetingLocalWin, systemAudioMode);
@@ -6146,6 +6197,14 @@ class IPCHandlers {
             buildOrderedTranscriptText(diarizationSegments) || meetingLocalTranscript;
           const sessionSpeakerConfigSnapshot = this.activeMeetingSpeakerConfig;
           const noteIdSnapshot = meetingNoteId;
+          const droppedAudioSpans = meetingDroppedAudioSpans.map(
+            ({ source, startedAt, endedAt, droppedMs }) => ({
+              source,
+              startedAt,
+              endedAt,
+              droppedMs,
+            })
+          );
           this.activeMeetingSpeakerConfig = null;
           resetMeetingLocalState();
 
@@ -6163,7 +6222,7 @@ class IPCHandlers {
             noteIdSnapshot
           );
 
-          return { success: true, transcript, diarizationSessionId };
+          return { success: true, transcript, diarizationSessionId, droppedAudioSpans };
         }
 
         const results = await disconnectMeetingStreaming({ flushPending: true });

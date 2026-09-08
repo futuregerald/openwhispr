@@ -561,25 +561,29 @@ test("a learned noise floor can still fall, so a loud room cannot poison the res
     ],
     { amplitude: 0.6, floorAmplitude: 0.1 }
   );
-  const quietFlat = buildSyllabicSpeechPcm([{ ms: 6000, speech: true }], {
-    amplitude: 0.02,
-    floorAmplitude: 0.02,
-  });
+  const quietRoom = buildSyllabicSpeechPcm(
+    [
+      { ms: 3000, speech: true },
+      { ms: 400, speech: false },
+      { ms: 2600, speech: true },
+    ],
+    { amplitude: 0.02, floorAmplitude: 0.007 }
+  );
 
   const finder = createChunkBoundaryFinder();
   finder.findCut(loudRoom);
   const learnedFloor = finder.getNoiseFloorRms();
   assert.ok(learnedFloor > 0.02, `expected a high floor to be learned, got ${learnedFloor}`);
 
-  const frames = frameRmsSeries(quietFlat, finder.getFrameSamples());
+  const frames = frameRmsSeries(quietRoom, finder.getFrameSamples());
   assert.ok(
     Math.min(...frames) > Math.max(...frames) * 0.25,
     "this window must fail the separation guard for the test to exercise the frozen case"
   );
 
-  let threshold = null;
+  let result = null;
   for (let i = 0; i < 8; i += 1) {
-    ({ threshold } = finder.findCut(quietFlat));
+    result = finder.findCut(quietRoom);
   }
 
   assert.ok(
@@ -587,7 +591,16 @@ test("a learned noise floor can still fall, so a loud room cannot poison the res
     "a window with no separation left the floor frozen at its learned high value"
   );
   assert.ok(
-    threshold < learnedFloor,
-    `threshold ${threshold} is still governed by the stale loud-room floor ${learnedFloor}`
+    result.threshold < learnedFloor,
+    `threshold ${result.threshold} is still governed by the stale loud-room floor ${learnedFloor}`
+  );
+  assert.equal(
+    result.speechLikely,
+    true,
+    "quiet speech stayed under the stale threshold and every chunk was dropped untranscribed"
+  );
+  assert.ok(
+    result.cutSampleAt24k > 0,
+    `expected a real cut once the floor recovered, got ${result.cutSampleAt24k}`
   );
 });

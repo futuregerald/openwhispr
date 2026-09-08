@@ -106,7 +106,7 @@ class MeetingEchoLeakDetector {
       return analysis;
     }
 
-    const systemWindow = this._getSystemWindow();
+    const systemWindow = this._getSystemWindow(samples.length + this._maxLagSamples());
     if (systemWindow.length < samples.length + this._maxLagSamples()) {
       analysis.state = "awaiting_reference";
       this.micHistory.push(analysis);
@@ -222,9 +222,15 @@ class MeetingEchoLeakDetector {
     return false;
   }
 
+  hasSystemCoverageFor(windowEndMs) {
+    if (this.systemHistory.length === 0) return true;
+    return windowEndMs + SYSTEM_VAD_TAIL_MS >= this.systemHistory[0].timestampMs;
+  }
+
   shouldSuppressMicSegment(startedAtMs, endedAtMs = Date.now()) {
+    const systemCoverage = this.hasSystemCoverageFor(endedAtMs) ? "known" : "unknown";
     if (!startedAtMs) {
-      return { suppress: false, reason: "missing_start" };
+      return { suppress: false, reason: "missing_start", systemSpeaking: false, systemCoverage };
     }
 
     const windowStart = startedAtMs - FINAL_PADDING_MS;
@@ -238,7 +244,7 @@ class MeetingEchoLeakDetector {
     );
 
     if (relevant.length < 2) {
-      return { suppress: false, reason: "insufficient_signal", systemSpeaking };
+      return { suppress: false, reason: "insufficient_signal", systemSpeaking, systemCoverage };
     }
 
     const doubleTalk = relevant.filter((entry) => entry.state === "double_talk");
@@ -292,6 +298,7 @@ class MeetingEchoLeakDetector {
         bleedMatchCount: bleedMatches.length,
         sampleCount: relevant.length,
         systemSpeaking,
+        systemCoverage,
       };
     }
 
@@ -308,6 +315,7 @@ class MeetingEchoLeakDetector {
         bleedMatchCount: bleedMatches.length,
         sampleCount: relevant.length,
         systemSpeaking,
+        systemCoverage,
       };
     }
 
@@ -328,6 +336,7 @@ class MeetingEchoLeakDetector {
       hasBleedEvidence,
       likelyRenderBleed,
       systemSpeaking,
+      systemCoverage,
       reason: suppress ? "render_bleed" : doubleTalk.length > 0 ? "mixed_signal" : "weak_match",
       averageCorrelation,
       averageResidual,
@@ -402,17 +411,23 @@ class MeetingEchoLeakDetector {
     }
   }
 
-  _getSystemWindow() {
-    const totalLength = this.systemHistory.reduce((sum, entry) => sum + entry.samples.length, 0);
-    const merged = new Float32Array(totalLength);
-    let offset = 0;
-
-    for (const entry of this.systemHistory) {
-      merged.set(entry.samples, offset);
-      offset += entry.samples.length;
+  _getSystemWindow(maxSamples = Infinity) {
+    let needed = 0;
+    let firstIndex = this.systemHistory.length;
+    while (firstIndex > 0 && needed < maxSamples) {
+      firstIndex -= 1;
+      needed += this.systemHistory[firstIndex].samples.length;
     }
 
-    return merged;
+    const merged = new Float32Array(needed);
+    let offset = 0;
+    for (let i = firstIndex; i < this.systemHistory.length; i += 1) {
+      merged.set(this.systemHistory[i].samples, offset);
+      offset += this.systemHistory[i].samples.length;
+    }
+
+    if (merged.length <= maxSamples) return merged;
+    return merged.subarray(merged.length - maxSamples);
   }
 
   _computeEnergy(samples) {
