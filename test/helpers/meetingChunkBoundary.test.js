@@ -48,6 +48,7 @@ test("does not cut a buffer shorter than the minimum chunk", () => {
     cutSampleAt24k: null,
     reason: "below_min",
     threshold: null,
+    speechLikely: false,
   });
 });
 
@@ -300,12 +301,15 @@ test("reports the operative threshold it used", () => {
   assert.equal(threshold, Math.max(finder.getNoiseFloorRms() * 2.5, 0.0015));
 });
 
-test("reports no threshold on the paths that never compute one", () => {
+test("reports no threshold only where none is computed", () => {
   const finder = createChunkBoundaryFinder();
   const short = buildSyllabicSpeechPcm([{ ms: 900, speech: true }]);
   assert.equal(finder.findCut(short).reason, "below_min");
   assert.equal(finder.findCut(short).threshold, null);
-  assert.equal(finder.findCut(short, { final: true }).threshold, null);
+
+  const flushed = finder.findCut(short, { final: true });
+  assert.equal(flushed.reason, "final");
+  assert.ok(flushed.threshold > 0, "the final flush is classified, so it reports a threshold");
 });
 
 test("prefers the last pause below the cap over one beyond it", () => {
@@ -331,23 +335,13 @@ test("a silence cut never emits a chunk that is entirely below the threshold", (
     { ms: 400, speech: false },
     { ms: 1000, speech: true },
   ]);
-  const { cutSampleAt24k, reason, threshold } = finder.findCut(pcm);
-  assert.notEqual(
-    reason,
-    "silence",
-    "a window opening mid-pause must not be cut as a speech boundary"
-  );
+  const { cutSampleAt24k, reason, threshold, speechLikely } = finder.findCut(pcm);
+  assert.equal(reason, "leading_silence");
+  assert.equal(speechLikely, false);
 
   const emitted = pcm.subarray(0, cutSampleAt24k * 2);
   const loudest = Math.max(...frameRmsSeries(emitted, finder.getFrameSamples()));
-  if (reason === "leading_silence") {
-    assert.ok(loudest < threshold, "a leading_silence chunk is silence by construction");
-  } else {
-    assert.ok(
-      loudest >= threshold,
-      `emitted region peaked at ${loudest}, below threshold ${threshold}`
-    );
-  }
+  assert.ok(loudest < threshold, "a leading_silence chunk is silence by construction");
 });
 
 test("a mid-window silence cut emits audio that contains speech", () => {
@@ -378,18 +372,95 @@ test("frameRmsSeries requires an explicit frame size", () => {
 test("the finder reports the frame size it actually uses", () => {
   assert.equal(createChunkBoundaryFinder().getFrameSamples(), 480);
   assert.equal(createChunkBoundaryFinder({ frameMs: 30 }).getFrameSamples(), 720);
+  assert.equal(createChunkBoundaryFinder({ frameMs: 18 }).getFrameSamples(), 432);
 });
 
 test("the factory rejects parameters that would fail silently or hang", () => {
-  assert.throws(() => createChunkBoundaryFinder({ frameMs: 0 }), RangeError);
-  assert.throws(() => createChunkBoundaryFinder({ frameMs: 20.1 }), RangeError);
-  assert.throws(() => createChunkBoundaryFinder({ frameMs: -20 }), RangeError);
+  const bad = [
+    { frameMs: 0 },
+    { frameMs: 20.1 },
+    { frameMs: -20 },
+    { minChunkMs: 3000, maxChunkMs: 2500 },
+    { minChunkMs: 2000, maxChunkMs: 2000 },
+    { minChunkMs: 2, maxChunkMs: 6 },
+    { minChunkMs: 0 },
+    { silenceHoldMs: 0 },
+  ];
+  for (const options of bad) {
+    assert.throws(
+      () => createChunkBoundaryFinder(options),
+      RangeError,
+      `expected ${JSON.stringify(options)} to be rejected`
+    );
+  }
   assert.throws(
-    () => createChunkBoundaryFinder({ minChunkMs: 3000, maxChunkMs: 2500 }),
-    RangeError
+    () => createChunkBoundaryFinder({ frameMs: 0 }),
+    /frameMs must be a positive integer/,
+    "a bad frameMs must name frameMs, not a derived parameter the caller never passed"
   );
-  assert.throws(
-    () => createChunkBoundaryFinder({ minChunkMs: 2000, maxChunkMs: 2000 }),
-    RangeError
+});
+
+test("a leading pause longer than the cap is still bounded by it", () => {
+  const finder = createChunkBoundaryFinder();
+  const pcm = buildSyllabicSpeechPcm([
+    { ms: 10000, speech: false },
+    { ms: 2000, speech: true },
+  ]);
+  const { cutSampleAt24k, reason, speechLikely } = finder.findCut(pcm);
+  assert.equal(reason, "leading_silence");
+  assert.equal(speechLikely, false);
+  assert.equal(msOf(cutSampleAt24k), MAX_CHUNK_MS);
+});
+
+test("a window of nothing but room tone is never labelled max_chunk", () => {
+  const finder = createChunkBoundaryFinder();
+  const primer = buildSyllabicSpeechPcm(
+    [
+      { ms: 2500, speech: true },
+      { ms: 400, speech: false },
+      { ms: 1000, speech: true },
+    ],
+    { amplitude: 0.12, floorAmplitude: 0.006 }
   );
+  finder.findCut(primer);
+
+  const deadAir = buildSyllabicSpeechPcm([{ ms: 9000, speech: false }], {
+    amplitude: 0.12,
+    floorAmplitude: 0.006,
+  });
+  const { cutSampleAt24k, reason, speechLikely } = finder.findCut(deadAir);
+  assert.equal(speechLikely, false, "a room-tone window must not be offered for transcription");
+  assert.notEqual(reason, "max_chunk");
+  assert.equal(msOf(cutSampleAt24k), MAX_CHUNK_MS, "it is still bounded by the cap");
+});
+
+test("speechLikely is false whenever the emitted chunk holds no speech", () => {
+  const finder = createChunkBoundaryFinder();
+  const silentTail = buildSyllabicSpeechPcm([{ ms: 3000, speech: false }]);
+  const flushed = finder.findCut(silentTail, { final: true });
+  assert.equal(flushed.reason, "final");
+  assert.equal(flushed.speechLikely, false, "a trailing flush of room tone holds no speech");
+
+  const empty = createChunkBoundaryFinder().findCut(Buffer.alloc(0), { final: true });
+  assert.equal(empty.reason, "final");
+  assert.equal(empty.speechLikely, false);
+  assert.equal(empty.cutSampleAt24k, 0);
+});
+
+test("speechLikely is true for every chunk a silence cut emits", () => {
+  for (const gapMs of [220, 300, 400, 460]) {
+    const finder = createChunkBoundaryFinder();
+    const pcm = buildSyllabicSpeechPcm([
+      { ms: 2500, speech: true },
+      { ms: gapMs, speech: false },
+      { ms: 1000, speech: true },
+    ]);
+    const { cutSampleAt24k, reason, threshold, speechLikely } = finder.findCut(pcm);
+    assert.equal(reason, "silence", `gap ${gapMs}ms gave ${reason}`);
+    assert.equal(speechLikely, true, `gap ${gapMs}ms reported speechLikely false`);
+
+    const emitted = pcm.subarray(0, cutSampleAt24k * 2);
+    const loudest = Math.max(...frameRmsSeries(emitted, finder.getFrameSamples()));
+    assert.ok(loudest >= threshold, `gap ${gapMs}ms: emitted region peaked below the threshold`);
+  }
 });

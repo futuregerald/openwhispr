@@ -8,7 +8,7 @@ const ABSOLUTE_SILENCE_RMS = 0.0015;
 const FLOOR_SEPARATION_RATIO = 0.25;
 const FLOOR_RISE_WEIGHT = 0.1;
 
-const FRAME_SAMPLES = (FRAME_MS / 1000) * SAMPLE_RATE;
+const FRAME_SAMPLES = (FRAME_MS * SAMPLE_RATE) / 1000;
 
 const frameRmsSeries = (pcm24k, frameSamples) => {
   if (!Number.isInteger(frameSamples) || frameSamples <= 0) {
@@ -44,13 +44,27 @@ const createChunkBoundaryFinder = ({
       `frameMs must be a positive integer number of milliseconds, got ${frameMs}`
     );
   }
+  const frameSamples = (frameMs * SAMPLE_RATE) / 1000;
+  if (!Number.isInteger(frameSamples) || frameSamples <= 0) {
+    throw new RangeError(
+      `frameMs ${frameMs} does not yield a whole number of samples at ${SAMPLE_RATE} Hz`
+    );
+  }
+  if (!(silenceHoldMs > 0)) {
+    throw new RangeError(`silenceHoldMs must be greater than 0, got ${silenceHoldMs}`);
+  }
+  if (!(minChunkMs > 0)) {
+    throw new RangeError(`minChunkMs must be greater than 0, got ${minChunkMs}`);
+  }
   if (!(maxChunkMs > minChunkMs)) {
     throw new RangeError(
       `maxChunkMs (${maxChunkMs}) must be greater than minChunkMs (${minChunkMs})`
     );
   }
+  if (!(maxChunkMs >= frameMs)) {
+    throw new RangeError(`maxChunkMs (${maxChunkMs}) must be at least one frame of ${frameMs}ms`);
+  }
 
-  const frameSamples = (frameMs / 1000) * SAMPLE_RATE;
   const holdFrames = Math.ceil(silenceHoldMs / frameMs);
   const minFrame = Math.ceil(minChunkMs / frameMs);
   const maxFrame = Math.floor(maxChunkMs / frameMs);
@@ -71,11 +85,13 @@ const createChunkBoundaryFinder = ({
       const totalSamples = Math.floor(pcm24k.length / 2);
       const totalMs = (totalSamples / SAMPLE_RATE) * 1000;
 
-      if (final) {
-        return { cutSampleAt24k: totalSamples, reason: "final", threshold: null };
-      }
-      if (totalMs < minChunkMs) {
-        return { cutSampleAt24k: null, reason: "below_min", threshold: null };
+      if (!final && totalMs < minChunkMs) {
+        return {
+          cutSampleAt24k: null,
+          reason: "below_min",
+          threshold: null,
+          speechLikely: false,
+        };
       }
 
       const frames = frameRmsSeries(pcm24k, frameSamples);
@@ -95,10 +111,27 @@ const createChunkBoundaryFinder = ({
       }
 
       const threshold = Math.max(noiseFloorRms * silenceFloorMultiplier, absoluteSilenceRms);
+      const windowHasSpeech = loudest >= threshold;
+      const emittedHasSpeech = (cutFrame) => {
+        const end = Math.min(cutFrame, frames.length);
+        for (let i = 0; i < end; i += 1) {
+          if (frames[i] >= threshold) return true;
+        }
+        return false;
+      };
+
+      if (final) {
+        return {
+          cutSampleAt24k: totalSamples,
+          reason: "final",
+          threshold,
+          speechLikely: emittedHasSpeech(frames.length),
+        };
+      }
 
       let lastQualifyingRunStart = -1;
       let lastQualifyingRunEnd = -1;
-      if (loudest >= threshold) {
+      if (windowHasSpeech) {
         let runStart = -1;
         for (let i = 0; i <= frames.length; i += 1) {
           const silent = i < frames.length && frames[i] < threshold;
@@ -122,20 +155,32 @@ const createChunkBoundaryFinder = ({
           cutSampleAt24k: cutFrame * frameSamples,
           reason: "leading_silence",
           threshold,
+          speechLikely: emittedHasSpeech(cutFrame),
         };
       }
 
       if (lastQualifyingRunStart > 0) {
         const midFrame = Math.floor((lastQualifyingRunStart + lastQualifyingRunEnd) / 2);
         const cutFrame = Math.min(Math.max(midFrame, minFrame), lastQualifyingRunEnd - 1, maxFrame);
-        return { cutSampleAt24k: cutFrame * frameSamples, reason: "silence", threshold };
+        return {
+          cutSampleAt24k: cutFrame * frameSamples,
+          reason: "silence",
+          threshold,
+          speechLikely: emittedHasSpeech(cutFrame),
+        };
       }
 
       if (totalMs >= maxChunkMs) {
-        return { cutSampleAt24k: maxFrame * frameSamples, reason: "max_chunk", threshold };
+        const speechLikely = emittedHasSpeech(maxFrame);
+        return {
+          cutSampleAt24k: maxFrame * frameSamples,
+          reason: speechLikely ? "max_chunk" : "leading_silence",
+          threshold,
+          speechLikely,
+        };
       }
 
-      return { cutSampleAt24k: null, reason: "no_boundary", threshold };
+      return { cutSampleAt24k: null, reason: "no_boundary", threshold, speechLikely: false };
     },
   };
 };
