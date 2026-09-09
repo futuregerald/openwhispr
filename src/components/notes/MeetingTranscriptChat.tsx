@@ -833,12 +833,14 @@ export function MeetingTranscriptChat({
         )}
       </div>
       {showSpeakerPanel && (
-        <SpeakerPanel
-          noteId={noteId}
-          segments={segments}
-          onFilterSpeaker={setActiveSpeakerFilter}
-          activeSpeakerFilter={activeSpeakerFilter}
-        />
+        <div className="absolute top-11 left-2 right-2 z-20">
+          <SpeakerPanel
+            noteId={noteId}
+            segments={segments}
+            onFilterSpeaker={setActiveSpeakerFilter}
+            activeSpeakerFilter={activeSpeakerFilter}
+          />
+        </div>
       )}
     </div>
   );
