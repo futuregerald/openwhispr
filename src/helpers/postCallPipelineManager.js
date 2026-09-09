@@ -359,6 +359,8 @@ class PostCallPipelineManager {
     this._db.updateNote(noteId, {
       transcript: result.transcript,
       retranscribe_outcome: null,
+      transcript_origin_ms: null,
+      transcript_origin_source: "unanchored",
     });
 
     this._broadcast("post-call-pipeline-status", {

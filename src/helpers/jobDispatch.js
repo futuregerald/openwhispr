@@ -17,6 +17,7 @@ const JOB_KINDS = {
   // transcript it is happy with.
   REGENERATE_NOTES: "regenerate-notes",
   REPAIR_NOTE_ATTRIBUTION: "repair-note-attribution",
+  BACKFILL_TRANSCRIPT_ORIGIN: "backfill-transcript-origin",
 };
 
 const HANDLERS = {
@@ -31,6 +32,9 @@ const HANDLERS = {
 
   [JOB_KINDS.REPAIR_NOTE_ATTRIBUTION]: ({ ipcHandlers }, payload) =>
     ipcHandlers.repairNoteAttribution(payload.noteId),
+
+  [JOB_KINDS.BACKFILL_TRANSCRIPT_ORIGIN]: ({ ipcHandlers }, payload) =>
+    ipcHandlers.backfillTranscriptOrigin(payload.noteId, payload.originMs),
 };
 
 function isKnownJobKind(kind) {

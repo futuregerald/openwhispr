@@ -225,3 +225,35 @@ test("a stamp one millisecond above the epoch floor is treated as epoch", () => 
     [0, 2.5]
   );
 });
+
+test("the epoch origin it subtracted comes back, so wall clock stays recoverable", () => {
+  const before = preRepair();
+  const expected = Math.min(...before.map((segment) => segment.timestamp));
+
+  const result = repairSegments(before);
+
+  assert.equal(result.epochOrigin, expected);
+  assert.ok(expected > EPOCH_MS_FLOOR, "fixture must be all-epoch for this to mean anything");
+
+  const firstWithStamp = result.segments.find((segment) => Number.isFinite(segment.timestamp));
+  const recovered = result.epochOrigin + firstWithStamp.timestamp * 1000;
+  const originalFirst = before.find((segment) => Number.isFinite(segment.timestamp));
+  assert.equal(recovered, originalFirst.timestamp);
+});
+
+test("a transcript already in relative seconds reports no origin rather than a fake one", () => {
+  const result = repairSegments([
+    { source: "system", speaker: "speaker_0", timestamp: 0 },
+    { source: "system", speaker: "speaker_0", timestamp: 12.5 },
+  ]);
+
+  assert.equal(result.epochOrigin, null);
+  assert.equal(result.timestampsNormalised, 0);
+});
+
+test("a mixed-unit transcript reports no origin, because it has more than one", () => {
+  const result = repairSegments(mixedUnits());
+
+  assert.equal(result.epochOrigin, null);
+  assert.equal(result.skippedMixedUnits, true);
+});

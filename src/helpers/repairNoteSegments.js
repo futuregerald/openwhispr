@@ -14,6 +14,7 @@ export const EPOCH_MS_FLOOR = 1e9;
  * @property {number} micAttributed
  * @property {number} timestampsNormalised
  * @property {boolean} skippedMixedUnits
+ * @property {number | null} epochOrigin
  */
 
 /**
@@ -62,5 +63,11 @@ export const repairSegments = (segments) => {
     return next;
   });
 
-  return { segments: repaired, micAttributed, timestampsNormalised, skippedMixedUnits };
+  return {
+    segments: repaired,
+    micAttributed,
+    timestampsNormalised,
+    skippedMixedUnits,
+    epochOrigin,
+  };
 };

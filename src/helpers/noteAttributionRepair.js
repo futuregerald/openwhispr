@@ -119,7 +119,10 @@ function repairNoteAttribution({ noteId, databaseManager, broadcast, userDataDir
 
   const written = databaseManager.updateNoteTranscriptKeepingUpdatedAt(
     noteId,
-    JSON.stringify(result.segments)
+    JSON.stringify(result.segments),
+    result.epochOrigin === null || result.epochOrigin === undefined
+      ? null
+      : { ms: result.epochOrigin, source: "first-segment" }
   );
   if (!written?.success) return { ...NOTHING_DONE, backupPath };
 

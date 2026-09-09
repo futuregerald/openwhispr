@@ -415,3 +415,52 @@ test("a note in the trash is not listed for repair", () => {
     [kept]
   );
 });
+
+test("repair records the origin it subtracted, so wall clock survives the re-basing", () => {
+  const db = createDb();
+  const before = brokenSegments();
+  const expectedOrigin = Math.min(
+    ...before.filter((s) => Number.isFinite(s.timestamp)).map((s) => s.timestamp)
+  );
+  const id = noteWithTranscript(db, before);
+  ageNote(db, id, "2024-01-01 00:00:00");
+  const updatedAtBefore = db.getNote(id).updated_at;
+
+  repairNoteAttribution({
+    noteId: id,
+    databaseManager: refusingUpdateNote(db),
+    broadcast: () => {},
+    userDataDir,
+  });
+
+  const note = db.getNote(id);
+  assert.equal(note.transcript_origin_ms, expectedOrigin);
+  assert.equal(note.transcript_origin_source, "first-segment");
+  assert.equal(note.updated_at, updatedAtBefore, "recording the origin must not reorder notes");
+
+  const stored = JSON.parse(note.transcript);
+  const first = stored.find((s) => Number.isFinite(s.timestamp));
+  const originalFirst = before.find((s) => Number.isFinite(s.timestamp));
+  assert.equal(note.transcript_origin_ms + first.timestamp * 1000, originalFirst.timestamp);
+});
+
+test("a repair that re-bases nothing records no origin rather than a misleading one", () => {
+  const db = createDb();
+  const relative = brokenSegments().map((segment, index) => ({
+    ...segment,
+    timestamp: index * 0.5,
+  }));
+  const id = noteWithTranscript(db, relative);
+
+  const result = repairNoteAttribution({
+    noteId: id,
+    databaseManager: refusingUpdateNote(db),
+    broadcast: () => {},
+    userDataDir,
+  });
+
+  assert.equal(result.repaired, true, "mic attribution should still have happened");
+  const note = db.getNote(id);
+  assert.equal(note.transcript_origin_ms, null);
+  assert.equal(note.transcript_origin_source, null);
+});

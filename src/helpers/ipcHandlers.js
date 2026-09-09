@@ -12,6 +12,10 @@ const {
   readRepairSummary,
   clearRepairSummary,
 } = require("./noteAttributionRepair");
+const {
+  findTranscriptOriginBackfills,
+  applyTranscriptOriginBackfill,
+} = require("./transcriptOriginBackfill");
 const { resolveRetryStep } = require("./noteRetryStep");
 const meetingDetectionHealth = require("./meetingDetectionHealth");
 const { BYOK_API_KEYS } = require("../config/secretKeys");
@@ -7888,6 +7892,39 @@ class IPCHandlers {
    * same single-slot queue, so several recovered meetings process one at a time
    * rather than all at once.
    */
+  backfillTranscriptOrigin(noteId, originMs) {
+    return applyTranscriptOriginBackfill({
+      noteId,
+      originMs,
+      databaseManager: this.databaseManager,
+    });
+  }
+
+  _enqueueTranscriptOriginBackfills() {
+    let found = [];
+    try {
+      found = findTranscriptOriginBackfills({
+        databaseManager: this.databaseManager,
+        backupsDir: path.join(app.getPath("userData"), "backups"),
+        openDatabase: (file) => new (require("better-sqlite3"))(file, { readonly: true }),
+      });
+    } catch (error) {
+      debugLogger.error("Could not look for recoverable transcript origins", {
+        error: error.message,
+      });
+      return 0;
+    }
+
+    for (const entry of found) {
+      this.backgroundJobQueue.enqueueKind(
+        `backfill-transcript-origin-${entry.noteId}`,
+        JOB_KINDS.BACKFILL_TRANSCRIPT_ORIGIN,
+        { noteId: entry.noteId, originMs: entry.originMs }
+      );
+    }
+    return found.length;
+  }
+
   repairNoteAttribution(noteId) {
     return repairStoredNoteAttribution({
       noteId,
@@ -7926,6 +7963,10 @@ class IPCHandlers {
   }
 
   recoverBackgroundJobs() {
+    // Before recover(), not merely before the repair enqueue: recover() runs a pending
+    // repair synchronously, and that repair mints a backup which prunes the oldest -- the
+    // copy the origins are read from.
+    this._enqueueTranscriptOriginBackfills();
     const count = this.backgroundJobQueue.recover();
     this._enqueueNoteAttributionRepairs();
     if (count > 0) {
@@ -8398,7 +8439,15 @@ class IPCHandlers {
       }));
       const merged = mergeTranscriptSegments(existing, incoming);
 
-      this._updateNoteAndNotify(noteId, { transcript: serializeTranscriptSegments(merged) });
+      this._updateNoteAndNotify(noteId, {
+        transcript: serializeTranscriptSegments(merged),
+        ...(Number.isFinite(audioStartedAt) && audioStartedAt > EPOCH_MS_FLOOR
+          ? {
+              transcript_origin_ms: audioStartedAt,
+              transcript_origin_source: "audio:system",
+            }
+          : {}),
+      });
 
       debugLogger.notice("Diarization transcript persisted in main", {
         noteId,
