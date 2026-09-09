@@ -198,3 +198,27 @@ test("minSessionSegments labels short clusters as fragments without dropping the
     ]
   );
 });
+
+test("startIndex is the cluster's lowest original index, not its earliest segment's", async () => {
+  const { detectSessions } = await load();
+
+  const segments = [
+    segment("a", 50),
+    segment("b", 60),
+    segment("c", 70),
+    segment("d", 10),
+    segment("e", 20),
+  ];
+
+  const earliestByTime = segments
+    .map((s, index) => ({ index, timestamp: s.timestamp }))
+    .sort((x, y) => x.timestamp - y.timestamp)[0];
+  assert.equal(earliestByTime.index, 3, "fixture: the earliest segment must not sit first");
+
+  const result = detectSessions(segments);
+  assert.equal(result.sessions.length, 1, "fixture: these must form one cluster");
+  assert.deepEqual(
+    result.sessions.map((s) => [s.startIndex, s.endIndex, s.count]),
+    [[0, 4, 5]]
+  );
+});

@@ -27,7 +27,14 @@ const DEFAULT_MIN_SESSION_SEGMENTS = 5;
 /**
  * @param {readonly TimestampedSegment[]} segments
  * @param {{ gapSeconds?: number, minSessionSegments?: number }} [options]
- * @returns {WeldedSessionReport}
+ * @returns {WeldedSessionReport} `sessions` reports where each session's segments are,
+ * NOT a partition of the array. Two properties a consumer must not assume:
+ * segments with no timestamp, and those in the discarded time base when the note mixes
+ * units, fall in no session at all — so the ranges need not start at 0, need not reach
+ * `segments.length - 1`, and can leave holes between them; and because the array is not
+ * sorted by time, one session's `[startIndex..endIndex]` can overlap another's. Anything
+ * that splits a note by these ranges must therefore assign segments by cluster
+ * membership, not by walking the index range, or it will orphan and double-assign them.
  */
 export const detectSessions = (segments, options = {}) => {
   const gapSeconds = options.gapSeconds ?? DEFAULT_GAP_SECONDS;

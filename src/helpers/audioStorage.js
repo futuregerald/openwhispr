@@ -231,3 +231,4 @@ class AudioStorageManager {
 }
 
 module.exports = AudioStorageManager;
+module.exports.isRetainedAudioFile = isRetainedAudioFile;

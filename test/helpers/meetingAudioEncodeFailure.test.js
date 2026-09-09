@@ -149,3 +149,45 @@ test("a successful encode still deletes the raw PCM and records the opus path", 
     { id: NOTE_ID, updates: { mic_audio_path: saved.micPath, system_audio_path: saved.systemPath } },
   ]);
 });
+
+test("a PCM on another filesystem is copied across when it cannot be renamed", async (t) => {
+  const { audioDir, tmpDir } = createWorkspace(t);
+  const micPcm = writePcm(tmpDir, "ow-diarize-raw-6.pcm");
+
+  const originalRename = fs.renameSync;
+  let renameAttempts = 0;
+  fs.renameSync = () => {
+    renameAttempts += 1;
+    const error = new Error("EXDEV: cross-device link not permitted");
+    error.code = "EXDEV";
+    throw error;
+  };
+  t.after(() => {
+    fs.renameSync = originalRename;
+  });
+
+  stubEncode(t, async () => {
+    throw new Error("ffmpeg not found");
+  });
+  const logs = captureLogs(t);
+  const { handlers } = createHandlers(audioDir);
+
+  const saved = await handlers._saveMeetingAudio(NOTE_ID, micPcm, null);
+
+  assert.equal(saved.micPath, null, "a failed encode still reports no opus track");
+  assert.ok(renameAttempts > 0, "the rename must be attempted before the copy");
+  assert.equal(fs.existsSync(micPcm), false, "the temp-dir PCM must not be left behind");
+
+  const rescued = fs.readdirSync(audioDir).filter((name) => name.endsWith(".pcm"));
+  assert.equal(rescued.length, 1, "the copy fallback must still land the PCM in retention");
+  assert.equal(parseMeetingNoteId(rescued[0]), NOTE_ID);
+  assert.deepEqual(fs.readFileSync(path.join(audioDir, rescued[0])), PCM_BYTES);
+
+  const failureLogs = logs.filter((entry) => /encode failed/i.test(String(entry.message)));
+  assert.equal(failureLogs.length, 1);
+  assert.equal(
+    failureLogs[0].meta.retainedPcmPath,
+    path.join(audioDir, rescued[0]),
+    "the log must point at the copy, not the vanished temp path"
+  );
+});

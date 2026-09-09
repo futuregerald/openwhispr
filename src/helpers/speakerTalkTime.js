@@ -11,7 +11,8 @@
  */
 
 const SMALLEST_TIMESTAMP_THAT_MUST_BE_EPOCH_MILLISECONDS = 1e10;
-const MAX_SECONDS_BEFORE_A_GAP_READS_AS_A_CLOCK_CHANGE = 300;
+const SMALLEST_SECONDS_VALUE_THAT_MUST_BE_A_WALL_CLOCK = 1e9;
+const MAX_CREDITED_SECONDS_PER_SEGMENT = 30;
 const SECONDS_PER_SEGMENT_WHEN_NO_GAP_IS_USABLE = 1;
 
 /** @param {unknown} timestamp */
@@ -22,13 +23,8 @@ const toSeconds = (timestamp) => {
     : timestamp;
 };
 
-/** @param {number[]} values */
-const median = (values) => {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-};
+/** @param {number} seconds */
+const isWallClock = (seconds) => seconds > SMALLEST_SECONDS_VALUE_THAT_MUST_BE_A_WALL_CLOCK;
 
 /**
  * @param {Array<{ source?: string, timestamp?: number }>} segments
@@ -36,27 +32,32 @@ const median = (values) => {
  */
 export const computeSegmentDurations = (segments) => {
   const list = Array.isArray(segments) ? segments : [];
-  const nextIndexBySource = new Map();
-  /** @type {Array<number | null>} */
-  const raw = new Array(list.length).fill(null);
 
-  for (let i = list.length - 1; i >= 0; i -= 1) {
-    const source = list[i]?.source ?? "";
-    const nextIndex = nextIndexBySource.get(source);
-    if (nextIndex != null) {
-      const start = toSeconds(list[i]?.timestamp);
-      const end = toSeconds(list[nextIndex]?.timestamp);
-      if (start != null && end != null) {
-        const delta = end - start;
-        if (delta > 0 && delta <= MAX_SECONDS_BEFORE_A_GAP_READS_AS_A_CLOCK_CHANGE) raw[i] = delta;
-      }
-    }
-    nextIndexBySource.set(source, i);
+  /** @type {Map<string, Array<{ index: number, at: number }>>} */
+  const timedIndicesBySource = new Map();
+  for (let index = 0; index < list.length; index += 1) {
+    const at = toSeconds(list[index]?.timestamp);
+    if (at == null) continue;
+    const source = list[index]?.source ?? "";
+    const timed = timedIndicesBySource.get(source);
+    if (timed) timed.push({ index, at });
+    else timedIndicesBySource.set(source, [{ index, at }]);
   }
 
-  const fallback =
-    median(raw.filter((d) => d != null)) ?? SECONDS_PER_SEGMENT_WHEN_NO_GAP_IS_USABLE;
-  return raw.map((d) => (d == null ? fallback : d));
+  const durations = new Array(list.length).fill(SECONDS_PER_SEGMENT_WHEN_NO_GAP_IS_USABLE);
+
+  for (const timed of timedIndicesBySource.values()) {
+    timed.sort((a, b) => a.at - b.at);
+    for (let i = 0; i < timed.length - 1; i += 1) {
+      const spoken = timed[i];
+      const next = timed[i + 1];
+      if (isWallClock(spoken.at) !== isWallClock(next.at)) continue;
+      const gap = next.at - spoken.at;
+      if (gap > 0) durations[spoken.index] = Math.min(gap, MAX_CREDITED_SECONDS_PER_SEGMENT);
+    }
+  }
+
+  return durations;
 };
 
 /**

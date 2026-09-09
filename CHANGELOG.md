@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Merging or renaming a speaker no longer overwrites a name you had locked.** Both quietly replaced every matching line regardless, so a person you had deliberately identified could be absorbed into another speaker and lost. Locked lines are now left alone and the app tells you how many it skipped.
-- **"% talk time" was not talk time.** It was counting lines, not seconds, because the field it divided by is never actually saved with a meeting -- so someone who said "yeah" twenty times outranked someone who spoke for ten minutes. It is now measured from the gaps between what each person said. Expect these percentages to look different, and to be right: on a test where one speaker talks three times for forty seconds and another says twenty single words, the old figure gave the second speaker 87%.
+- **"% talk time" was not talk time.** It counted lines, not seconds, because the field it divided by is never actually saved with a meeting -- so someone who said "yeah" twenty times outranked someone who spoke for ten minutes. Replayed against the old code, a speaker with three forty-second turns scored 13% against 87% for twenty single words. It is now measured from the time between what each person said, capped at thirty seconds per line so that a long silence after someone stops talking is not counted as them still talking. Expect these percentages to look different. They are a better measure than counting lines, but where two people genuinely talk a similar amount the order between them can still shift by a point or two.
 
 ## [1.18.6] - 2026-09-09
 

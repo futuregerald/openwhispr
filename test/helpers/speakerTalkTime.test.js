@@ -1,6 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const { computeSpeakerStats } = require("../../src/helpers/speakerTalkTime");
+const {
+  computeSpeakerStats,
+  computeSegmentDurations,
+} = require("../../src/helpers/speakerTalkTime");
 
 const systemSeg = (timestamp, speaker, extra = {}) => ({
   source: "system",
@@ -40,13 +43,13 @@ test("durations come from the next segment of the same source, not the next segm
     { source: "system", timestamp: 0, speaker: "A", text: "long" },
     { source: "mic", timestamp: 1, speaker: "you", text: "short" },
     { source: "mic", timestamp: 2, speaker: "you", text: "short" },
-    { source: "system", timestamp: 60, speaker: "B", text: "long" },
-    { source: "mic", timestamp: 61, speaker: "you", text: "short" },
-    { source: "system", timestamp: 120, speaker: "B", text: "tail" },
+    { source: "system", timestamp: 20, speaker: "B", text: "long" },
+    { source: "mic", timestamp: 21, speaker: "you", text: "short" },
+    { source: "system", timestamp: 40, speaker: "B", text: "tail" },
   ];
   const stats = computeSpeakerStats(segments);
   const a = stats.find((s) => s.id === "A");
-  assert.strictEqual(a.talkTimeSeconds, 60);
+  assert.strictEqual(a.talkTimeSeconds, 20);
 });
 
 test("percentages sum to a whole and ignore segments with no speaker", () => {
@@ -120,4 +123,50 @@ test("a named non-placeholder segment names the whole cluster", () => {
 test("no segments yields no speakers", () => {
   assert.deepStrictEqual(computeSpeakerStats([]), []);
   assert.deepStrictEqual(computeSpeakerStats(undefined), []);
+});
+
+test("a silence longer than one plausible utterance is credited at the cap, not in full", () => {
+  const segments = [systemSeg(0, "A"), systemSeg(120, "B"), systemSeg(125, "B")];
+
+  const durations = computeSegmentDurations(segments);
+
+  assert.strictEqual(durations[0], 30, "a 120s gap is 30s of speech and 90s of silence");
+});
+
+test("a gap past the old clock-change threshold is still credited, at the cap", () => {
+  const segments = [systemSeg(0, "A"), systemSeg(400, "B"), systemSeg(405, "B")];
+
+  const durations = computeSegmentDurations(segments);
+
+  assert.strictEqual(durations[0], 30, "a long gap is clamped, never discarded for a fallback");
+});
+
+test("durations follow time order, not the order segments happen to sit in the array", () => {
+  const segments = [systemSeg(0, "A"), systemSeg(20, "B"), systemSeg(10, "C")];
+
+  const durations = computeSegmentDurations(segments);
+
+  assert.deepStrictEqual(durations, [10, 1, 10]);
+});
+
+test("an out-of-order segment does not hand its predecessor a doubled turn", () => {
+  const inTimeOrder = [systemSeg(0, "A"), systemSeg(10, "C"), systemSeg(20, "B")];
+  const asStored = [systemSeg(0, "A"), systemSeg(20, "B"), systemSeg(10, "C")];
+
+  const ordered = computeSpeakerStats(inTimeOrder);
+  const stored = computeSpeakerStats(asStored);
+
+  assert.deepStrictEqual(
+    stored.map((s) => [s.id, s.talkTimeSeconds]).sort(),
+    ordered.map((s) => [s.id, s.talkTimeSeconds]).sort(),
+    "array order must not change anyone's talk time"
+  );
+});
+
+test("a segment with no timestamp does not zero its predecessor's duration", () => {
+  const segments = [systemSeg(0, "A"), systemSeg(undefined, "B"), systemSeg(10, "C")];
+
+  const durations = computeSegmentDurations(segments);
+
+  assert.strictEqual(durations[0], 10, "the 10s gap belongs to A, not to a fallback");
 });
