@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.6] - 2026-09-09
+
+### Fixed
+- **A meeting whose audio failed to compress no longer loses that audio.** The step that converts a finished recording to its compressed form deleted the raw recording even when the conversion had failed -- so if ffmpeg was missing or the disk was full, the meeting's audio was gone, the only trace was a message you would never see, and every later attempt to reprocess that meeting reported that it had started when nothing could. The raw recording is now kept and filed with the meeting's other audio, and the failure is recorded properly. Files kept this way are now also seen by the routine that ages old audio out, so they cannot accumulate.
+
+### Added
+- **Detection for meetings that were welded together.** Recording repeatedly into the same note could append several separate meetings into one, and one note here holds thirteen sessions spanning five days. The app can now tell which notes that happened to. Splitting them is a separate step and is not automatic -- it creates and deletes notes, so it asks first.
+
 ## [1.18.5] - 2026-09-09
 
 ### Fixed

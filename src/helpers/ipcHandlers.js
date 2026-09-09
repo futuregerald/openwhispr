@@ -8307,14 +8307,18 @@ class IPCHandlers {
       const outFile = path.join(audioDir, `OpenWhispr-meeting-${noteId}-${stamp}-${track}.opus`);
       try {
         await encodePcmToOpus(pcmPath, outFile, { sampleRate: 24000, bitrate: 32 });
-        return outFile;
-      } catch (err) {
-        debugLogger.warn(`Meeting ${track} audio encode failed`, { error: err.message }, "meeting");
-        return null;
-      } finally {
         try {
           fs.unlinkSync(pcmPath);
         } catch (_) {}
+        return outFile;
+      } catch (err) {
+        const retainedPcmPath = this._retainUnencodedPcm(pcmPath, audioDir, noteId, stamp, track);
+        debugLogger.error(
+          `Meeting ${track} audio encode failed`,
+          { error: err.message, noteId, retainedPcmPath: retainedPcmPath || pcmPath },
+          "meeting"
+        );
+        return null;
       }
     };
 
@@ -8335,6 +8339,33 @@ class IPCHandlers {
     }
 
     return saved;
+  }
+
+  _retainUnencodedPcm(pcmPath, audioDir, noteId, stamp, track) {
+    const fs = require("fs");
+    const path = require("path");
+    const retainedPath = path.join(audioDir, `OpenWhispr-meeting-${noteId}-${stamp}-${track}.pcm`);
+
+    try {
+      fs.mkdirSync(audioDir, { recursive: true });
+      fs.renameSync(pcmPath, retainedPath);
+      return retainedPath;
+    } catch (_) {}
+
+    try {
+      fs.copyFileSync(pcmPath, retainedPath);
+      try {
+        fs.unlinkSync(pcmPath);
+      } catch (_) {}
+      return retainedPath;
+    } catch (err) {
+      debugLogger.error(
+        `Meeting ${track} audio could not be moved out of the temp directory`,
+        { error: err.message, noteId, pcmPath },
+        "meeting"
+      );
+      return null;
+    }
   }
 
   // The diarized result is computed in main and was, until now, saved only by a React
