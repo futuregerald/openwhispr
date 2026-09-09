@@ -40,13 +40,14 @@ import NoteBottomBar from "./NoteBottomBar";
 import EmbeddedChat, { type EmbeddedChatMode } from "./EmbeddedChat";
 import { useEmbeddedChat } from "../../hooks/useEmbeddedChat";
 import { normalizeDbDate } from "../../utils/dateFormatting";
+import { classifyDiarizationPayload } from "../../utils/diarizationPayloadGuard";
+import logger from "../../utils/logger";
 import { parseTranscriptSegments } from "../../utils/parseTranscriptSegments";
 import {
   applyTranscriptSpeakerPatch,
   lockTranscriptSpeaker,
-  mergeTranscriptSegments,
   serializeTranscriptSegments,
-} from "../../utils/transcriptSpeakerState";
+} from "../../helpers/transcriptSpeakerState";
 import NoteParticipants from "./NoteParticipants";
 import MeetingTypePicker from "./MeetingTypePicker";
 import MeetingTypeEditor from "./MeetingTypeEditor";
@@ -213,7 +214,6 @@ export default function NoteEditor({
     Array<{ id: number; display_name: string; email: string | null }>
   >([]);
   const editorRef = useRef<Editor | null>(null);
-  const displaySegmentsRef = useRef<TranscriptSegment[]>([]);
 
   const embeddedChat = useEmbeddedChat({
     noteId: note.id,
@@ -250,10 +250,6 @@ export default function NoteEditor({
     if (meetingSegments && meetingSegments.length > 0) return meetingSegments;
     return parseTranscriptSegments(note.transcript || "");
   }, [diarizedSegments, isRecording, meetingSegments, note.transcript]);
-
-  useEffect(() => {
-    displaySegmentsRef.current = displaySegments;
-  }, [displaySegments]);
 
   const hasChatSegments = displaySegments.length > 0;
 
@@ -396,32 +392,43 @@ export default function NoteEditor({
 
   useEffect(() => {
     const expectedSession = diarizationSessionId;
-    const cleanup = window.electronAPI?.onMeetingDiarizationComplete?.(async (data) => {
-      if (!expectedSession || data?.sessionId !== expectedSession) return;
+    const cleanup = window.electronAPI?.onMeetingDiarizationComplete?.((data) => {
+      const verdict = classifyDiarizationPayload(data, {
+        sessionId: expectedSession,
+        noteId: note.id,
+      });
+      const belongsToThisSession = verdict.accepted || verdict.reason === "note-mismatch";
+      if (!belongsToThisSession) return;
 
       setIsDiarizing(false);
 
+      if (!verdict.accepted) {
+        logger.notice("Diarization result refused: it belongs to a different note", {
+          payloadNoteId: data?.noteId,
+          openNoteId: note.id,
+          sessionId: data?.sessionId,
+          segmentCount: data?.segments?.length ?? 0,
+        });
+        return;
+      }
+
       if (!data?.segments?.length) return;
 
-      const persisted = await window.electronAPI?.getNote?.(note.id);
-      const existing = persisted?.transcript
-        ? parseTranscriptSegments(persisted.transcript)
-        : displaySegmentsRef.current;
-
-      const enriched = mergeTranscriptSegments(
-        existing,
-        data.segments.map((s: any, i: number) => ({
-          ...s,
-          id: s.id || `diarized-${i}`,
-        }))
-      );
+      // The main process has already merged this against the stored transcript and
+      // written it. Persisting here too would race that write with state this
+      // component may have rendered before it landed.
+      const enriched = data.segments.map((s: any, i: number) => ({
+        ...s,
+        id: s.id || `diarized-${i}`,
+      })) as TranscriptSegment[];
       setDiarizedSegments(enriched);
 
-      window.electronAPI.updateNote(note.id, { transcript: serializeTranscriptSegments(enriched) });
-
-      if (data.speakerEmbeddings) {
-        window.electronAPI?.saveNoteSpeakerEmbeddings?.(note.id, data.speakerEmbeddings);
-      }
+      logger.notice("Diarization result received", {
+        noteId: note.id,
+        sessionId: data?.sessionId,
+        segmentCount: enriched.length,
+        hasSpeakerEmbeddings: Boolean(data.speakerEmbeddings),
+      });
 
       const autoMappings: Record<string, string> = {};
       for (const s of enriched) {

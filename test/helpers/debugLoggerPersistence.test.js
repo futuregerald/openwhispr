@@ -38,6 +38,38 @@ test("warn and error persist at the default info level", async () => {
   assert.match(contents, /an error worth keeping/);
 });
 
+test("notice persists at the default info level with debug mode off", async () => {
+  const { logger } = makeLogger();
+  assert.equal(logger.debugMode, false, "the harness must not be in debug mode");
+
+  logger.notice("Starting FluidAudio diarization");
+  logger.notice("FluidAudio diarization complete");
+  logger.notice("Live speaker reconciliation complete");
+  await logger.close();
+
+  const contents = readLog(logger);
+  assert.match(contents, /Starting FluidAudio diarization/);
+  assert.match(contents, /FluidAudio diarization complete/);
+  assert.match(contents, /Live speaker reconciliation complete/);
+});
+
+test("a notice forwarded from the renderer persists too", async () => {
+  const { logger } = makeLogger();
+
+  logger.logEntry({
+    level: "notice",
+    message: "Diarization result refused: it belongs to a different note",
+    meta: { payloadNoteId: 36, openNoteId: 30 },
+    source: "renderer",
+  });
+  await logger.close();
+
+  const contents = readLog(logger);
+  assert.match(contents, /Diarization result refused: it belongs to a different note/);
+  assert.match(contents, /"payloadNoteId": 36/);
+  assert.match(contents, /\[NOTICE\]\[renderer\]/);
+});
+
 test("debug and info do not persist at the default info level", async () => {
   const { logger, dir } = makeLogger();
 

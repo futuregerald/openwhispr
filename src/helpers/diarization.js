@@ -471,7 +471,7 @@ class DiarizationManager {
       args.push("--max-speakers", String(maxSpeakers));
     }
 
-    debugLogger.info("Starting FluidAudio diarization", {
+    debugLogger.notice("Starting FluidAudio diarization", {
       binaryPath,
       mode,
       numSpeakers,
@@ -539,7 +539,7 @@ class DiarizationManager {
           debugLogger.warn("Failed to read FluidAudio output", { error: err.message });
         }
         cleanup();
-        debugLogger.info("FluidAudio diarization complete", { segmentCount: segments.length });
+        debugLogger.notice("FluidAudio diarization complete", { segmentCount: segments.length });
         resolve(segments);
       });
 

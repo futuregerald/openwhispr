@@ -63,8 +63,8 @@ test("enqueues the pipeline when diarization throws", async () => {
   assert.deepEqual(enqueued, [42], "a diarization failure must still process the note");
   assert.deepEqual(
     sent.at(-1),
-    { sessionId: "session-1", segments: [] },
-    "renderer still needs the empty result to clear its diarizing state"
+    { sessionId: "session-1", noteId: 42, segments: [] },
+    "renderer still needs the empty result, addressed to its note, to clear its diarizing state"
   );
 });
 

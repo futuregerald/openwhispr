@@ -57,7 +57,7 @@ import { cn } from "../lib/utils";
 import { MEETINGS_FOLDER_NAME, findDefaultFolder } from "./shared";
 import logger from "../../utils/logger";
 import { parseTranscriptSegments } from "../../utils/parseTranscriptSegments";
-import { serializeTranscriptSegments } from "../../utils/transcriptSpeakerState";
+import { serializeTranscriptSegments } from "../../helpers/transcriptSpeakerState";
 import { resolveExpectedSpeakerCount } from "../../utils/participants";
 import {
   useNotes,

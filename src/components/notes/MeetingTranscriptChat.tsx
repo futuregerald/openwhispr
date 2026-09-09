@@ -7,7 +7,7 @@ import type { TranscriptSegment } from "../../stores/meetingRecordingStore";
 import {
   isTranscriptSpeakerLocked,
   type TranscriptSpeakerStatus,
-} from "../../utils/transcriptSpeakerState";
+} from "../../helpers/transcriptSpeakerState";
 import SpeakerMorphPill from "./SpeakerMorphPill";
 import SpeakerPanel from "./SpeakerPanel";
 

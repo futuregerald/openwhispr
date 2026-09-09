@@ -21,7 +21,7 @@ import {
   normalizeTranscriptSegment,
   type TranscriptSpeakerLockSource,
   type TranscriptSpeakerStatus,
-} from "../utils/transcriptSpeakerState";
+} from "../helpers/transcriptSpeakerState";
 
 export interface TranscriptSegment {
   id: string;

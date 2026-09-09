@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.3] - 2026-09-08
+
+### Fixed
+- **Working out who spoke could finish successfully and then be thrown away.** The result was computed by the app itself but saved only by the meeting note's on-screen editor, so it was lost whenever that editor was not in exactly the right state to receive it — if the window had closed, if you had switched to another note, or if the app had already cleared the recording it belonged to. Three of the last fourteen meetings lost their speakers this way, silently, with the transcript kept and every line left unattributed. Notes written from those meetings attribute what people said by guesswork, which is why they read as though one person did something another person did. The app now saves the result itself, the moment it has it, so none of those conditions can lose it.
+- **A meeting that ended while you were looking at another part of the app could lose its transcript entirely.** Both places that saved a meeting transcript lived inside the notes screen, so if the recording stopped while you were in Chat or Settings, neither ran. The transcript is now saved regardless of what is on screen — including when speaker identification is turned off, and when it fails.
+- **Speaker voice profiles were not being saved for meetings**, so attaching an email address to a speaker no longer applied that name to the rest of their meetings, and a one-to-one call was no longer labelled automatically from the calendar invitation. Found by review of this release's own changes, before it shipped.
+
+## [1.18.2] - 2026-09-08
+
+### Fixed
+- **One meeting's speakers could be written into a different note.** Working out who spoke takes several seconds after a recording stops, and the result was delivered to whichever note happened to be open when it arrived — not the note it was computed for. Clicking away to another note inside that window merged the finished meeting's entire transcript into the note you had just opened, which is how one note ended up holding two meetings. The result now carries the note it belongs to and is refused by any other.
+- **Speaker identification left no trace in the log unless debug logging was on**, so a meeting that lost its speakers looked exactly like a meeting that never tried. Starting and finishing speaker identification, reconciling the names assigned during the call, and whether the result reached the note are now recorded on every install.
+
 ## [1.18.1] - 2026-09-06
 
 ### Added
