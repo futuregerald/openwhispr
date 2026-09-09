@@ -2485,7 +2485,14 @@
       "merge": "Unisci",
       "clearFilter": "Cancella filtro",
       "segments": "segmenti",
-      "selectForMerge": "Seleziona per unire"
+      "selectForMerge": "Seleziona per unire",
+      "selectAll": "Seleziona tutto",
+      "selectNone": "Annulla selezione",
+      "mergeInto": "Unisci {{count}} in {{name}}",
+      "keepingSpeaker": "Viene mantenuto «{{name}}»: resta il primo interlocutore selezionato.",
+      "keptBadge": "mantenuto",
+      "lockedSkipped": "{{count}} segmenti che avevi bloccato sono rimasti invariati.",
+      "talkTime": "{{percent}}% del tempo di parola"
     }
   },
   "pipeline": {

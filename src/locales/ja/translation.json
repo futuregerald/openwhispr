@@ -2485,7 +2485,14 @@
       "merge": "統合",
       "clearFilter": "フィルターを解除",
       "segments": "セグメント",
-      "selectForMerge": "統合対象を選択"
+      "selectForMerge": "統合対象を選択",
+      "selectAll": "すべて選択",
+      "selectNone": "選択を解除",
+      "mergeInto": "{{count}} 件を「{{name}}」に統合",
+      "keepingSpeaker": "「{{name}}」を残します。最初に選んだ話者が残ります。",
+      "keptBadge": "残す",
+      "lockedSkipped": "ロック済みの {{count}} セグメントは変更しませんでした。",
+      "talkTime": "発話時間 {{percent}}%"
     }
   },
   "pipeline": {

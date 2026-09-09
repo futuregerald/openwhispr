@@ -2485,7 +2485,14 @@
       "merge": "Mesclar",
       "clearFilter": "Limpar filtro",
       "segments": "segmentos",
-      "selectForMerge": "Selecionar para mesclar"
+      "selectForMerge": "Selecionar para mesclar",
+      "selectAll": "Selecionar tudo",
+      "selectNone": "Limpar seleção",
+      "mergeInto": "Combinar {{count}} em {{name}}",
+      "keepingSpeaker": "Mantendo “{{name}}” — o primeiro participante selecionado é o que fica.",
+      "keptBadge": "mantido",
+      "lockedSkipped": "{{count}} segmentos que você bloqueou não foram alterados.",
+      "talkTime": "{{percent}}% do tempo de fala"
     }
   },
   "pipeline": {

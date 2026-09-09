@@ -2485,7 +2485,14 @@
       "merge": "Zusammenführen",
       "clearFilter": "Filter löschen",
       "segments": "Segmente",
-      "selectForMerge": "Zum Zusammenführen auswählen"
+      "selectForMerge": "Zum Zusammenführen auswählen",
+      "selectAll": "Alle auswählen",
+      "selectNone": "Auswahl aufheben",
+      "mergeInto": "{{count}} in {{name}} zusammenführen",
+      "keepingSpeaker": "„{{name}}“ bleibt erhalten – der zuerst gewählte Sprecher wird behalten.",
+      "keptBadge": "behalten",
+      "lockedSkipped": "{{count}} von dir gesperrte Abschnitte blieben unverändert.",
+      "talkTime": "{{percent}} % Redeanteil"
     }
   },
   "pipeline": {

@@ -2485,7 +2485,14 @@
       "merge": "Merge",
       "clearFilter": "Clear filter",
       "segments": "segments",
-      "selectForMerge": "Select for merge"
+      "selectForMerge": "Select for merge",
+      "selectAll": "Select all",
+      "selectNone": "Clear selection",
+      "mergeInto": "Merge {{count}} into {{name}}",
+      "keepingSpeaker": "Keeping “{{name}}” — the first speaker you select is the one kept.",
+      "keptBadge": "kept",
+      "lockedSkipped": "{{count}} segments you had locked were left unchanged.",
+      "talkTime": "{{percent}}% talk time"
     }
   },
   "pipeline": {

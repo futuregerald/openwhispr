@@ -146,6 +146,10 @@ const {
   mergeSpeakersWithText,
   formatSpeakerTranscript,
 } = require("./speakerMerge");
+const {
+  mergeSpeakerSegments,
+  renameSpeakerSegments,
+} = require("./speakerMergeOperations");
 
 // Canonicalize allowed dirs so realpath'd inputs match on macOS (/var -> /private/var).
 // Deliberately narrow: user-picked paths anywhere else are approved individually via
@@ -7638,37 +7642,31 @@ class IPCHandlers {
       const note = this.databaseManager.getNote(noteId);
       if (!note?.transcript) return { success: false };
       try {
-        const segments = JSON.parse(note.transcript);
-        for (const seg of segments) {
-          if (seg.speaker === speakerId) {
-            seg.speakerName = newName;
-            seg.speakerIsPlaceholder = false;
-          }
-        }
+        const { segments, renamedCount, skippedLockedCount } = renameSpeakerSegments(
+          JSON.parse(note.transcript),
+          speakerId,
+          newName
+        );
         this.databaseManager.updateNote(noteId, { transcript: JSON.stringify(segments) });
         this.broadcastToWindows("note-updated", this.databaseManager.getNote(noteId));
-        return { success: true };
+        return { success: true, renamedCount, skippedLockedCount };
       } catch {
         return { success: false };
       }
     });
 
-    ipcMain.handle("merge-speakers", async (_event, noteId, keepId, mergeId) => {
+    ipcMain.handle("merge-speakers", async (_event, noteId, keepId, mergeIds) => {
       const note = this.databaseManager.getNote(noteId);
       if (!note?.transcript) return { success: false };
       try {
-        const segments = JSON.parse(note.transcript);
-        const keepSeg = segments.find((s) => s.speaker === keepId);
-        const keepName = keepSeg?.speakerName || keepId;
-        for (const seg of segments) {
-          if (seg.speaker === mergeId) {
-            seg.speaker = keepId;
-            seg.speakerName = keepName;
-          }
-        }
+        const { segments, mergedCount, skippedLockedCount } = mergeSpeakerSegments(
+          JSON.parse(note.transcript),
+          keepId,
+          mergeIds
+        );
         this.databaseManager.updateNote(noteId, { transcript: JSON.stringify(segments) });
         this.broadcastToWindows("note-updated", this.databaseManager.getNote(noteId));
-        return { success: true };
+        return { success: true, mergedCount, skippedLockedCount };
       } catch {
         return { success: false };
       }

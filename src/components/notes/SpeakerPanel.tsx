@@ -3,12 +3,22 @@ import { useTranslation } from "react-i18next";
 import { Users, Merge, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { useToast } from "../ui/useToast";
+import { computeSpeakerStats } from "../../helpers/speakerTalkTime";
+import {
+  toggleSpeakerSelection,
+  toggleSelectAllSpeakers,
+  getMergePrimaryId,
+  getMergeTargetIds,
+  canMergeSelection,
+} from "../../helpers/speakerMergeSelection";
 
 interface Speaker {
   id: string;
   name: string;
   isPlaceholder: boolean;
   segmentCount: number;
+  talkTimeSeconds: number;
   talkTimePercent: number;
 }
 
@@ -17,11 +27,11 @@ interface SpeakerPanelProps {
   segments: Array<{
     id?: string;
     text: string;
+    source?: string;
     speaker?: string;
     speakerName?: string;
     speakerIsPlaceholder?: boolean;
     timestamp?: number;
-    end?: number;
   }>;
   onFilterSpeaker: (speakerId: string | null) => void;
   activeSpeakerFilter: string | null;
@@ -41,72 +51,66 @@ export default function SpeakerPanel({
   activeSpeakerFilter,
 }: SpeakerPanelProps) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [selectedForMerge, setSelectedForMerge] = useState<string[]>([]);
 
-  const speakers = useMemo(() => {
-    const map = new Map<string, Speaker>();
-    let totalDuration = 0;
+  const speakers = useMemo(
+    () => computeSpeakerStats(segments) as Speaker[],
+    [segments]
+  );
 
-    for (const seg of segments) {
-      if (!seg.speaker) continue;
-      const duration =
-        seg.end != null && seg.timestamp != null
-          ? (seg.end - seg.timestamp) / 1000
-          : 1;
-      totalDuration += duration;
-
-      const existing = map.get(seg.speaker);
-      if (existing) {
-        existing.segmentCount++;
-        existing.talkTimePercent += duration;
-        if (seg.speakerName && !seg.speakerIsPlaceholder) {
-          existing.name = seg.speakerName;
-          existing.isPlaceholder = false;
-        }
-      } else {
-        map.set(seg.speaker, {
-          id: seg.speaker,
-          name: seg.speakerName || seg.speaker,
-          isPlaceholder: seg.speakerIsPlaceholder !== false,
-          segmentCount: 1,
-          talkTimePercent: duration,
-        });
-      }
-    }
-
-    for (const s of map.values()) {
-      s.talkTimePercent =
-        totalDuration > 0 ? Math.round((s.talkTimePercent / totalDuration) * 100) : 0;
-    }
-
-    return Array.from(map.values()).sort((a, b) => b.talkTimePercent - a.talkTimePercent);
-  }, [segments]);
+  const speakerIds = useMemo(() => speakers.map((s) => s.id), [speakers]);
+  const primaryId = getMergePrimaryId(selectedForMerge);
+  const primaryName =
+    speakers.find((s) => s.id === primaryId)?.name ?? primaryId ?? "";
+  const allSelected =
+    speakerIds.length > 0 && selectedForMerge.length === speakerIds.length;
 
   const handleStartEdit = (speaker: Speaker) => {
     setEditingId(speaker.id);
     setEditValue(speaker.name);
   };
 
+  const reportSkippedLocked = (result: { skippedLockedCount?: number } | undefined) => {
+    const skipped = result?.skippedLockedCount ?? 0;
+    if (skipped > 0) {
+      toast({ title: t("speakers.panel.lockedSkipped", { count: skipped }) });
+    }
+  };
+
   const handleCommitEdit = () => {
     if (editingId && editValue.trim()) {
-      (window as any).electronAPI?.renameSpeaker?.(noteId, editingId, editValue.trim());
+      Promise.resolve(
+        (window as any).electronAPI?.renameSpeaker?.(noteId, editingId, editValue.trim())
+      )
+        .then(reportSkippedLocked)
+        .catch(() => {});
     }
     setEditingId(null);
   };
 
   const handleToggleMergeSelect = (id: string) => {
-    setSelectedForMerge((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev.slice(-1), id]
-    );
+    setSelectedForMerge((prev) => toggleSpeakerSelection(prev, id));
+  };
+
+  const handleToggleSelectAll = () => {
+    setSelectedForMerge((prev) => toggleSelectAllSpeakers(prev, speakerIds));
   };
 
   const handleMerge = () => {
-    if (selectedForMerge.length === 2) {
-      (window as any).electronAPI?.mergeSpeakers?.(noteId, selectedForMerge[0], selectedForMerge[1]);
-      setSelectedForMerge([]);
-    }
+    if (!canMergeSelection(selectedForMerge)) return;
+    Promise.resolve(
+      (window as any).electronAPI?.mergeSpeakers?.(
+        noteId,
+        getMergePrimaryId(selectedForMerge),
+        getMergeTargetIds(selectedForMerge)
+      )
+    )
+      .then(reportSkippedLocked)
+      .catch(() => {});
+    setSelectedForMerge([]);
   };
 
   return (
@@ -119,10 +123,25 @@ export default function SpeakerPanel({
           </span>
         </div>
         <div className="flex items-center gap-1">
-          {selectedForMerge.length === 2 && (
+          {speakers.length > 1 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleToggleSelectAll}
+              className="h-6 text-xs"
+            >
+              {allSelected
+                ? t("speakers.panel.selectNone")
+                : t("speakers.panel.selectAll")}
+            </Button>
+          )}
+          {canMergeSelection(selectedForMerge) && (
             <Button variant="outline" size="sm" onClick={handleMerge} className="h-6 text-xs">
               <Merge size={12} className="mr-1" />
-              {t("speakers.panel.merge")}
+              {t("speakers.panel.mergeInto", {
+                count: getMergeTargetIds(selectedForMerge).length,
+                name: primaryName,
+              })}
             </Button>
           )}
           {activeSpeakerFilter && (
@@ -139,10 +158,17 @@ export default function SpeakerPanel({
         </div>
       </div>
 
+      {canMergeSelection(selectedForMerge) && (
+        <div className="mb-2 text-[10px] text-muted-foreground">
+          {t("speakers.panel.keepingSpeaker", { name: primaryName })}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
         {speakers.map((speaker, idx) => {
           const isFiltered = activeSpeakerFilter === speaker.id;
           const isMergeSelected = selectedForMerge.includes(speaker.id);
+          const isMergePrimary = canMergeSelection(selectedForMerge) && speaker.id === primaryId;
           const colorClass = SPEAKER_COLORS[idx % SPEAKER_COLORS.length];
 
           return (
@@ -176,10 +202,16 @@ export default function SpeakerPanel({
                     }}
                   >
                     {speaker.name}
+                    {isMergePrimary && (
+                      <span className="ml-1 text-[9px] font-normal text-primary">
+                        {t("speakers.panel.keptBadge")}
+                      </span>
+                    )}
                   </span>
                 )}
                 <span className="text-[10px] text-muted-foreground">
-                  {speaker.segmentCount} {t("speakers.panel.segments")} &middot; {speaker.talkTimePercent}%
+                  {speaker.segmentCount} {t("speakers.panel.segments")} &middot;{" "}
+                  {t("speakers.panel.talkTime", { percent: speaker.talkTimePercent })}
                 </span>
               </div>
               <input

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-09-09
+
+### Added
+- **You can now merge several speakers at once.** Merging was limited to two at a time, so folding a call that came back with more speakers than were present meant repeating it once per speaker. Tick as many as you like and merge in one step, with a Select all option. The panel now says which name it is keeping -- previously the order you ticked them decided that, and nothing told you.
+
+### Fixed
+- **Merging or renaming a speaker no longer overwrites a name you had locked.** Both quietly replaced every matching line regardless, so a person you had deliberately identified could be absorbed into another speaker and lost. Locked lines are now left alone and the app tells you how many it skipped.
+- **"% talk time" was not talk time.** It was counting lines, not seconds, because the field it divided by is never actually saved with a meeting -- so someone who said "yeah" twenty times outranked someone who spoke for ten minutes. It is now measured from the gaps between what each person said. Expect these percentages to look different, and to be right: on a test where one speaker talks three times for forty seconds and another says twenty single words, the old figure gave the second speaker 87%.
+
 ## [1.18.6] - 2026-09-09
 
 ### Fixed

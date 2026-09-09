@@ -2485,7 +2485,14 @@
       "merge": "合并",
       "clearFilter": "清除筛选",
       "segments": "片段",
-      "selectForMerge": "选择以合并"
+      "selectForMerge": "选择以合并",
+      "selectAll": "全选",
+      "selectNone": "取消选择",
+      "mergeInto": "将 {{count}} 个合并到“{{name}}”",
+      "keepingSpeaker": "保留“{{name}}”——你首先选中的发言人会被保留。",
+      "keptBadge": "保留",
+      "lockedSkipped": "你锁定的 {{count}} 个片段未被修改。",
+      "talkTime": "发言时长 {{percent}}%"
     }
   },
   "pipeline": {

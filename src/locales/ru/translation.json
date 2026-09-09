@@ -2489,7 +2489,14 @@
       "merge": "Объединить",
       "clearFilter": "Сбросить фильтр",
       "segments": "сегменты",
-      "selectForMerge": "Выбрать для объединения"
+      "selectForMerge": "Выбрать для объединения",
+      "selectAll": "Выбрать все",
+      "selectNone": "Снять выделение",
+      "mergeInto": "Объединить {{count}} с «{{name}}»",
+      "keepingSpeaker": "Останется «{{name}}» — сохраняется говорящий, выбранный первым.",
+      "keptBadge": "остаётся",
+      "lockedSkipped": "Сегментов с вашей блокировкой оставлено без изменений: {{count}}.",
+      "talkTime": "{{percent}} % времени речи"
     }
   },
   "pipeline": {
