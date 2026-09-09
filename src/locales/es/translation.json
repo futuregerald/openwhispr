@@ -2497,7 +2497,9 @@
       "auditionApproximate": "Reproducir unos segundos de este hablante (el momento es aproximado en esta reunión)",
       "auditionNoAudio": "Esta reunión no tiene audio guardado",
       "auditionNoCue": "No hay nada que reproducir para este hablante",
-      "auditionWhileRecording": "No disponible durante la grabación"
+      "auditionWhileRecording": "No disponible durante la grabación",
+      "auditionLoading": "Comprobando el audio de esta reunión…",
+      "auditionUnplayable": "No se pudo reproducir el audio de esta reunión"
     }
   },
   "pipeline": {

@@ -1,6 +1,4 @@
 import { useState } from "react";
-import { Check } from "lucide-react";
-import { cn } from "../lib/utils";
 import { isLikelyEmail, nameFromEmail } from "../../helpers/emailNames";
 
 export interface SpeakerProfileLite {

@@ -454,19 +454,19 @@ export default function NoteEditor({
     [note.id]
   );
 
-  // Merge runs here, not through the merge IPC, for the same reason rename does: the IPC skips
-  // locked segments, and a merge started from the panel is the user's own decision. Keeping
-  // both on this side also keeps them on ONE side -- a merge written by main would be masked
-  // by displaySegments until the note id changed, and the next rename would write the
-  // pre-merge segments back over it.
+  // Kept on the same side as rename: splitting them lets one overwrite the other, because
+  // displaySegments prefers this local state over the stored transcript.
   const handleMergeSpeakers = useCallback(
-    async (primaryId: string, targetIds: string[]) => {
+    async (primaryId: string, targetIds: string[], primaryName: string) => {
       if (!primaryId || targetIds.length === 0) return;
+      // Not while recording: the live segments are not the stored transcript, so persisting
+      // them writes a mid-recording snapshot over the note. Rename already returns early here.
+      if (isRecording) return;
       const nextSegments = foldSpeakersInto(
         displaySegments,
         primaryId,
         targetIds,
-        speakerMappings[primaryId] || primaryId
+        primaryName || speakerMappings[primaryId] || primaryId
       ) as TranscriptSegment[];
 
       setSpeakerMappings((prev) => {

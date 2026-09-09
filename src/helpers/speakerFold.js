@@ -5,10 +5,10 @@ import { lockTranscriptSpeaker } from "./transcriptSpeakerState.js";
 /**
  * Folds several speakers into one, over segments the renderer already holds.
  *
- * Deliberately applies to locked segments. The main-process merge skips them, which makes it
- * a no-op on exactly the speakers a user has bothered to name — note 4's speaker_1 is locked
- * on all 257 of its segments. A merge started from the speaker panel is the user changing
- * their own mind, which the lock exists to protect, not to prevent.
+ * Deliberately applies to locked segments. The lock stops automatic relabelling from
+ * overwriting a name a person chose; a merge started from the speaker panel IS that person
+ * choosing, so skipping locked segments there makes the button a no-op on exactly the
+ * speakers someone has bothered to name.
  *
  * @template {{ speaker?: string }} T
  * @param {T[]} segments

@@ -149,3 +149,71 @@ test("prefers an early turn over a longer one much later in the meeting", () => 
 
   assert.ok(cue.seconds <= 1100, `expected an early cue, got ${cue.seconds}`);
 });
+
+// A speaker can appear on both sources. Choosing one track for the whole speaker means a
+// single stray segment decides which FILE gets played, and drags every other segment's cue
+// onto a track whose zero it was never measured against.
+test("each candidate is judged against the track its own segment came from", () => {
+  const segments = [
+    seg("you", 10, "mic"), // 30 s of floor on the mic track
+    seg("you", 40, "mic"),
+    seg("you", 500, "system"), // one stray system segment, 1 s of floor
+    seg("speaker_0", 501),
+  ];
+
+  const cue = resolveSpeakerAuditionCue(segments, "you", {
+    systemDuration: 3600,
+    micDuration: 3604.428,
+  });
+
+  assert.equal(cue.track, "mic", "the mic segments hold the floor far longer");
+  assert.ok(Math.abs(cue.seconds - 14.428) < 1e-6, `mic shift must apply: ${cue.seconds}`);
+});
+
+test("a system cue is never shifted by the mic offset", () => {
+  const segments = [seg("speaker_1", 10), seg("speaker_0", 40)];
+
+  const cue = resolveSpeakerAuditionCue(segments, "speaker_1", {
+    systemDuration: 3600,
+    micDuration: 3604.428,
+  });
+
+  assert.equal(cue.track, "system");
+  assert.equal(cue.seconds, 10, "the mic offset must not touch a system cue");
+});
+
+test("a segment is dropped when the track it belongs to has no duration", () => {
+  const segments = [seg("you", 10, "mic"), seg("you", 40, "mic")];
+
+  assert.equal(
+    resolveSpeakerAuditionCue(segments, "you", { systemDuration: 3600, micDuration: null }),
+    null
+  );
+});
+
+test("a non-numeric timestamp is skipped rather than coerced", () => {
+  const segments = [
+    { speaker: "speaker_1", timestamp: "10", source: "system", text: "x" },
+    seg("speaker_0", 40),
+  ];
+
+  assert.equal(resolveSpeakerAuditionCue(segments, "speaker_1", SYS), null);
+});
+
+// "The first N segments" has to mean the earliest by time, not the first N in array order.
+// A transcript interleaves two sources whose clocks are merged after the fact, so array
+// order is not guaranteed to be chronological.
+test("the early cap keeps the earliest segments by time, not by array position", () => {
+  const segments = [];
+  // Listed first, but 50 minutes in, and holding the floor longer than anything early.
+  segments.push(seg("speaker_1", 3000));
+  segments.push(seg("speaker_0", 3030));
+  for (let i = 1; i <= 14; i += 1) {
+    segments.push(seg("speaker_1", i * 10));
+    segments.push(seg("speaker_0", i * 10 + 2));
+  }
+
+  const cue = resolveSpeakerAuditionCue(segments, "speaker_1", SYS);
+
+  assert.ok(cue.seconds < 200, `expected an early cue, got ${cue.seconds}`);
+});

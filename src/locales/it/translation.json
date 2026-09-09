@@ -2497,7 +2497,9 @@
       "auditionApproximate": "Riproduci qualche secondo di questa persona (il momento è approssimativo per questa riunione)",
       "auditionNoAudio": "Questa riunione non ha audio salvato",
       "auditionNoCue": "Non c'è nulla da riprodurre per questa persona",
-      "auditionWhileRecording": "Non disponibile durante la registrazione"
+      "auditionWhileRecording": "Non disponibile durante la registrazione",
+      "auditionLoading": "Controllo dell'audio di questa riunione…",
+      "auditionUnplayable": "Impossibile riprodurre l'audio di questa riunione"
     }
   },
   "pipeline": {

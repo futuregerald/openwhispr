@@ -2497,7 +2497,9 @@
       "auditionApproximate": "播放该发言人的几秒钟录音（本次会议的定位为近似值）",
       "auditionNoAudio": "本次会议没有保存录音",
       "auditionNoCue": "该发言人没有可播放的内容",
-      "auditionWhileRecording": "录制期间不可用"
+      "auditionWhileRecording": "录制期间不可用",
+      "auditionLoading": "正在检查本次会议的录音…",
+      "auditionUnplayable": "无法播放本次会议的录音"
     }
   },
   "pipeline": {

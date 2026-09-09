@@ -2497,7 +2497,9 @@
       "auditionApproximate": "播放這位發言者的幾秒錄音（本次會議的定位為近似值）",
       "auditionNoAudio": "本次會議沒有儲存錄音",
       "auditionNoCue": "這位發言者沒有可播放的內容",
-      "auditionWhileRecording": "錄製期間無法使用"
+      "auditionWhileRecording": "錄製期間無法使用",
+      "auditionLoading": "正在檢查本次會議的錄音…",
+      "auditionUnplayable": "無法播放本次會議的錄音"
     }
   },
   "pipeline": {

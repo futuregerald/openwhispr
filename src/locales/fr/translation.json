@@ -2497,7 +2497,9 @@
       "auditionApproximate": "Écouter quelques secondes de cet interlocuteur (le repère est approximatif pour cette réunion)",
       "auditionNoAudio": "Cette réunion n'a pas d'audio enregistré",
       "auditionNoCue": "Rien à écouter pour cet interlocuteur",
-      "auditionWhileRecording": "Indisponible pendant l'enregistrement"
+      "auditionWhileRecording": "Indisponible pendant l'enregistrement",
+      "auditionLoading": "Vérification de l'audio de cette réunion…",
+      "auditionUnplayable": "Impossible de lire l'audio de cette réunion"
     }
   },
   "pipeline": {

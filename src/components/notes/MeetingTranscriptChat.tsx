@@ -427,9 +427,13 @@ interface MeetingTranscriptChatProps {
   userTouchedStepper?: boolean;
   onSetSessionDiarizationEnabled?: (enabled: boolean) => void;
   onSetSessionExpectedCount?: (count: number) => void;
-  onMergeSpeakers?: (primaryId: string, targetIds: string[]) => void | Promise<void>;
+  onMergeSpeakers: (
+    primaryId: string,
+    targetIds: string[],
+    primaryName: string
+  ) => void | Promise<void>;
   transcriptOriginSource?: string | null;
-  onMapSpeaker?: (
+  onMapSpeaker: (
     speakerId: string,
     displayName: string,
     email?: string | null,

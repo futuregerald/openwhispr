@@ -2497,7 +2497,9 @@
       "auditionApproximate": "Play a few seconds of this speaker (timing is approximate for this meeting)",
       "auditionNoAudio": "This meeting has no saved audio",
       "auditionNoCue": "Nothing to play for this speaker",
-      "auditionWhileRecording": "Not available while recording"
+      "auditionWhileRecording": "Not available while recording",
+      "auditionLoading": "Checking this meeting's audio…",
+      "auditionUnplayable": "This meeting's audio could not be played"
     }
   },
   "pipeline": {

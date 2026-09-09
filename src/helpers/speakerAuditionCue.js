@@ -32,44 +32,50 @@ export const resolveSpeakerAuditionCue = (segments, speakerId, tracks) => {
 
   const durations = computeSegmentDurations(list);
 
-  const spoken = [];
+  const durationFor = {
+    mic: Number.isFinite(tracks?.micDuration) ? Number(tracks.micDuration) : null,
+    system: Number.isFinite(tracks?.systemDuration) ? Number(tracks.systemDuration) : null,
+  };
+
+  // The mic file's own zero. A longer mic track means it started earlier, so the same instant
+  // sits further into it. Approximate: the two captures do not stop together, which adds
+  // roughly half a second of skew.
+  const shiftFor = {
+    mic:
+      durationFor.mic !== null && durationFor.system !== null
+        ? durationFor.mic - durationFor.system
+        : 0,
+    system: 0,
+  };
+
+  // Judged per segment, not per speaker: one stray segment on the other source must not drag
+  // every other cue onto a track whose zero it was never measured against.
+  const playable = [];
   for (let index = 0; index < list.length; index += 1) {
     const segment = list[index];
     if (!segment || segment.speaker !== speakerId) continue;
     const at = segment.timestamp;
     if (typeof at !== "number" || !Number.isFinite(at)) continue;
-    spoken.push({ at, heldFor: durations[index] ?? 0, source: segment.source });
+
+    const track = /** @type {"mic" | "system"} */ (segment.source === "mic" ? "mic" : "system");
+    const duration = durationFor[track];
+    if (duration === null || duration <= 0) continue;
+
+    // An epoch stamp is not an offset into anything, and a cue for the other track can land
+    // far before this one begins. Both fall outside a real track's extent.
+    const shifted = at + shiftFor[track];
+    if (shifted >= duration || shifted < -SECONDS_A_CUE_MAY_PRECEDE_A_TRACK) continue;
+
+    playable.push({ at: shifted, heldFor: durations[index], track });
   }
-  if (spoken.length === 0) return null;
+  if (playable.length === 0) return null;
 
-  const track = spoken.every((entry) => entry.source === "mic") ? "mic" : "system";
-  const duration = track === "mic" ? tracks?.micDuration : tracks?.systemDuration;
-  // Without a duration there is nothing to bound the cue against, and an unbounded seek
-  // clamps into silence rather than failing.
-  if (typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0) return null;
-
-  // The mic file's own zero. A longer mic track means it started earlier, so the same instant
-  // sits further into it. Approximate: the two captures do not stop together, which adds
-  // roughly half a second of skew.
-  const micShift =
-    track === "mic" &&
-    Number.isFinite(tracks?.micDuration) &&
-    Number.isFinite(tracks?.systemDuration)
-      ? Number(tracks.micDuration) - Number(tracks.systemDuration)
-      : 0;
-
-  // An epoch stamp is not an offset into anything, and a cue for the other track can land far
-  // before this one begins. Both fall outside a real track's extent, so the bound rejects them.
-  const playable = spoken
-    .map((entry) => ({ ...entry, at: entry.at + micShift }))
-    .filter((entry) => entry.at < duration && entry.at >= -SECONDS_A_CUE_MAY_PRECEDE_A_TRACK)
+  const early = playable
     .sort((a, b) => a.at - b.at)
     .slice(0, SEGMENTS_INTO_A_SPEAKER_STILL_CONSIDERED_EARLY);
 
-  if (playable.length === 0) return null;
-
-  const best = [...playable].sort((a, b) => b.heldFor - a.heldFor || a.at - b.at)[0];
-  return { seconds: Math.max(0, best.at), track };
+  const best = [...early].sort((a, b) => b.heldFor - a.heldFor || a.at - b.at)[0];
+  return { seconds: Math.max(0, best.at), track: best.track };
 };
 
 export default { resolveSpeakerAuditionCue };
