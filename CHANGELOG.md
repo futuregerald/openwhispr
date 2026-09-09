@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-09-09
+
+### Added
+- **Meetings now remember when their recording actually began.** A transcript stores each line as a number of seconds, but nothing recorded what second zero was, so a line could not be turned back into a wall-clock time or into a position in the saved audio. Meetings now record that starting point as they finish. Nothing about your transcripts is changed by this -- it only keeps something that was previously thrown away.
+
+### Fixed
+- **Meetings that an earlier repair had re-based get their real times back.** That repair shifted every timestamp to start from the first thing said and did not keep what it had subtracted, so the wall-clock times were lost. Where the backup that repair took is still present, the starting point is recovered from it and recorded. Meetings it cannot verify against that backup are left alone rather than given a guessed time.
+- **Re-transcribing a meeting no longer leaves it claiming the wrong starting point.** Re-transcribing replaces the whole transcript, and its new times are measured from the audio file rather than from the recording, so the stored starting point no longer applied. It is now marked as no longer known, instead of being left to be read as though it were still true.
+
 ## [1.19.0] - 2026-09-09
 
 ### Added

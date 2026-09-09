@@ -86,6 +86,8 @@ export interface NoteItem {
   mic_audio_path?: string | null;
   system_audio_path?: string | null;
   retranscribe_outcome?: string | null;
+  transcript_origin_ms?: number | null;
+  transcript_origin_source?: "audio:system" | "first-segment" | "unanchored" | null;
 }
 
 export interface FolderItem {

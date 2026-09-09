@@ -10,6 +10,17 @@ const { app } = require("electron");
 // trigger can't 400 the whole sync batch.
 const MAX_SNIPPET_TRIGGER_LENGTH = 100;
 
+const TRANSCRIPT_ORIGIN_SOURCES = new Set(["audio:system", "first-segment", "unanchored"]);
+
+// SQLite's INTEGER affinity stores "not-a-number" verbatim, so an origin arriving through
+// an arbitrary update body would read back as authoritative and be wrong.
+function isAcceptableNoteValue(field, value) {
+  if (value === null) return true;
+  if (field === "transcript_origin_ms") return Number.isSafeInteger(value) && value > 0;
+  if (field === "transcript_origin_source") return TRANSCRIPT_ORIGIN_SOURCES.has(value);
+  return true;
+}
+
 class DatabaseManager {
   constructor() {
     this.db = null;
@@ -490,6 +501,16 @@ class DatabaseManager {
       }
       try {
         this.db.exec("ALTER TABLE notes ADD COLUMN retranscribe_outcome TEXT");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+      try {
+        this.db.exec("ALTER TABLE notes ADD COLUMN transcript_origin_ms INTEGER");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+      try {
+        this.db.exec("ALTER TABLE notes ADD COLUMN transcript_origin_source TEXT");
       } catch (err) {
         if (!err.message.includes("duplicate column")) throw err;
       }
@@ -1187,6 +1208,49 @@ class DatabaseManager {
     }
   }
 
+  listNotesMissingTranscriptOrigin() {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      return this.db
+        .prepare(
+          `SELECT id, transcript FROM notes
+             WHERE deleted_at IS NULL
+               AND transcript IS NOT NULL
+               AND transcript_origin_ms IS NULL
+               AND transcript_origin_source IS NULL
+             ORDER BY id ASC`
+        )
+        .all();
+    } catch (error) {
+      debugLogger.error(
+        "Error listing notes missing a transcript origin",
+        { error: error.message },
+        "notes"
+      );
+      throw error;
+    }
+  }
+
+  setTranscriptOriginKeepingUpdatedAt(id, originMs, source) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      const info = this.db
+        .prepare(
+          "UPDATE notes SET transcript_origin_ms = ?, transcript_origin_source = ? WHERE id = ?"
+        )
+        .run(originMs, source, id);
+      if (info.changes === 0) return { success: false };
+      return { success: true, note: this.db.prepare("SELECT * FROM notes WHERE id = ?").get(id) };
+    } catch (error) {
+      debugLogger.error(
+        "Error recording a transcript origin",
+        { noteId: id, error: error.message },
+        "notes"
+      );
+      throw error;
+    }
+  }
+
   listNoteTranscripts() {
     try {
       if (!this.db) throw new Error("Database not initialized");
@@ -1201,12 +1265,18 @@ class DatabaseManager {
     }
   }
 
-  updateNoteTranscriptKeepingUpdatedAt(id, transcript) {
+  updateNoteTranscriptKeepingUpdatedAt(id, transcript, origin = null) {
     try {
       if (!this.db) throw new Error("Database not initialized");
-      const info = this.db
-        .prepare("UPDATE notes SET transcript = ? WHERE id = ?")
-        .run(transcript, id);
+      const info = origin != null
+        ? this.db
+            .prepare(
+              `UPDATE notes
+                 SET transcript = ?, transcript_origin_ms = ?, transcript_origin_source = ?
+               WHERE id = ?`
+            )
+            .run(transcript, origin.ms, origin.source, id)
+        : this.db.prepare("UPDATE notes SET transcript = ? WHERE id = ?").run(transcript, id);
       if (info.changes === 0) return { success: false };
       return { success: true, note: this.db.prepare("SELECT * FROM notes WHERE id = ?").get(id) };
     } catch (error) {
@@ -1240,11 +1310,21 @@ class DatabaseManager {
         "system_audio_path",
         "meeting_type_id",
         "retranscribe_outcome",
+        "transcript_origin_ms",
+        "transcript_origin_source",
       ];
       const fields = [];
       const values = [];
       for (const [key, value] of Object.entries(updates)) {
         if (allowedFields.includes(key) && value !== undefined) {
+          if (!isAcceptableNoteValue(key, value)) {
+            debugLogger.warn(
+              "Refused a note field whose value does not match its column",
+              { noteId: id, field: key },
+              "notes"
+            );
+            return { success: false };
+          }
           fields.push(`${key} = ?`);
           values.push(value);
         }

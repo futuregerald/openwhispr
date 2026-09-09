@@ -366,3 +366,76 @@ test("shared module: parse reports failures through the caller's logger, not a g
   assert.deepEqual(result, []);
   assert.equal(seen.length, 1, "main must be able to observe a parse failure");
 });
+
+// --- The origin the transcript is anchored to --------------------------------------
+//
+// timestamps are re-based onto audioStartedAt, which is the epoch of the first SYSTEM
+// PCM chunk. Nothing used to record it, so a stored transcript could not be mapped back
+// to a position in the audio file. All three persist branches must record it.
+
+const AUDIO_STARTED_AT = 1788877046345;
+
+function runWithOrigin(handlers, win, noteId, { segments = SEGMENTS, startedAt = AUDIO_STARTED_AT } = {}) {
+  return handlers._startOrSkipDiarization(
+    "session-1",
+    "/tmp/ow-test-raw.pcm",
+    startedAt,
+    segments,
+    win,
+    null,
+    null,
+    noteId
+  );
+}
+
+test("the diarized branch records the system audio origin it re-based onto", async () => {
+  const { handlers, writes, destroyedWin } = createHandlers();
+
+  await runWithOrigin(handlers, destroyedWin, 42);
+
+  const write = writes.find((w) => w.updates?.transcript != null);
+  assert.equal(write.updates.transcript_origin_ms, AUDIO_STARTED_AT);
+  assert.equal(write.updates.transcript_origin_source, "audio:system");
+});
+
+test("the skipped branch records the origin too, so a skip is not a silent gap", async () => {
+  const { handlers, writes, destroyedWin } = createHandlers({ available: false });
+
+  await runWithOrigin(handlers, destroyedWin, 42);
+
+  const write = writes.find((w) => w.updates?.transcript != null);
+  assert.ok(write, "a skipped diarization still persists the transcript");
+  assert.equal(write.updates.transcript_origin_ms, AUDIO_STARTED_AT);
+  assert.equal(write.updates.transcript_origin_source, "audio:system");
+});
+
+test("the failure branch records the origin, which is the branch a fix is likeliest to miss", async () => {
+  const { handlers, writes, destroyedWin } = createHandlers({
+    diarizeImpl: async () => {
+      throw new Error("diarization blew up");
+    },
+  });
+
+  await runWithOrigin(handlers, destroyedWin, 42);
+
+  const write = writes.find((w) => w.updates?.transcript != null);
+  assert.ok(write, "a failed diarization still persists the attributed transcript");
+  assert.equal(write.updates.transcript_origin_ms, AUDIO_STARTED_AT);
+  assert.equal(write.updates.transcript_origin_source, "audio:system");
+});
+
+test("no audio origin writes no origin, rather than claiming the recording began at zero", async () => {
+  for (const startedAt of [null, 0, Number.NaN, 12345]) {
+    const { handlers, writes, destroyedWin } = createHandlers();
+
+    await runWithOrigin(handlers, destroyedWin, 42, { startedAt });
+
+    const write = writes.find((w) => w.updates?.transcript != null);
+    assert.equal(
+      write.updates.transcript_origin_ms,
+      undefined,
+      `startedAt ${String(startedAt)} is not an epoch and must record nothing`
+    );
+    assert.equal(write.updates.transcript_origin_source, undefined);
+  }
+});

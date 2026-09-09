@@ -906,3 +906,67 @@ test("without a context resolver a local model falls back to a single call", asy
     delete process.env.NOTE_FORMATTING_MODEL;
   }
 });
+
+// Retranscription replaces the whole transcript with timestamps measured from the chosen
+// AUDIO TRACK's zero, which is a different anchor from whatever transcript_origin_ms
+// recorded. Leaving the old origin in place would have the column confidently describe an
+// anchor the transcript no longer uses.
+test("retranscribing clears the transcript origin instead of leaving a stale anchor", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = createMocks();
+  const writes = [];
+  mocks.databaseManager.updateNote = (id, updates) => {
+    writes.push({ id, updates });
+    return { success: true };
+  };
+  mocks.databaseManager.getNote = (id) => ({
+    id,
+    transcript: JSON.stringify([
+      { text: "hello", speaker: "speaker_0", source: "system", timestamp: 0 },
+    ]),
+    system_audio_path: "/tmp/test.opus",
+    mic_audio_path: null,
+    meeting_type_id: null,
+    audio_duration_seconds: 300,
+    transcript_origin_ms: 1788877046345,
+    transcript_origin_source: "audio:system",
+  });
+
+  const fs = require("fs");
+  const origExists = fs.existsSync;
+  const origReadFile = fs.readFileSync;
+  const origUnlink = fs.unlinkSync;
+  fs.existsSync = (p) => (p === "/tmp/test.opus" || p === "/tmp/model.bin") ? true : origExists(p);
+  fs.readFileSync = (...args) =>
+    typeof args[0] === "string" && args[0].includes("ow-retranscribe")
+      ? Buffer.from("fake wav")
+      : origReadFile(...args);
+  fs.unlinkSync = (p) => { if (!String(p).includes("ow-retranscribe")) origUnlink(p); };
+
+  process.env.NOTE_FORMATTING_PROVIDER = "openai";
+  process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+
+  try {
+    const manager = new PostCallPipelineManager({
+      broadcast: mocks.broadcast,
+      databaseManager: mocks.databaseManager,
+      whisperManager: mocks.whisperManager,
+      diarizationManager: mocks.diarizationManager,
+      inference: mocks.inference,
+      convertToWav: mocks.convertToWav,
+    });
+
+    await manager.run(1);
+
+    const transcriptWrite = writes.find((w) => w.updates?.transcript != null);
+    assert.ok(transcriptWrite, "retranscribe must have written a transcript");
+    assert.equal(transcriptWrite.updates.transcript_origin_ms, null);
+    assert.equal(transcriptWrite.updates.transcript_origin_source, "unanchored");
+  } finally {
+    fs.existsSync = origExists;
+    fs.readFileSync = origReadFile;
+    fs.unlinkSync = origUnlink;
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+});
