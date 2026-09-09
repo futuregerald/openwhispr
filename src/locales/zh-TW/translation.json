@@ -2538,5 +2538,10 @@
     "description": "OpenWhispr 使用 Gemma 4 E4B（約 5.4 GB）作為完全本機的 AI 模型，用於自動產生會議標題、偵測會議類型並建立結構化會議記錄。沒有它，這些功能將無法使用。您也可以改為連接自己的遠端 API 端點。",
     "accept": "下載 Gemma（5.4 GB）",
     "decline": "暫不"
+  },
+  "noteAttributionRepair": {
+    "title": "已修復舊筆記",
+    "description": "在 OpenWhispr 能夠區分你的麥克風之前錄製的 {{count}} 則筆記中，你自己的發言現已標註：{{notes}}。",
+    "action": "知道了"
   }
 }

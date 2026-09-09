@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.5] - 2026-09-09
+
+### Fixed
+- **Meetings recorded before the previous fix are repaired automatically, once, on the next launch.** Anything you said that was left with nobody's name against it is now attributed to you. Across the existing notes that is **2,670 lines in 30 meetings**, including 1,195 in a single one. This matters because the notes are written from the transcript, and a line with no owner is read as somebody else's -- which is why a meeting summary could credit one person with what another actually said.
+- The repair takes a **verified backup of the database first** -- it writes the copy, reopens it, and checks it matches before changing anything. It runs one meeting at a time through the existing background queue, so quitting part-way is safe and it resumes on the next launch rather than starting over. Running it twice changes nothing.
+- **Your notes list is not reordered by the repair.** Repaired meetings keep their original "last edited" time, so old meetings do not jump above what you worked on yesterday.
+- Timestamps are only corrected on meetings where every line can be corrected together. Meetings holding a mixture of two time formats are left alone and reported rather than half-converted, which would have produced negative timestamps and broken subtitle export outright.
+
 ## [1.18.4] - 2026-09-09
 
 ### Fixed

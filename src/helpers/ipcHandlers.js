@@ -6,6 +6,12 @@ const crypto = require("crypto");
 const debugLogger = require("./debugLogger");
 const { JOB_KINDS } = require("./jobDispatch");
 const { isPipelineStep } = require("./postCallPipelineManager");
+const {
+  findNotesNeedingAttributionRepair,
+  repairNoteAttribution: repairStoredNoteAttribution,
+  readRepairSummary,
+  clearRepairSummary,
+} = require("./noteAttributionRepair");
 const { resolveRetryStep } = require("./noteRetryStep");
 const meetingDetectionHealth = require("./meetingDetectionHealth");
 const { BYOK_API_KEYS } = require("../config/secretKeys");
@@ -3903,6 +3909,7 @@ class IPCHandlers {
 
     this.backgroundJobQueue.usePersistence(this._jobStore, {
       postCallPipelineManager: this.postCallPipelineManager,
+      ipcHandlers: this,
     });
 
     // Observe pipeline status events for pending retranscription tracking
@@ -6860,6 +6867,12 @@ class IPCHandlers {
       justMigrated: postMigrationDetector.isReturningFromOldBundle(),
     }));
 
+    ipcMain.handle("get-note-repair-summary", () => readRepairSummary(app.getPath("userData")));
+
+    ipcMain.handle("acknowledge-note-repair-summary", () => {
+      clearRepairSummary(app.getPath("userData"));
+    });
+
     ipcMain.handle("mark-bundle-migrated", () => {
       postMigrationDetector.markBundleMigrated();
     });
@@ -7877,7 +7890,45 @@ class IPCHandlers {
    * same single-slot queue, so several recovered meetings process one at a time
    * rather than all at once.
    */
+  repairNoteAttribution(noteId) {
+    return repairStoredNoteAttribution({
+      noteId,
+      databaseManager: this.databaseManager,
+      broadcast: (channel, payload) => this.broadcastToWindows(channel, payload),
+      userDataDir: app.getPath("userData"),
+    });
+  }
+
+  _enqueueNoteAttributionRepairs() {
+    let candidates = [];
+    try {
+      candidates = findNotesNeedingAttributionRepair(this.databaseManager);
+    } catch (error) {
+      debugLogger.error("Could not look for notes needing attribution repair", {
+        error: error.message,
+      });
+      return 0;
+    }
+
+    for (const candidate of candidates) {
+      this.backgroundJobQueue.enqueueKind(
+        `repair-attribution-${candidate.id}`,
+        JOB_KINDS.REPAIR_NOTE_ATTRIBUTION,
+        { noteId: candidate.id }
+      );
+    }
+
+    if (candidates.length > 0) {
+      debugLogger.info("Queued stored notes for attribution repair", {
+        count: candidates.length,
+        noteIds: candidates.map((candidate) => candidate.id),
+      });
+    }
+    return candidates.length;
+  }
+
   recoverBackgroundJobs() {
+    this._enqueueNoteAttributionRepairs();
     const count = this.backgroundJobQueue.recover();
     if (count > 0) {
       debugLogger.info("Re-queued background jobs from a previous run", { count }, "meeting");

@@ -2538,5 +2538,10 @@
     "description": "OpenWhispr uses Gemma 4 E4B (~5.4 GB) as a fully local AI model to auto-generate meeting titles, detect meeting types, and create structured meeting notes. Without it, these features won't be available. You can also connect your own remote API endpoint instead.",
     "accept": "Download Gemma (5.4 GB)",
     "decline": "Not now"
+  },
+  "noteAttributionRepair": {
+    "title": "Older notes repaired",
+    "description": "Your own speech is now labelled in {{count}} note(s) recorded before OpenWhispr could tell your microphone apart: {{notes}}.",
+    "action": "Got it"
   }
 }

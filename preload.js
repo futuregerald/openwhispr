@@ -409,6 +409,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getPostMigrationState: () => ipcRenderer.invoke("get-post-migration-state"),
   markBundleMigrated: () => ipcRenderer.invoke("mark-bundle-migrated"),
   markBundleMigrationDismissed: () => ipcRenderer.invoke("mark-bundle-migration-dismissed"),
+  getNoteRepairSummary: () => ipcRenderer.invoke("get-note-repair-summary"),
+  acknowledgeNoteRepairSummary: () => ipcRenderer.invoke("acknowledge-note-repair-summary"),
   getUpdateStatus: () => ipcRenderer.invoke("get-update-status"),
   getUpdateInfo: () => ipcRenderer.invoke("get-update-info"),
 

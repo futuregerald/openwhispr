@@ -2538,5 +2538,10 @@
     "description": "O OpenWhispr usa o Gemma 4 E4B (~5,4 GB) como modelo de IA totalmente local para gerar títulos de reunião, detectar o tipo de reunião e criar notas estruturadas. Sem ele, esses recursos não estarão disponíveis. Você também pode conectar seu próprio endpoint de API remota.",
     "accept": "Baixar o Gemma (5,4 GB)",
     "decline": "Agora não"
+  },
+  "noteAttributionRepair": {
+    "title": "Notas antigas reparadas",
+    "description": "A sua própria fala agora está identificada em {{count}} nota(s) gravadas antes de o OpenWhispr conseguir distinguir o seu microfone: {{notes}}.",
+    "action": "Entendi"
   }
 }

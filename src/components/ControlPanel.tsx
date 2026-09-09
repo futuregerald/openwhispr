@@ -232,6 +232,25 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
     });
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    window.electronAPI?.getNoteRepairSummary?.().then((summary) => {
+      if (cancelled || !summary?.notes?.length) return;
+      toast({
+        title: t("noteAttributionRepair.title"),
+        description: t("noteAttributionRepair.description", {
+          count: summary.notes.length,
+          notes: summary.notes.map((note) => note.title || `#${note.noteId}`).join(", "),
+        }),
+        duration: 15000,
+      });
+      window.electronAPI?.acknowledgeNoteRepairSummary?.();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [toast, t]);
+
   const dismissPostMigrationPermanently = useCallback(async () => {
     await window.electronAPI?.markBundleMigrated?.();
     setShowPostMigration(false);

@@ -16,6 +16,7 @@ const JOB_KINDS = {
   // Just the notes step, for "regenerate notes" on a meeting that already has a
   // transcript it is happy with.
   REGENERATE_NOTES: "regenerate-notes",
+  REPAIR_NOTE_ATTRIBUTION: "repair-note-attribution",
 };
 
 const HANDLERS = {
@@ -27,6 +28,9 @@ const HANDLERS = {
 
   [JOB_KINDS.REGENERATE_NOTES]: ({ postCallPipelineManager }, payload) =>
     postCallPipelineManager.runSingleStep(payload.noteId, "notes"),
+
+  [JOB_KINDS.REPAIR_NOTE_ATTRIBUTION]: ({ ipcHandlers }, payload) =>
+    ipcHandlers.repairNoteAttribution(payload.noteId),
 };
 
 function isKnownJobKind(kind) {

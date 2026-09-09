@@ -2538,5 +2538,10 @@
     "description": "OpenWhispr 使用 Gemma 4 E4B（约 5.4 GB）作为完全本地的 AI 模型，用于自动生成会议标题、检测会议类型并创建结构化会议记录。没有它，这些功能将不可用。您也可以改为连接自己的远程 API 端点。",
     "accept": "下载 Gemma（5.4 GB）",
     "decline": "暂不"
+  },
+  "noteAttributionRepair": {
+    "title": "已修复旧笔记",
+    "description": "在 OpenWhispr 能够区分你的麦克风之前录制的 {{count}} 条笔记中，你自己的发言现已标注：{{notes}}。",
+    "action": "知道了"
   }
 }
