@@ -138,14 +138,14 @@ test("startup recovery queues one repair row per damaged note", () => {
   assert.equal(enqueued.filter((e) => e.kind)[0].kind, JOB_KINDS.REPAIR_NOTE_ATTRIBUTION);
 });
 
-test("repairs are queued ahead of the jobs a previous run left behind", () => {
+test("the jobs a previous run left behind are recovered before new repairs are queued", () => {
   const { handlers, enqueued } = handlersWithCandidates([14]);
 
   handlers.recoverBackgroundJobs();
 
   assert.deepEqual(
     enqueued.map((e) => e.jobKey),
-    ["repair-attribution-14", "__recover__"]
+    ["__recover__", "repair-attribution-14"]
   );
 });
 
@@ -171,4 +171,67 @@ test("nothing is queued when no note needs repair", () => {
     enqueued.map((e) => e.jobKey),
     ["__recover__"]
   );
+});
+
+function handlersWithRealQueue(candidateIds) {
+  const { db, store } = freshStore();
+  const queue = new BackgroundJobQueue();
+  const repaired = [];
+  const statusWhileRunning = [];
+  queue.usePersistence(store, {
+    postCallPipelineManager: { run: async () => {}, runSingleStep: async () => {} },
+    ipcHandlers: {
+      repairNoteAttribution: async (noteId) => {
+        repaired.push(noteId);
+        await Promise.resolve();
+        statusWhileRunning.push({
+          noteId,
+          status: db
+            .prepare("SELECT status FROM jobs WHERE job_key = ?")
+            .get(`repair-attribution-${noteId}`)?.status,
+        });
+        return { repaired: true };
+      },
+    },
+  });
+
+  const handlers = Object.create(IPCHandlers.prototype);
+  Object.assign(handlers, {
+    databaseManager: {
+      listNoteTranscripts: () =>
+        candidateIds.map((id) => ({
+          id,
+          title: `note ${id}`,
+          transcript: JSON.stringify([
+            { text: "w0", source: "mic", timestamp: 1788877057845 },
+            { text: "w1", source: "system", timestamp: 1788877067672, speaker: "speaker_0" },
+          ]),
+        })),
+    },
+    backgroundJobQueue: queue,
+  });
+
+  return { db, store, queue, handlers, repaired, statusWhileRunning };
+}
+
+test("startup repairs each damaged note exactly once against the real queue", async () => {
+  const { handlers, queue, repaired, db } = handlersWithRealQueue([14, 27, 34, 36]);
+
+  handlers.recoverBackgroundJobs();
+  await queue.drain();
+
+  assert.deepEqual(repaired, [14, 27, 34, 36]);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM jobs").get().n, 0);
+});
+
+test("a repair job stays marked running for the whole time it is running", async () => {
+  const { handlers, queue, statusWhileRunning } = handlersWithRealQueue([14, 27]);
+
+  handlers.recoverBackgroundJobs();
+  await queue.drain();
+
+  assert.deepEqual(statusWhileRunning, [
+    { noteId: 14, status: "running" },
+    { noteId: 27, status: "running" },
+  ]);
 });

@@ -2541,7 +2541,6 @@
   },
   "noteAttributionRepair": {
     "title": "已修复旧笔记",
-    "description": "在 OpenWhispr 能够区分你的麦克风之前录制的 {{count}} 条笔记中，你自己的发言现已标注：{{notes}}。",
-    "action": "知道了"
+    "description": "在 OpenWhispr 能够区分你的麦克风之前录制的 {{count}} 条笔记中，你自己的发言现已标注。"
   }
 }

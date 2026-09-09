@@ -2541,7 +2541,6 @@
   },
   "noteAttributionRepair": {
     "title": "Note precedenti riparate",
-    "description": "La tua voce ora è identificata in {{count}} nota/e registrate prima che OpenWhispr riuscisse a distinguere il tuo microfono: {{notes}}.",
-    "action": "Ho capito"
+    "description": "La tua voce ora è identificata in {{count}} nota/e registrate prima che OpenWhispr riuscisse a distinguere il tuo microfono."
   }
 }

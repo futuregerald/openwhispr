@@ -109,7 +109,27 @@ test("repair leaves updated_at alone so the note list keeps its order", () => {
   assert.equal(orderBefore[0], newerId, "the newest note must still be first");
 });
 
-test("repair broadcasts the repaired note so the renderer cannot write the old one back", () => {
+test("the repair is committed to the database before anything is broadcast", () => {
+  const db = createDb();
+  const id = noteWithTranscript(db, brokenSegments());
+  const storedWhenBroadcast = [];
+
+  repairNoteAttribution({
+    noteId: id,
+    databaseManager: refusingUpdateNote(db),
+    broadcast: () => storedWhenBroadcast.push(db.getNote(id).transcript),
+    userDataDir,
+  });
+
+  assert.equal(storedWhenBroadcast.length, 1);
+  assert.equal(
+    JSON.parse(storedWhenBroadcast[0]).filter((s) => s.source === "mic" && !s.speaker).length,
+    0,
+    "a renderer that loads notes after the repair must read repaired rows from the database"
+  );
+});
+
+test("the broadcast carries the repaired note for a window that is already open", () => {
   const db = createDb();
   const id = noteWithTranscript(db, brokenSegments());
   const broadcasts = [];
@@ -332,5 +352,66 @@ test("a repair records itself in the summary the user will be shown", () => {
   assert.deepEqual(
     summary.notes.map((n) => ({ noteId: n.noteId, title: n.title, micAttributed: n.micAttributed })),
     [{ noteId: id, title: "Weekly sync", micAttributed: 356 }]
+  );
+});
+
+test("the summary records where the backup went and how to restore it", () => {
+  const db = createDb();
+  const id = noteWithTranscript(db, brokenSegments(), "Weekly sync");
+
+  const result = repairNoteAttribution({
+    noteId: id,
+    databaseManager: refusingUpdateNote(db),
+    broadcast: () => {},
+    userDataDir,
+  });
+
+  const summary = readRepairSummary(userDataDir);
+  assert.equal(summary.backup.path, result.backupPath);
+  assert.ok(path.isAbsolute(summary.backup.path));
+  assert.match(summary.backup.restore, /-wal/);
+  assert.match(summary.backup.restore, /-shm/);
+});
+
+test("the backup record survives later repairs that take no backup of their own", () => {
+  const db = createDb();
+  const first = noteWithTranscript(db, brokenSegments(), "First");
+  const second = noteWithTranscript(db, brokenSegments(), "Second");
+  const wrapped = refusingUpdateNote(db);
+
+  const a = repairNoteAttribution({
+    noteId: first,
+    databaseManager: wrapped,
+    broadcast: () => {},
+    userDataDir,
+  });
+  repairNoteAttribution({
+    noteId: second,
+    databaseManager: wrapped,
+    broadcast: () => {},
+    userDataDir,
+  });
+
+  const summary = readRepairSummary(userDataDir);
+  assert.equal(summary.notes.length, 2);
+  assert.equal(summary.backup.path, a.backupPath);
+});
+
+test("a note in the trash is not listed for repair", () => {
+  const db = createDb();
+  const kept = noteWithTranscript(db, brokenSegments(), "Still here");
+  const trashed = noteWithTranscript(db, brokenSegments(), "Deleted last week");
+  db.db.prepare("UPDATE notes SET deleted_at = ? WHERE id = ?").run("2026-09-01 00:00:00", trashed);
+
+  const candidates = findNotesNeedingAttributionRepair(db);
+
+  assert.deepEqual(
+    candidates.map((c) => c.id),
+    [kept],
+    "repairing a trashed note would rewrite something the user already threw away"
+  );
+  assert.deepEqual(
+    db.listNoteTranscripts().map((row) => row.id),
+    [kept]
   );
 });

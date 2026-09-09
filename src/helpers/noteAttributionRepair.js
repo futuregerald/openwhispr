@@ -3,7 +3,7 @@ const path = require("path");
 
 const debugLogger = require("./debugLogger");
 const { repairSegments } = require("./repairNoteSegments.js");
-const { backupDatabase } = require("./databaseBackup.js");
+const { backupDatabase, RESTORE_INSTRUCTIONS } = require("./databaseBackup.js");
 
 const SUMMARY_FILENAME = ".note-attribution-repair.json";
 const BACKUP_REASON = "attribution-repair";
@@ -49,24 +49,30 @@ function findNotesNeedingAttributionRepair(databaseManager) {
     .filter(Boolean);
 }
 
-function readRepairSummary(userDataDir) {
+function readStoredSummary(userDataDir) {
   try {
-    const parsed = JSON.parse(fs.readFileSync(summaryPath(userDataDir), "utf8"));
-    if (!Array.isArray(parsed?.notes) || parsed.notes.length === 0) return null;
-    return {
-      notes: parsed.notes,
-      micAttributed: parsed.notes.reduce((total, note) => total + (note.micAttributed || 0), 0),
-    };
+    return JSON.parse(fs.readFileSync(summaryPath(userDataDir), "utf8"));
   } catch {
     return null;
   }
 }
 
-function appendRepairSummary(userDataDir, entry) {
-  const existing = readRepairSummary(userDataDir);
-  const notes = [...(existing?.notes || []), entry];
+function readRepairSummary(userDataDir) {
+  const parsed = readStoredSummary(userDataDir);
+  if (!Array.isArray(parsed?.notes) || parsed.notes.length === 0) return null;
+  return {
+    notes: parsed.notes,
+    backup: parsed.backup || null,
+    micAttributed: parsed.notes.reduce((total, note) => total + (note.micAttributed || 0), 0),
+  };
+}
+
+function appendRepairSummary(userDataDir, entry, backup) {
+  const existing = readStoredSummary(userDataDir);
+  const notes = [...(Array.isArray(existing?.notes) ? existing.notes : []), entry];
+  const record = { notes, backup: backup || existing?.backup || null };
   try {
-    fs.writeFileSync(summaryPath(userDataDir), JSON.stringify({ notes }));
+    fs.writeFileSync(summaryPath(userDataDir), JSON.stringify(record));
   } catch (error) {
     debugLogger.warn("Could not record the attribution repair summary", {
       error: error.message,
@@ -98,9 +104,16 @@ function repairNoteAttribution({ noteId, databaseManager, broadcast, userDataDir
   if (!result) return { ...NOTHING_DONE };
 
   let backupPath = null;
+  let backupRecord = null;
   if (!dirsBackedUpThisLaunch.has(userDataDir)) {
     const take = backup || (() => backupDatabase(databaseManager.db, { userDataDir, reason: BACKUP_REASON }));
-    backupPath = take().path;
+    const taken = take();
+    backupPath = taken.path;
+    backupRecord = {
+      path: taken.path,
+      noteCount: taken.noteCount ?? null,
+      restore: taken.restore || RESTORE_INSTRUCTIONS,
+    };
     dirsBackedUpThisLaunch.add(userDataDir);
   }
 
@@ -110,13 +123,17 @@ function repairNoteAttribution({ noteId, databaseManager, broadcast, userDataDir
   );
   if (!written?.success) return { ...NOTHING_DONE, backupPath };
 
-  appendRepairSummary(userDataDir, {
-    noteId,
-    title: note.title,
-    micAttributed: result.micAttributed,
-    timestampsNormalised: result.timestampsNormalised,
-    skippedMixedUnits: result.skippedMixedUnits,
-  });
+  appendRepairSummary(
+    userDataDir,
+    {
+      noteId,
+      title: note.title,
+      micAttributed: result.micAttributed,
+      timestampsNormalised: result.timestampsNormalised,
+      skippedMixedUnits: result.skippedMixedUnits,
+    },
+    backupRecord
+  );
 
   broadcast("note-updated", written.note);
 

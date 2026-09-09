@@ -111,3 +111,57 @@ test("the verified backup is closed rather than left holding the file", () => {
 
   assert.equal(closed, true);
 });
+
+test("the absolute backup path and the safe restore procedure are logged", () => {
+  const debugLogger = require("../../src/helpers/debugLogger.js");
+  const db = seededDb(2);
+  const userDataDir = tempDir();
+  const notices = [];
+  const original = debugLogger.notice;
+  debugLogger.notice = (message, meta) => notices.push({ message, meta });
+
+  let result;
+  try {
+    result = backupDatabase(db, { userDataDir, reason: "attribution-repair" });
+  } finally {
+    debugLogger.notice = original;
+  }
+
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].meta.backupPath, result.path);
+  assert.ok(path.isAbsolute(notices[0].meta.backupPath));
+  assert.match(notices[0].meta.restore, /-wal/);
+  assert.match(notices[0].meta.restore, /-shm/);
+  assert.match(notices[0].meta.restore, /quit/i);
+});
+
+test("only the most recent backups are kept", () => {
+  const db = seededDb(1);
+  const userDataDir = tempDir();
+
+  const taken = [];
+  for (let i = 0; i < 6; i += 1) {
+    taken.push(backupDatabase(db, { userDataDir, reason: "attribution-repair" }).path);
+  }
+
+  const remaining = fs.readdirSync(path.join(userDataDir, "backups")).sort();
+  assert.equal(remaining.length, 3);
+  assert.deepEqual(
+    remaining,
+    taken.slice(-3).map((p) => path.basename(p)).sort(),
+    "the three newest backups are the ones that survive"
+  );
+});
+
+test("pruning leaves backups taken for another reason alone", () => {
+  const db = seededDb(1);
+  const userDataDir = tempDir();
+
+  const other = backupDatabase(db, { userDataDir, reason: "manual-export" }).path;
+  for (let i = 0; i < 5; i += 1) {
+    backupDatabase(db, { userDataDir, reason: "attribution-repair" });
+  }
+
+  assert.ok(fs.existsSync(other), "a backup taken for a different reason must survive");
+  assert.equal(fs.readdirSync(path.join(userDataDir, "backups")).length, 4);
+});

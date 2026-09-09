@@ -2541,7 +2541,6 @@
   },
   "noteAttributionRepair": {
     "title": "Ältere Notizen repariert",
-    "description": "Deine eigene Sprache ist jetzt in {{count}} Notiz(en) gekennzeichnet, die aufgenommen wurden, bevor OpenWhispr dein Mikrofon unterscheiden konnte: {{notes}}.",
-    "action": "Verstanden"
+    "description": "Deine eigene Sprache ist jetzt in {{count}} Notiz(en) gekennzeichnet, die aufgenommen wurden, bevor OpenWhispr dein Mikrofon unterscheiden konnte."
   }
 }

@@ -2541,7 +2541,6 @@
   },
   "noteAttributionRepair": {
     "title": "已修復舊筆記",
-    "description": "在 OpenWhispr 能夠區分你的麥克風之前錄製的 {{count}} 則筆記中，你自己的發言現已標註：{{notes}}。",
-    "action": "知道了"
+    "description": "在 OpenWhispr 能夠區分你的麥克風之前錄製的 {{count}} 則筆記中，你自己的發言現已標註。"
   }
 }

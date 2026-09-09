@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const LOCALES = ["en", "es", "fr", "de", "pt", "it", "ru", "ja", "zh-CN", "zh-TW"];
-const REQUIRED_KEYS = ["title", "description", "action"];
+const REQUIRED_KEYS = ["title", "description"];
 
 const repoFile = (relative) =>
   fs.readFileSync(path.join(__dirname, "../..", relative), "utf8");
@@ -25,12 +25,21 @@ test("every locale carries the repair summary strings", () => {
   }
 });
 
-test("every translated description keeps both interpolations", () => {
+test("every translated description is a count, not a list of note titles", () => {
   for (const locale of LOCALES) {
     const translation = JSON.parse(repoFile(`src/locales/${locale}/translation.json`));
-    const { description } = translation.noteAttributionRepair;
-    assert.match(description, /\{\{count\}\}/, `${locale} dropped {{count}}`);
-    assert.match(description, /\{\{notes\}\}/, `${locale} dropped {{notes}}`);
+    const section = translation.noteAttributionRepair;
+    assert.match(section.description, /\{\{count\}\}/, `${locale} dropped {{count}}`);
+    assert.doesNotMatch(
+      section.description,
+      /\{\{notes\}\}/,
+      `${locale} still interpolates every note title into one toast`
+    );
+    assert.equal(
+      section.action,
+      undefined,
+      `${locale} still carries noteAttributionRepair.action, which nothing renders`
+    );
   }
 });
 
@@ -53,9 +62,18 @@ test("the summary is reachable from the renderer", () => {
 test("the control panel shows the summary once and then clears it", () => {
   const controlPanel = repoFile("src/components/ControlPanel.tsx");
   assert.match(controlPanel, /getNoteRepairSummary/);
-  assert.match(controlPanel, /acknowledgeNoteRepairSummary/);
   assert.match(controlPanel, /noteAttributionRepair\.title/);
   assert.match(controlPanel, /noteAttributionRepair\.description/);
+  assert.match(
+    controlPanel,
+    /await window\.electronAPI\?\.acknowledgeNoteRepairSummary\?\.\(\)/,
+    "an unawaited acknowledge lets the same summary be read again before it clears"
+  );
+  assert.doesNotMatch(
+    controlPanel,
+    /notes:\s*summary\.notes\.map/,
+    "the toast must summarise by count, not paste every note title into one string"
+  );
 });
 
 test("repair never reaches the machinery that rewrites other notes", () => {

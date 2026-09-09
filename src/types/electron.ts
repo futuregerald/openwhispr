@@ -107,8 +107,15 @@ export interface NoteRepairSummaryEntry {
   skippedMixedUnits: boolean;
 }
 
+export interface NoteRepairBackup {
+  path: string;
+  noteCount: number | null;
+  restore: string;
+}
+
 export interface NoteRepairSummary {
   notes: NoteRepairSummaryEntry[];
+  backup: NoteRepairBackup | null;
   micAttributed: number;
 }
 

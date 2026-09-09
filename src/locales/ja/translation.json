@@ -2541,7 +2541,6 @@
   },
   "noteAttributionRepair": {
     "title": "以前のノートを修復しました",
-    "description": "OpenWhispr がマイクを区別できるようになる前に録音された {{count}} 件のノートで、あなた自身の発言に話者ラベルが付きました: {{notes}}。",
-    "action": "了解"
+    "description": "OpenWhispr がマイクを区別できるようになる前に録音された {{count}} 件のノートで、あなた自身の発言に話者ラベルが付きました。"
   }
 }

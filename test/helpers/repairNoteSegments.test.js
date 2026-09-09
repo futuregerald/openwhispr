@@ -193,3 +193,35 @@ test("a note with nothing wrong reports no work and returns its input unchanged"
   assert.equal(result.timestampsNormalised, 0);
   assert.equal(JSON.stringify(result.segments), JSON.stringify(healthy));
 });
+
+test("a stamp sitting exactly on the epoch floor is not treated as epoch", () => {
+  const before = [
+    { text: "w0", source: "mic", timestamp: EPOCH_MS_FLOOR },
+    { text: "w1", source: "system", timestamp: EPOCH_MS_FLOOR * 2, speaker: "speaker_0" },
+  ];
+
+  const result = repairSegments(before);
+
+  assert.equal(result.timestampsNormalised, 0, "the floor itself is below the epoch cut-off");
+  assert.equal(result.skippedMixedUnits, true);
+  assert.deepEqual(
+    result.segments.map((s) => s.timestamp),
+    [EPOCH_MS_FLOOR, EPOCH_MS_FLOOR * 2]
+  );
+});
+
+test("a stamp one millisecond above the epoch floor is treated as epoch", () => {
+  const before = [
+    { text: "w0", source: "mic", timestamp: EPOCH_MS_FLOOR + 1 },
+    { text: "w1", source: "system", timestamp: EPOCH_MS_FLOOR + 2501, speaker: "speaker_0" },
+  ];
+
+  const result = repairSegments(before);
+
+  assert.equal(result.timestampsNormalised, 2);
+  assert.equal(result.skippedMixedUnits, false);
+  assert.deepEqual(
+    result.segments.map((s) => s.timestamp),
+    [0, 2.5]
+  );
+});

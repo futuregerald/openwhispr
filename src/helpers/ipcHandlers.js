@@ -7928,8 +7928,8 @@ class IPCHandlers {
   }
 
   recoverBackgroundJobs() {
-    this._enqueueNoteAttributionRepairs();
     const count = this.backgroundJobQueue.recover();
+    this._enqueueNoteAttributionRepairs();
     if (count > 0) {
       debugLogger.info("Re-queued background jobs from a previous run", { count }, "meeting");
     }
