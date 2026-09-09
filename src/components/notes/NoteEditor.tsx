@@ -48,6 +48,7 @@ import {
   lockTranscriptSpeaker,
   serializeTranscriptSegments,
 } from "../../helpers/transcriptSpeakerState";
+import { foldSpeakersInto } from "../../helpers/speakerFold";
 import NoteParticipants from "./NoteParticipants";
 import MeetingTypePicker from "./MeetingTypePicker";
 import MeetingTypeEditor from "./MeetingTypeEditor";
@@ -451,6 +452,31 @@ export default function NoteEditor({
       });
     },
     [note.id]
+  );
+
+  // Merge runs here, not through the merge IPC, for the same reason rename does: the IPC skips
+  // locked segments, and a merge started from the panel is the user's own decision. Keeping
+  // both on this side also keeps them on ONE side -- a merge written by main would be masked
+  // by displaySegments until the note id changed, and the next rename would write the
+  // pre-merge segments back over it.
+  const handleMergeSpeakers = useCallback(
+    async (primaryId: string, targetIds: string[]) => {
+      if (!primaryId || targetIds.length === 0) return;
+      const nextSegments = foldSpeakersInto(
+        displaySegments,
+        primaryId,
+        targetIds,
+        speakerMappings[primaryId] || primaryId
+      ) as TranscriptSegment[];
+
+      setSpeakerMappings((prev) => {
+        const next = { ...prev };
+        for (const id of targetIds) delete next[id];
+        return next;
+      });
+      await persistDisplaySegments(nextSegments, !!diarizedSegments || !isRecording);
+    },
+    [diarizedSegments, displaySegments, isRecording, persistDisplaySegments, speakerMappings]
   );
 
   const handleMapSpeaker = useCallback(
@@ -977,6 +1003,8 @@ export default function NoteEditor({
                 onSetSessionDiarizationEnabled={onSetSessionDiarizationEnabled}
                 onSetSessionExpectedCount={onSetSessionExpectedCount}
                 onMapSpeaker={handleMapSpeaker}
+                onMergeSpeakers={handleMergeSpeakers}
+                transcriptOriginSource={note.transcript_origin_source}
                 onConfirmSuggestion={handleConfirmSuggestion}
                 onDismissSuggestion={handleDismissSuggestion}
                 onAttachSpeakerEmail={handleAttachSpeakerEmail}

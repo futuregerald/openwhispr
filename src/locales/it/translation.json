@@ -2492,7 +2492,12 @@
       "keepingSpeaker": "Viene mantenuto «{{name}}»: resta il primo interlocutore selezionato.",
       "keptBadge": "mantenuto",
       "lockedSkipped": "{{count}} segmenti che avevi bloccato sono rimasti invariati.",
-      "talkTime": "{{percent}}% del tempo di parola"
+      "talkTime": "{{percent}}% del tempo di parola",
+      "auditionPlay": "Riproduci qualche secondo di questa persona",
+      "auditionApproximate": "Riproduci qualche secondo di questa persona (il momento è approssimativo per questa riunione)",
+      "auditionNoAudio": "Questa riunione non ha audio salvato",
+      "auditionNoCue": "Non c'è nulla da riprodurre per questa persona",
+      "auditionWhileRecording": "Non disponibile durante la registrazione"
     }
   },
   "pipeline": {

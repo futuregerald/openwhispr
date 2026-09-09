@@ -450,9 +450,12 @@ declare global {
       deleteTranscriptionAudio: (id: number) => Promise<{ success: boolean }>;
       getAudioStorageUsage: () => Promise<{ fileCount: number; totalBytes: number }>;
       deleteAllAudio: () => Promise<{ deleted: number }>;
-      getNoteAudioPaths?: (
-        noteId: number
-      ) => Promise<{ micPath: string | null; systemPath: string | null }>;
+      getNoteAudioPaths?: (noteId: number) => Promise<{
+        micPath: string | null;
+        systemPath: string | null;
+        micUrl: string | null;
+        systemUrl: string | null;
+      }>;
       deleteNoteAudio?: (noteId: number) => Promise<{ success: boolean }>;
       retranscribeMeetingNote?: (
         noteId: number,

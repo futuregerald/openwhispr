@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Users, Merge, X } from "lucide-react";
+import { Users, Merge, X, Play, Square } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { useToast } from "../ui/useToast";
 import { computeSpeakerStats } from "../../helpers/speakerTalkTime";
+import { resolveSpeakerAuditionCue } from "../../helpers/speakerAuditionCue";
 import {
   toggleSpeakerSelection,
   toggleSelectAllSpeakers,
@@ -35,7 +36,21 @@ interface SpeakerPanelProps {
   }>;
   onFilterSpeaker: (speakerId: string | null) => void;
   activeSpeakerFilter: string | null;
+  onMapSpeaker?: (
+    speakerId: string,
+    displayName: string,
+    email?: string | null,
+    profileId?: number | null
+  ) => void | Promise<void>;
+  onMergeSpeakers?: (primaryId: string, targetIds: string[]) => void | Promise<void>;
+  isRecording?: boolean;
+  transcriptOriginSource?: string | null;
 }
+
+const AUDITION_SECONDS = 8;
+
+const isPlayable = (url: string | null | undefined, path: string | null | undefined) =>
+  Boolean(url) && !String(path ?? "").toLowerCase().endsWith(".pcm");
 
 const SPEAKER_COLORS = [
   "bg-blue-500", "bg-emerald-500", "bg-amber-500", "bg-purple-500",
@@ -49,12 +64,109 @@ export default function SpeakerPanel({
   segments,
   onFilterSpeaker,
   activeSpeakerFilter,
+  onMapSpeaker,
+  onMergeSpeakers,
+  isRecording = false,
+  transcriptOriginSource,
 }: SpeakerPanelProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [selectedForMerge, setSelectedForMerge] = useState<string[]>([]);
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  const [tracks, setTracks] = useState<{
+    micUrl: string | null;
+    systemUrl: string | null;
+    micPath: string | null;
+    systemPath: string | null;
+    micDuration: number | null;
+    systemDuration: number | null;
+  } | null>(null);
+  const audioRef = useRef<Record<"mic" | "system", HTMLAudioElement | null>>({
+    mic: null,
+    system: null,
+  });
+
+  // Two elements, not one with a reassigned src: the mic cue needs BOTH durations before it
+  // can decide where to seek, and a shared element would have to load metadata twice.
+  useEffect(() => {
+    let cancelled = false;
+    const api = (window as any).electronAPI;
+    if (!api?.getNoteAudioPaths) return undefined;
+
+    const load = async () => {
+      const paths = await api.getNoteAudioPaths(noteId).catch(() => null);
+      if (cancelled || !paths) return;
+
+      const durationOf = (url: string | null) =>
+        new Promise<number | null>((resolve) => {
+          if (!url) return resolve(null);
+          const probe = new Audio();
+          probe.preload = "metadata";
+          probe.addEventListener("loadedmetadata", () => resolve(probe.duration), { once: true });
+          probe.addEventListener("error", () => resolve(null), { once: true });
+          probe.src = url;
+        });
+
+      const [micDuration, systemDuration] = await Promise.all([
+        isPlayable(paths.micUrl, paths.micPath) ? durationOf(paths.micUrl) : null,
+        isPlayable(paths.systemUrl, paths.systemPath) ? durationOf(paths.systemUrl) : null,
+      ]);
+      if (!cancelled) setTracks({ ...paths, micDuration, systemDuration });
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [noteId]);
+
+  const stopAudition = () => {
+    for (const element of Object.values(audioRef.current)) element?.pause();
+    setPlayingId(null);
+  };
+
+  useEffect(() => stopAudition, []);
+
+  const auditionCueFor = (speakerId: string) =>
+    tracks
+      ? resolveSpeakerAuditionCue(segments, speakerId, {
+          micDuration: tracks.micDuration,
+          systemDuration: tracks.systemDuration,
+        })
+      : null;
+
+  const handleAudition = (speakerId: string) => {
+    if (playingId === speakerId) return stopAudition();
+    const cue = auditionCueFor(speakerId);
+    const url = cue?.track === "mic" ? tracks?.micUrl : tracks?.systemUrl;
+    if (!cue || !url) return;
+
+    stopAudition();
+    let element = audioRef.current[cue.track];
+    if (!element) {
+      element = new Audio();
+      audioRef.current[cue.track] = element;
+    }
+    const stopAt = cue.seconds + AUDITION_SECONDS;
+    const onTime = () => {
+      if (element && element.currentTime >= stopAt) {
+        element.pause();
+        element.removeEventListener("timeupdate", onTime);
+        setPlayingId((current) => (current === speakerId ? null : current));
+      }
+    };
+    element.addEventListener("timeupdate", onTime);
+    element.addEventListener("ended", () => setPlayingId(null), { once: true });
+    element.addEventListener("error", () => setPlayingId(null), { once: true });
+    if (element.src !== url) element.src = url;
+    element.currentTime = cue.seconds;
+    void element.play().then(
+      () => setPlayingId(speakerId),
+      () => setPlayingId(null)
+    );
+  };
 
   const speakers = useMemo(
     () => computeSpeakerStats(segments) as Speaker[],
@@ -80,8 +192,15 @@ export default function SpeakerPanel({
     }
   };
 
+  // Routed through onMapSpeaker, not the rename IPC. The IPC skips locked segments, and every
+  // speaker the user has already named is fully locked -- note 13's speaker_0 is locked on all
+  // 907 of its segments, so renaming it reported "907 skipped" and changed nothing. A rename
+  // started from this panel is the user changing their own mind, which the lock was never
+  // meant to prevent. It also writes a profile, so the name is suggested in later meetings.
   const handleCommitEdit = () => {
-    if (editingId && editValue.trim()) {
+    if (editingId && editValue.trim() && onMapSpeaker) {
+      void Promise.resolve(onMapSpeaker(editingId, editValue.trim(), null, null)).catch(() => {});
+    } else if (editingId && editValue.trim()) {
       Promise.resolve(
         (window as any).electronAPI?.renameSpeaker?.(noteId, editingId, editValue.trim())
       )
@@ -99,17 +218,22 @@ export default function SpeakerPanel({
     setSelectedForMerge((prev) => toggleSelectAllSpeakers(prev, speakerIds));
   };
 
+  // Merge goes the same way as rename, deliberately. Splitting them -- rename in the renderer,
+  // merge in main -- loses data: the editor prefers its local segment state over the stored
+  // transcript until the note id changes, so a merge written by main is invisible here and the
+  // next rename writes the pre-merge segments back over it.
   const handleMerge = () => {
     if (!canMergeSelection(selectedForMerge)) return;
-    Promise.resolve(
-      (window as any).electronAPI?.mergeSpeakers?.(
-        noteId,
-        getMergePrimaryId(selectedForMerge),
-        getMergeTargetIds(selectedForMerge)
-      )
-    )
-      .then(reportSkippedLocked)
-      .catch(() => {});
+    const primaryId = getMergePrimaryId(selectedForMerge);
+    const targetIds = getMergeTargetIds(selectedForMerge);
+
+    if (onMergeSpeakers) {
+      void Promise.resolve(onMergeSpeakers(primaryId, targetIds)).catch(() => {});
+    } else {
+      Promise.resolve((window as any).electronAPI?.mergeSpeakers?.(noteId, primaryId, targetIds))
+        .then(reportSkippedLocked)
+        .catch(() => {});
+    }
     setSelectedForMerge([]);
   };
 
@@ -182,6 +306,36 @@ export default function SpeakerPanel({
               <div className={`w-6 h-6 rounded-full ${colorClass} shrink-0 flex items-center justify-center text-white text-xs font-bold`}>
                 {speaker.name.charAt(0).toUpperCase()}
               </div>
+              {(() => {
+                const cue = auditionCueFor(speaker.id);
+                const unavailable = isRecording
+                  ? t("speakers.panel.auditionWhileRecording")
+                  : !tracks?.systemUrl && !tracks?.micUrl
+                    ? t("speakers.panel.auditionNoAudio")
+                    : !cue
+                      ? t("speakers.panel.auditionNoCue")
+                      : null;
+                const isPlaying = playingId === speaker.id;
+                return (
+                  <button
+                    type="button"
+                    disabled={Boolean(unavailable)}
+                    title={
+                      unavailable ??
+                      (transcriptOriginSource === "audio:system"
+                        ? t("speakers.panel.auditionPlay")
+                        : t("speakers.panel.auditionApproximate"))
+                    }
+                    className="shrink-0 p-1 rounded hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleAudition(speaker.id);
+                    }}
+                  >
+                    {isPlaying ? <Square size={11} /> : <Play size={11} />}
+                  </button>
+                );
+              })()}
               <div className="flex-1 min-w-0">
                 {editingId === speaker.id ? (
                   <Input

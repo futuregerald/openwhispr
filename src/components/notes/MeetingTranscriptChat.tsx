@@ -10,11 +10,8 @@ import {
 } from "../../helpers/transcriptSpeakerState";
 import SpeakerMorphPill from "./SpeakerMorphPill";
 import SpeakerPanel from "./SpeakerPanel";
-import SpeakerPicker, {
-  isLikelyEmail,
-  nameFromEmail,
-  type SpeakerProfileLite,
-} from "./SpeakerPicker";
+import SpeakerPicker, { type SpeakerProfileLite } from "./SpeakerPicker";
+import { isLikelyEmail } from "../../helpers/emailNames";
 
 const BUBBLE_STYLES = {
   mic: {
@@ -430,6 +427,8 @@ interface MeetingTranscriptChatProps {
   userTouchedStepper?: boolean;
   onSetSessionDiarizationEnabled?: (enabled: boolean) => void;
   onSetSessionExpectedCount?: (count: number) => void;
+  onMergeSpeakers?: (primaryId: string, targetIds: string[]) => void | Promise<void>;
+  transcriptOriginSource?: string | null;
   onMapSpeaker?: (
     speakerId: string,
     displayName: string,
@@ -460,6 +459,8 @@ export function MeetingTranscriptChat({
   userTouchedStepper = false,
   onSetSessionDiarizationEnabled,
   onSetSessionExpectedCount,
+  onMergeSpeakers,
+  transcriptOriginSource,
   onMapSpeaker,
   onConfirmSuggestion,
   onDismissSuggestion,
@@ -692,6 +693,10 @@ export function MeetingTranscriptChat({
             segments={segments}
             onFilterSpeaker={setActiveSpeakerFilter}
             activeSpeakerFilter={activeSpeakerFilter}
+            onMapSpeaker={onMapSpeaker}
+            onMergeSpeakers={onMergeSpeakers}
+            isRecording={isRecording}
+            transcriptOriginSource={transcriptOriginSource}
           />
         </div>
       )}

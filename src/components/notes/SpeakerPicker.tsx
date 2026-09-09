@@ -1,10 +1,7 @@
 import { useState } from "react";
 import { Check } from "lucide-react";
 import { cn } from "../lib/utils";
-
-export const isLikelyEmail = (value: string) => /.+@.+\..+/.test(value.trim());
-
-export const nameFromEmail = (email: string) => email.split("@")[0] || email;
+import { isLikelyEmail, nameFromEmail } from "../../helpers/emailNames";
 
 export interface SpeakerProfileLite {
   id?: number;
