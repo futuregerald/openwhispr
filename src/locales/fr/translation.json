@@ -2485,7 +2485,14 @@
       "merge": "Fusionner",
       "clearFilter": "Effacer le filtre",
       "segments": "segments",
-      "selectForMerge": "Sélectionner pour fusionner"
+      "selectForMerge": "Sélectionner pour fusionner",
+      "selectAll": "Tout sélectionner",
+      "selectNone": "Effacer la sélection",
+      "mergeInto": "Fusionner {{count}} dans {{name}}",
+      "keepingSpeaker": "« {{name}} » est conservé : le premier intervenant sélectionné est celui qui reste.",
+      "keptBadge": "conservé",
+      "lockedSkipped": "{{count}} segments que vous aviez verrouillés n’ont pas été modifiés.",
+      "talkTime": "{{percent}} % de temps de parole"
     }
   },
   "pipeline": {
@@ -2538,5 +2545,9 @@
     "description": "OpenWhispr utilise Gemma 4 E4B (~5,4 Go) comme modèle d'IA entièrement local pour générer les titres de réunion, détecter le type de réunion et créer des notes structurées. Sans lui, ces fonctionnalités ne seront pas disponibles. Vous pouvez aussi connecter votre propre point de terminaison d'API distante.",
     "accept": "Télécharger Gemma (5,4 Go)",
     "decline": "Pas maintenant"
+  },
+  "noteAttributionRepair": {
+    "title": "Anciennes notes réparées",
+    "description": "Votre voix est désormais identifiée dans {{count}} note(s) enregistrées avant qu'OpenWhispr ne sache distinguer votre micro."
   }
 }

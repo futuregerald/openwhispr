@@ -103,6 +103,7 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
     () => localStorage.getItem("gpuBannerDismissedUnified") === "true"
   );
   const updateReadyToastShown = useRef(false);
+  const repairSummaryToastShown = useRef(false);
   const updateErrorToastShown = useRef<Error | null>(null);
   const { hotkey } = useHotkey();
   const { toast } = useToast();
@@ -231,6 +232,21 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
       if (state?.justMigrated) setShowPostMigration(true);
     });
   }, []);
+
+  useEffect(() => {
+    if (repairSummaryToastShown.current) return;
+    repairSummaryToastShown.current = true;
+    (async () => {
+      const summary = await window.electronAPI?.getNoteRepairSummary?.();
+      if (!summary?.notes?.length) return;
+      await window.electronAPI?.acknowledgeNoteRepairSummary?.();
+      toast({
+        title: t("noteAttributionRepair.title"),
+        description: t("noteAttributionRepair.description", { count: summary.notes.length }),
+        duration: 15000,
+      });
+    })();
+  }, [toast, t]);
 
   const dismissPostMigrationPermanently = useCallback(async () => {
     await window.electronAPI?.markBundleMigrated?.();

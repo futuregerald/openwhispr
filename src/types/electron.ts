@@ -99,6 +99,26 @@ export interface FolderItem {
   deleted_at: string | null;
 }
 
+export interface NoteRepairSummaryEntry {
+  noteId: number;
+  title: string | null;
+  micAttributed: number;
+  timestampsNormalised: number;
+  skippedMixedUnits: boolean;
+}
+
+export interface NoteRepairBackup {
+  path: string;
+  noteCount: number | null;
+  restore: string;
+}
+
+export interface NoteRepairSummary {
+  notes: NoteRepairSummaryEntry[];
+  backup: NoteRepairBackup | null;
+  micAttributed: number;
+}
+
 export interface DictionaryEntryItem {
   id: number;
   word: string;
@@ -947,6 +967,8 @@ declare global {
       getPostMigrationState: () => Promise<{ justMigrated: boolean }>;
       markBundleMigrated: () => Promise<void>;
       markBundleMigrationDismissed: () => Promise<void>;
+      getNoteRepairSummary: () => Promise<NoteRepairSummary | null>;
+      acknowledgeNoteRepairSummary: () => Promise<void>;
       getUpdateStatus: () => Promise<UpdateStatusResult>;
       getUpdateInfo: () => Promise<UpdateInfoResult | null>;
 

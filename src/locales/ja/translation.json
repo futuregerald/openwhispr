@@ -2485,7 +2485,14 @@
       "merge": "統合",
       "clearFilter": "フィルターを解除",
       "segments": "セグメント",
-      "selectForMerge": "統合対象を選択"
+      "selectForMerge": "統合対象を選択",
+      "selectAll": "すべて選択",
+      "selectNone": "選択を解除",
+      "mergeInto": "{{count}} 件を「{{name}}」に統合",
+      "keepingSpeaker": "「{{name}}」を残します。最初に選んだ話者が残ります。",
+      "keptBadge": "残す",
+      "lockedSkipped": "ロック済みの {{count}} セグメントは変更しませんでした。",
+      "talkTime": "発話時間 {{percent}}%"
     }
   },
   "pipeline": {
@@ -2538,5 +2545,9 @@
     "description": "OpenWhispr は Gemma 4 E4B（約 5.4 GB）を完全にローカルな AI モデルとして使用し、会議タイトルの生成、会議タイプの判定、構造化された会議メモの作成を行います。これがないとこれらの機能は利用できません。代わりに独自のリモート API エンドポイントを接続することもできます。",
     "accept": "Gemma をダウンロード（5.4 GB）",
     "decline": "後で"
+  },
+  "noteAttributionRepair": {
+    "title": "以前のノートを修復しました",
+    "description": "OpenWhispr がマイクを区別できるようになる前に録音された {{count}} 件のノートで、あなた自身の発言に話者ラベルが付きました。"
   }
 }

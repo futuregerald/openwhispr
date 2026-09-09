@@ -36,6 +36,7 @@ export interface TranscriptSegment {
   speakerStatus?: TranscriptSpeakerStatus;
   speakerLocked?: boolean;
   speakerLockSource?: TranscriptSpeakerLockSource;
+  dedupedAsEcho?: boolean;
 }
 
 export const SIDE_PANEL_BREAKPOINT_PX = 1024;

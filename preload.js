@@ -370,8 +370,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Speaker management (pipeline)
   renameSpeaker: (noteId, speakerId, newName) =>
     ipcRenderer.invoke("rename-speaker", noteId, speakerId, newName),
-  mergeSpeakers: (noteId, keepId, mergeId) =>
-    ipcRenderer.invoke("merge-speakers", noteId, keepId, mergeId),
+  mergeSpeakers: (noteId, keepId, mergeIds) =>
+    ipcRenderer.invoke("merge-speakers", noteId, keepId, mergeIds),
 
   // Pipeline settings
   setAutoPostCallPipeline: (enabled) => ipcRenderer.invoke("set-auto-post-call-pipeline", enabled),
@@ -409,6 +409,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getPostMigrationState: () => ipcRenderer.invoke("get-post-migration-state"),
   markBundleMigrated: () => ipcRenderer.invoke("mark-bundle-migrated"),
   markBundleMigrationDismissed: () => ipcRenderer.invoke("mark-bundle-migration-dismissed"),
+  getNoteRepairSummary: () => ipcRenderer.invoke("get-note-repair-summary"),
+  acknowledgeNoteRepairSummary: () => ipcRenderer.invoke("acknowledge-note-repair-summary"),
   getUpdateStatus: () => ipcRenderer.invoke("get-update-status"),
   getUpdateInfo: () => ipcRenderer.invoke("get-update-info"),
 

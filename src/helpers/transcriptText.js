@@ -169,7 +169,7 @@ const transcriptsLooselyOverlap = (a, b) => {
 const buildMergedCandidates = ({
   segments,
   timestamp,
-  windowMs,
+  maxDistance,
   mergeLimit,
   extraSegment = null,
 }) => {
@@ -178,7 +178,7 @@ const buildMergedCandidates = ({
       seg.text &&
       (seg.timestamp == null ||
         timestamp == null ||
-        Math.abs(seg.timestamp - timestamp) <= windowMs)
+        Math.abs(seg.timestamp - timestamp) <= maxDistance)
   );
 
   if (extraSegment?.text) {

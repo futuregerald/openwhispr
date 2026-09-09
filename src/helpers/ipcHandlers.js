@@ -6,6 +6,12 @@ const crypto = require("crypto");
 const debugLogger = require("./debugLogger");
 const { JOB_KINDS } = require("./jobDispatch");
 const { isPipelineStep } = require("./postCallPipelineManager");
+const {
+  findNotesNeedingAttributionRepair,
+  repairNoteAttribution: repairStoredNoteAttribution,
+  readRepairSummary,
+  clearRepairSummary,
+} = require("./noteAttributionRepair");
 const { resolveRetryStep } = require("./noteRetryStep");
 const meetingDetectionHealth = require("./meetingDetectionHealth");
 const { BYOK_API_KEYS } = require("../config/secretKeys");
@@ -140,6 +146,10 @@ const {
   mergeSpeakersWithText,
   formatSpeakerTranscript,
 } = require("./speakerMerge");
+const {
+  mergeSpeakerSegments,
+  renameSpeakerSegments,
+} = require("./speakerMergeOperations");
 
 // Canonicalize allowed dirs so realpath'd inputs match on macOS (/var -> /private/var).
 // Deliberately narrow: user-picked paths anywhere else are approved individually via
@@ -231,6 +241,37 @@ async function postMultipart(url, body, boundary, headers = {}) {
       statusCode: response.status,
     });
   }
+}
+
+const EPOCH_MS_FLOOR = 1e9;
+
+function toRelativeSecondTimestamps(segments, audioStartedAt) {
+  const startMs =
+    (Number.isFinite(audioStartedAt) && audioStartedAt) ||
+    segments.find((segment) => segment.source === "system")?.timestamp ||
+    segments[0]?.timestamp ||
+    0;
+  const hasEpochOrigin = startMs > EPOCH_MS_FLOOR;
+  const toRelativeSeconds = (value) =>
+    value != null
+      ? hasEpochOrigin && value > EPOCH_MS_FLOOR
+        ? (value - startMs) / 1000
+        : value
+      : undefined;
+  return segments.map((segment) => ({
+    ...segment,
+    timestamp: toRelativeSeconds(segment.timestamp),
+    startedAt: toRelativeSeconds(segment.startedAt),
+  }));
+}
+
+function attributeMicSegmentsToUser(segments) {
+  return segments.map((segment) => {
+    if (segment.source !== "mic") return segment;
+    const enriched = { ...segment };
+    applyConfirmedSpeaker(enriched, { speaker: "you", speakerIsPlaceholder: false });
+    return enriched;
+  });
 }
 
 class IPCHandlers {
@@ -3872,6 +3913,7 @@ class IPCHandlers {
 
     this.backgroundJobQueue.usePersistence(this._jobStore, {
       postCallPipelineManager: this.postCallPipelineManager,
+      ipcHandlers: this,
     });
 
     // Observe pipeline status events for pending retranscription tracking
@@ -4082,7 +4124,7 @@ class IPCHandlers {
       return buildMergedCandidates({
         segments: relevant,
         timestamp,
-        windowMs: duplicateTranscriptWindowMs(),
+        maxDistance: duplicateTranscriptWindowMs(),
         mergeLimit: DUPLICATE_TRANSCRIPT_MERGE_LIMIT,
         extraSegment,
       });
@@ -6829,6 +6871,12 @@ class IPCHandlers {
       justMigrated: postMigrationDetector.isReturningFromOldBundle(),
     }));
 
+    ipcMain.handle("get-note-repair-summary", () => readRepairSummary(app.getPath("userData")));
+
+    ipcMain.handle("acknowledge-note-repair-summary", () => {
+      clearRepairSummary(app.getPath("userData"));
+    });
+
     ipcMain.handle("mark-bundle-migrated", () => {
       postMigrationDetector.markBundleMigrated();
     });
@@ -7594,37 +7642,31 @@ class IPCHandlers {
       const note = this.databaseManager.getNote(noteId);
       if (!note?.transcript) return { success: false };
       try {
-        const segments = JSON.parse(note.transcript);
-        for (const seg of segments) {
-          if (seg.speaker === speakerId) {
-            seg.speakerName = newName;
-            seg.speakerIsPlaceholder = false;
-          }
-        }
+        const { segments, renamedCount, skippedLockedCount } = renameSpeakerSegments(
+          JSON.parse(note.transcript),
+          speakerId,
+          newName
+        );
         this.databaseManager.updateNote(noteId, { transcript: JSON.stringify(segments) });
         this.broadcastToWindows("note-updated", this.databaseManager.getNote(noteId));
-        return { success: true };
+        return { success: true, renamedCount, skippedLockedCount };
       } catch {
         return { success: false };
       }
     });
 
-    ipcMain.handle("merge-speakers", async (_event, noteId, keepId, mergeId) => {
+    ipcMain.handle("merge-speakers", async (_event, noteId, keepId, mergeIds) => {
       const note = this.databaseManager.getNote(noteId);
       if (!note?.transcript) return { success: false };
       try {
-        const segments = JSON.parse(note.transcript);
-        const keepSeg = segments.find((s) => s.speaker === keepId);
-        const keepName = keepSeg?.speakerName || keepId;
-        for (const seg of segments) {
-          if (seg.speaker === mergeId) {
-            seg.speaker = keepId;
-            seg.speakerName = keepName;
-          }
-        }
+        const { segments, mergedCount, skippedLockedCount } = mergeSpeakerSegments(
+          JSON.parse(note.transcript),
+          keepId,
+          mergeIds
+        );
         this.databaseManager.updateNote(noteId, { transcript: JSON.stringify(segments) });
         this.broadcastToWindows("note-updated", this.databaseManager.getNote(noteId));
-        return { success: true };
+        return { success: true, mergedCount, skippedLockedCount };
       } catch {
         return { success: false };
       }
@@ -7846,8 +7888,46 @@ class IPCHandlers {
    * same single-slot queue, so several recovered meetings process one at a time
    * rather than all at once.
    */
+  repairNoteAttribution(noteId) {
+    return repairStoredNoteAttribution({
+      noteId,
+      databaseManager: this.databaseManager,
+      broadcast: (channel, payload) => this.broadcastToWindows(channel, payload),
+      userDataDir: app.getPath("userData"),
+    });
+  }
+
+  _enqueueNoteAttributionRepairs() {
+    let candidates = [];
+    try {
+      candidates = findNotesNeedingAttributionRepair(this.databaseManager);
+    } catch (error) {
+      debugLogger.error("Could not look for notes needing attribution repair", {
+        error: error.message,
+      });
+      return 0;
+    }
+
+    for (const candidate of candidates) {
+      this.backgroundJobQueue.enqueueKind(
+        `repair-attribution-${candidate.id}`,
+        JOB_KINDS.REPAIR_NOTE_ATTRIBUTION,
+        { noteId: candidate.id }
+      );
+    }
+
+    if (candidates.length > 0) {
+      debugLogger.info("Queued stored notes for attribution repair", {
+        count: candidates.length,
+        noteIds: candidates.map((candidate) => candidate.id),
+      });
+    }
+    return candidates.length;
+  }
+
   recoverBackgroundJobs() {
     const count = this.backgroundJobQueue.recover();
+    this._enqueueNoteAttributionRepairs();
     if (count > 0) {
       debugLogger.info("Re-queued background jobs from a previous run", { count }, "meeting");
     }
@@ -8225,14 +8305,18 @@ class IPCHandlers {
       const outFile = path.join(audioDir, `OpenWhispr-meeting-${noteId}-${stamp}-${track}.opus`);
       try {
         await encodePcmToOpus(pcmPath, outFile, { sampleRate: 24000, bitrate: 32 });
-        return outFile;
-      } catch (err) {
-        debugLogger.warn(`Meeting ${track} audio encode failed`, { error: err.message }, "meeting");
-        return null;
-      } finally {
         try {
           fs.unlinkSync(pcmPath);
         } catch (_) {}
+        return outFile;
+      } catch (err) {
+        const retainedPcmPath = this._retainUnencodedPcm(pcmPath, audioDir, noteId, stamp, track);
+        debugLogger.error(
+          `Meeting ${track} audio encode failed`,
+          { error: err.message, noteId, retainedPcmPath: retainedPcmPath || pcmPath },
+          "meeting"
+        );
+        return null;
       }
     };
 
@@ -8255,10 +8339,37 @@ class IPCHandlers {
     return saved;
   }
 
+  _retainUnencodedPcm(pcmPath, audioDir, noteId, stamp, track) {
+    const fs = require("fs");
+    const path = require("path");
+    const retainedPath = path.join(audioDir, `OpenWhispr-meeting-${noteId}-${stamp}-${track}.pcm`);
+
+    try {
+      fs.mkdirSync(audioDir, { recursive: true });
+      fs.renameSync(pcmPath, retainedPath);
+      return retainedPath;
+    } catch (_) {}
+
+    try {
+      fs.copyFileSync(pcmPath, retainedPath);
+      try {
+        fs.unlinkSync(pcmPath);
+      } catch (_) {}
+      return retainedPath;
+    } catch (err) {
+      debugLogger.error(
+        `Meeting ${track} audio could not be moved out of the temp directory`,
+        { error: err.message, noteId, pcmPath },
+        "meeting"
+      );
+      return null;
+    }
+  }
+
   // The diarized result is computed in main and was, until now, saved only by a React
   // callback in the renderer — which is skipped whenever the window is gone, the note
   // has been switched, or the session id has already been cleared. Main writes it.
-  _persistDiarizedTranscript(noteId, segments, speakerEmbeddings) {
+  _persistDiarizedTranscript(noteId, segments, speakerEmbeddings, audioStartedAt) {
     if (!noteId || !segments?.length) {
       debugLogger.notice("Diarization persist skipped", {
         noteId,
@@ -8275,8 +8386,11 @@ class IPCHandlers {
       } = require("./transcriptSpeakerState");
 
       const persisted = this.databaseManager.getNote(noteId);
-      const existing = parseTranscriptSegments(persisted?.transcript ?? "", (message, error) =>
-        debugLogger.warn(message, { error: error?.message, noteId })
+      const existing = toRelativeSecondTimestamps(
+        parseTranscriptSegments(persisted?.transcript ?? "", (message, error) =>
+          debugLogger.warn(message, { error: error?.message, noteId })
+        ),
+        audioStartedAt
       );
       const incoming = segments.map((segment, index) => ({
         ...segment,
@@ -8362,11 +8476,13 @@ class IPCHandlers {
     const diarizationEnabled = (sessionConfig?.enabled ?? this.speakerDiarizationEnabled) !== false;
 
     if (!diarizationEnabled || !this.diarizationManager?.isAvailable() || !rawPcmPath) {
-      const skipped = transcriptSegments.map((segment, index) => ({
+      const skipped = attributeMicSegmentsToUser(
+        toRelativeSecondTimestamps(transcriptSegments, audioStartedAt)
+      ).map((segment, index) => ({
         ...segment,
         id: segment.id || `segment-${index}`,
       }));
-      send({ segments: this._persistDiarizedTranscript(noteId, skipped, null) });
+      send({ segments: this._persistDiarizedTranscript(noteId, skipped, null, audioStartedAt) });
       if (noteId) {
         this._enqueuePostCallPipeline(noteId);
       }
@@ -8416,19 +8532,7 @@ class IPCHandlers {
           );
         }
 
-        const startMs =
-          (Number.isFinite(audioStartedAt) && audioStartedAt) ||
-          transcriptSegments.find((segment) => segment.source === "system")?.timestamp ||
-          transcriptSegments[0]?.timestamp ||
-          0;
-        const isEpochMs = startMs > 1e9;
-        const toRelativeSeconds = (value) =>
-          value != null ? (isEpochMs ? (value - startMs) / 1000 : value) : undefined;
-        const normalized = transcriptSegments.map((seg) => ({
-          ...seg,
-          timestamp: toRelativeSeconds(seg.timestamp),
-          startedAt: toRelativeSeconds(seg.startedAt),
-        }));
+        const normalized = toRelativeSecondTimestamps(transcriptSegments, audioStartedAt);
 
         const enrichedSegments = this.diarizationManager.mergeWithTranscript(
           normalized,
@@ -8540,7 +8644,8 @@ class IPCHandlers {
         const persistedSegments = this._persistDiarizedTranscript(
           noteId,
           enrichedSegments,
-          speakerEmbeddingsMap
+          speakerEmbeddingsMap,
+          audioStartedAt
         );
         send({ segments: persistedSegments, speakerEmbeddings: speakerEmbeddingsMap });
         if (noteId) {
@@ -8555,11 +8660,14 @@ class IPCHandlers {
         // first statement reads the note's transcript.
         this._persistDiarizedTranscript(
           noteId,
-          transcriptSegments.map((segment, index) => ({
+          attributeMicSegmentsToUser(
+            toRelativeSecondTimestamps(transcriptSegments, audioStartedAt)
+          ).map((segment, index) => ({
             ...segment,
             id: segment.id || `segment-${index}`,
           })),
-          null
+          null,
+          audioStartedAt
         );
         if (noteId) {
           this._enqueuePostCallPipeline(noteId);

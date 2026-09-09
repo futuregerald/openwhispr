@@ -1187,6 +1187,38 @@ class DatabaseManager {
     }
   }
 
+  listNoteTranscripts() {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      return this.db
+        .prepare(
+          "SELECT id, title, transcript FROM notes WHERE deleted_at IS NULL AND transcript IS NOT NULL ORDER BY id ASC"
+        )
+        .all();
+    } catch (error) {
+      debugLogger.error("Error listing note transcripts", { error: error.message }, "notes");
+      throw error;
+    }
+  }
+
+  updateNoteTranscriptKeepingUpdatedAt(id, transcript) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      const info = this.db
+        .prepare("UPDATE notes SET transcript = ? WHERE id = ?")
+        .run(transcript, id);
+      if (info.changes === 0) return { success: false };
+      return { success: true, note: this.db.prepare("SELECT * FROM notes WHERE id = ?").get(id) };
+    } catch (error) {
+      debugLogger.error(
+        "Error updating note transcript",
+        { noteId: id, error: error.message },
+        "notes"
+      );
+      throw error;
+    }
+  }
+
   updateNote(id, updates) {
     try {
       if (!this.db) throw new Error("Database not initialized");

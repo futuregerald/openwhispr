@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-09-09
+
+### Added
+- **You can now merge several speakers at once.** Merging was limited to two at a time, so folding a call that came back with more speakers than were present meant repeating it once per speaker. Tick as many as you like and merge in one step, with a Select all option. The panel now says which name it is keeping -- previously the order you ticked them decided that, and nothing told you.
+
+### Fixed
+- **Merging or renaming a speaker no longer overwrites a name you had locked.** Both quietly replaced every matching line regardless, so a person you had deliberately identified could be absorbed into another speaker and lost. Locked lines are now left alone and the app tells you how many it skipped.
+- **"% talk time" was not talk time.** It counted lines, not seconds, because the field it divided by is never actually saved with a meeting -- so someone who said "yeah" twenty times outranked someone who spoke for ten minutes. Replayed against the old code, a speaker with three forty-second turns scored 13% against 87% for twenty single words. It is now measured from the time between what each person said, capped at thirty seconds per line so that a long silence after someone stops talking is not counted as them still talking. Expect these percentages to look different. They are a better measure than counting lines, but where two people genuinely talk a similar amount the order between them can still shift by a point or two.
+
+## [1.18.6] - 2026-09-09
+
+### Fixed
+- **A meeting whose audio failed to compress no longer loses that audio.** The step that converts a finished recording to its compressed form deleted the raw recording even when the conversion had failed -- so if ffmpeg was missing or the disk was full, the meeting's audio was gone, the only trace was a message you would never see, and every later attempt to reprocess that meeting reported that it had started when nothing could. The raw recording is now kept and filed with the meeting's other audio, and the failure is recorded properly. Files kept this way are now also seen by the routine that ages old audio out, so they cannot accumulate.
+
+### Added
+- **Detection for meetings that were welded together.** Recording repeatedly into the same note could append several separate meetings into one, and one note here holds thirteen sessions spanning five days. The app can now tell which notes that happened to. Splitting them is a separate step and is not automatic -- it creates and deletes notes, so it asks first.
+
+## [1.18.5] - 2026-09-09
+
+### Fixed
+- **Meetings recorded before the previous fix are repaired automatically, once, on the next launch.** Anything you said that was left with nobody's name against it is now attributed to you. How much that amounts to depends entirely on your own history -- the repair counts it on your machine and tells you how many notes it touched. This matters because the notes are written from the transcript, and a line with no owner is read as somebody else's -- which is why a meeting summary could credit one person with what another actually said.
+- The repair takes a **verified backup of the database first** -- it writes the copy, reopens it, and checks it matches before changing anything. The full path of that copy is written to the app's log and kept in the repair summary, so it can actually be found again; the three most recent backups are kept and older ones are removed. It runs one meeting at a time through the existing background queue, so quitting part-way is safe and it resumes on the next launch rather than starting over. Running it twice changes nothing.
+- **Your notes list is not reordered by the repair.** Repaired meetings keep their original "last edited" time, so old meetings do not jump above what you worked on yesterday.
+- Timestamps are only corrected on meetings where every line can be corrected together. Meetings holding a mixture of two time formats are left alone and reported rather than half-converted, which would have produced negative timestamps and broken subtitle export outright.
+
+## [1.18.4] - 2026-09-09
+
+### Fixed
+- **Your own speech was being dropped from the record of who said what.** When a meeting ends, the app checks each thing you said against what the other side said at roughly the same moment, so your microphone picking up your laptop speakers does not get written down twice. That check was comparing against a window a thousand times too wide -- it looked at the entire meeting instead of the six seconds either side -- so ordinary sentences of yours matched something said an hour earlier and were treated as an echo. On a recent call this silently disowned 108 of 589 things the user said, including whole sentences like "It was Andy, wasn't it?". Those lines stayed in the transcript with nobody's name on them, and the notes are written from that transcript, which is why they could credit one person with what another actually said.
+- **Lines that are set aside as echo are now marked rather than deleted**, so they still get attributed and still carry a comparable timestamp. Deleting them was what allowed them to reappear later with no owner and a timestamp in a different unit from every line around them.
+- **Speech recorded while speaker identification was switched off, when it found nothing, or when it failed outright is now attributed to you as well.** Three separate paths skipped that step entirely, which is why some meetings came back with every one of your lines unowned. A name you have set yourself is kept.
+- **Lines set aside as echo are currently only marked, not hidden.** Nothing acts on the mark yet, so a genuine echo of the other side is still shown and still counted as yours. Measured against real calls that is between none and four lines per meeting, against 41 to 108 of your own sentences recovered, so it is recorded here as a deliberate trade rather than left to be discovered.
+
 ## [1.18.3] - 2026-09-08
 
 ### Fixed

@@ -4,6 +4,11 @@ const { app } = require("electron");
 const debugLogger = require("./debugLogger");
 const { planAudioCleanup } = require("./audioRetention");
 
+const RETAINED_AUDIO_EXTENSIONS = [".webm", ".opus", ".pcm"];
+
+const isRetainedAudioFile = (filename) =>
+  RETAINED_AUDIO_EXTENSIONS.some((extension) => filename.endsWith(extension));
+
 class AudioStorageManager {
   constructor() {
     this.audioDir = path.join(app.getPath("userData"), "audio");
@@ -105,7 +110,7 @@ class AudioStorageManager {
       const cutoffMs = Date.now() - retentionDays * 86400000;
       const names = fs
         .readdirSync(this.audioDir)
-        .filter((f) => f.endsWith(".webm") || f.endsWith(".opus"));
+        .filter((f) => isRetainedAudioFile(f));
 
       const files = [];
       for (const name of names) {
@@ -182,7 +187,7 @@ class AudioStorageManager {
   deleteAllAudio() {
     try {
       const files = fs.readdirSync(this.audioDir).filter(
-        (f) => f.endsWith(".webm") || f.endsWith(".opus")
+        (f) => isRetainedAudioFile(f)
       );
       for (const file of files) {
         try {
@@ -206,7 +211,7 @@ class AudioStorageManager {
   getStorageUsage() {
     try {
       const files = fs.readdirSync(this.audioDir).filter(
-        (f) => f.endsWith(".webm") || f.endsWith(".opus")
+        (f) => isRetainedAudioFile(f)
       );
       let totalBytes = 0;
       for (const file of files) {
@@ -226,3 +231,4 @@ class AudioStorageManager {
 }
 
 module.exports = AudioStorageManager;
+module.exports.isRetainedAudioFile = isRetainedAudioFile;

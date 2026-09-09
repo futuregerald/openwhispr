@@ -2485,7 +2485,14 @@
       "merge": "Zusammenführen",
       "clearFilter": "Filter löschen",
       "segments": "Segmente",
-      "selectForMerge": "Zum Zusammenführen auswählen"
+      "selectForMerge": "Zum Zusammenführen auswählen",
+      "selectAll": "Alle auswählen",
+      "selectNone": "Auswahl aufheben",
+      "mergeInto": "{{count}} in {{name}} zusammenführen",
+      "keepingSpeaker": "„{{name}}“ bleibt erhalten – der zuerst gewählte Sprecher wird behalten.",
+      "keptBadge": "behalten",
+      "lockedSkipped": "{{count}} von dir gesperrte Abschnitte blieben unverändert.",
+      "talkTime": "{{percent}} % Redeanteil"
     }
   },
   "pipeline": {
@@ -2538,5 +2545,9 @@
     "description": "OpenWhispr verwendet Gemma 4 E4B (~5,4 GB) als vollständig lokales KI-Modell, um Besprechungstitel zu generieren, den Besprechungstyp zu erkennen und strukturierte Notizen zu erstellen. Ohne dieses Modell sind diese Funktionen nicht verfügbar. Sie können stattdessen auch Ihren eigenen Remote-API-Endpunkt verbinden.",
     "accept": "Gemma herunterladen (5,4 GB)",
     "decline": "Jetzt nicht"
+  },
+  "noteAttributionRepair": {
+    "title": "Ältere Notizen repariert",
+    "description": "Deine eigene Sprache ist jetzt in {{count}} Notiz(en) gekennzeichnet, die aufgenommen wurden, bevor OpenWhispr dein Mikrofon unterscheiden konnte."
   }
 }
