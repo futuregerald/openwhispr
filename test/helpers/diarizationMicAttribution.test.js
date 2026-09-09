@@ -2,6 +2,11 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const DiarizationManager = require("../../src/helpers/diarization.js");
+const {
+  mergeTranscriptSegments,
+  parseTranscriptSegments,
+  serializeTranscriptSegments,
+} = require("../../src/helpers/transcriptSpeakerState");
 
 // `dedupeMicAgainstSystem` is module-private, so these reach it the only way a caller
 // can: through `mergeWithTranscript` on a manager whose engine is never touched.
@@ -152,13 +157,22 @@ test("mic segments are attributed to the user even when diarization found nothin
   assert.equal(system.speaker, undefined, "with no diarization there is no cluster to assign");
 });
 
-test("the empty-diarization path never overwrites a speaker the user locked", () => {
+// A live segment reaching `mergeWithTranscript` cannot carry lock fields:
+// `storeMeetingDiarizationSegment` builds it from text/source/timestamp/committedAt and
+// the three suppression flags only. The lock lives in the STORED transcript, and meets
+// the attributed segment in `mergeTranscriptSegments` — so the whole path is what has
+// to be asserted, not a hand-built segment production never produces.
+test("the empty-diarization path keeps the lock the user set in the stored transcript", () => {
   const manager = stubbedManager();
 
-  const merged = manager.mergeWithTranscript(
-    [
+  const attributed = manager.mergeWithTranscript(
+    [{ id: "m1", text: "hi back", source: "mic", timestamp: 3 }],
+    []
+  );
+
+  const stored = parseTranscriptSegments(
+    serializeTranscriptSegments([
       {
-        id: "m1",
         text: "hi back",
         source: "mic",
         timestamp: 3,
@@ -167,12 +181,20 @@ test("the empty-diarization path never overwrites a speaker the user locked", ()
         speakerLocked: true,
         speakerLockSource: "user",
       },
-    ],
-    []
+    ])
   );
 
-  assert.equal(merged[0].speaker, "speaker_1", "a user-locked label must survive");
-  assert.equal(merged[0].speakerName, "Fabian");
+  const final = mergeTranscriptSegments(stored, attributed);
+
+  assert.equal(final.length, 1, "the locked segment must be matched, not duplicated");
+  assert.equal(final[0].speakerName, "Fabian", "the name the user set survives the merge");
+  assert.equal(final[0].speakerLocked, true);
+  assert.equal(final[0].speakerLockSource, "user");
+  assert.equal(final[0].speakerStatus, "locked");
+  // `mergeSpeakerFields` exempts `speaker` from lock preservation on purpose, so one
+  // locked label cannot freeze a bucket diarization splits. The cluster id is therefore
+  // NOT preserved — mic attribution replaces it. Only the name and lock are.
+  assert.equal(final[0].speaker, "you");
 });
 
 test("the empty-diarization path does not mutate the caller's segments", () => {

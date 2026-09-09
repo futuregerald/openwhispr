@@ -233,15 +233,21 @@ async function postMultipart(url, body, boundary, headers = {}) {
   }
 }
 
+const EPOCH_MS_FLOOR = 1e9;
+
 function toRelativeSecondTimestamps(segments, audioStartedAt) {
   const startMs =
     (Number.isFinite(audioStartedAt) && audioStartedAt) ||
     segments.find((segment) => segment.source === "system")?.timestamp ||
     segments[0]?.timestamp ||
     0;
-  const isEpochMs = startMs > 1e9;
+  const hasEpochOrigin = startMs > EPOCH_MS_FLOOR;
   const toRelativeSeconds = (value) =>
-    value != null ? (isEpochMs ? (value - startMs) / 1000 : value) : undefined;
+    value != null
+      ? hasEpochOrigin && value > EPOCH_MS_FLOOR
+        ? (value - startMs) / 1000
+        : value
+      : undefined;
   return segments.map((segment) => ({
     ...segment,
     timestamp: toRelativeSeconds(segment.timestamp),
@@ -8283,7 +8289,7 @@ class IPCHandlers {
   // The diarized result is computed in main and was, until now, saved only by a React
   // callback in the renderer — which is skipped whenever the window is gone, the note
   // has been switched, or the session id has already been cleared. Main writes it.
-  _persistDiarizedTranscript(noteId, segments, speakerEmbeddings) {
+  _persistDiarizedTranscript(noteId, segments, speakerEmbeddings, audioStartedAt) {
     if (!noteId || !segments?.length) {
       debugLogger.notice("Diarization persist skipped", {
         noteId,
@@ -8300,8 +8306,11 @@ class IPCHandlers {
       } = require("./transcriptSpeakerState");
 
       const persisted = this.databaseManager.getNote(noteId);
-      const existing = parseTranscriptSegments(persisted?.transcript ?? "", (message, error) =>
-        debugLogger.warn(message, { error: error?.message, noteId })
+      const existing = toRelativeSecondTimestamps(
+        parseTranscriptSegments(persisted?.transcript ?? "", (message, error) =>
+          debugLogger.warn(message, { error: error?.message, noteId })
+        ),
+        audioStartedAt
       );
       const incoming = segments.map((segment, index) => ({
         ...segment,
@@ -8393,7 +8402,7 @@ class IPCHandlers {
         ...segment,
         id: segment.id || `segment-${index}`,
       }));
-      send({ segments: this._persistDiarizedTranscript(noteId, skipped, null) });
+      send({ segments: this._persistDiarizedTranscript(noteId, skipped, null, audioStartedAt) });
       if (noteId) {
         this._enqueuePostCallPipeline(noteId);
       }
@@ -8555,7 +8564,8 @@ class IPCHandlers {
         const persistedSegments = this._persistDiarizedTranscript(
           noteId,
           enrichedSegments,
-          speakerEmbeddingsMap
+          speakerEmbeddingsMap,
+          audioStartedAt
         );
         send({ segments: persistedSegments, speakerEmbeddings: speakerEmbeddingsMap });
         if (noteId) {
@@ -8570,11 +8580,14 @@ class IPCHandlers {
         // first statement reads the note's transcript.
         this._persistDiarizedTranscript(
           noteId,
-          transcriptSegments.map((segment, index) => ({
+          attributeMicSegmentsToUser(
+            toRelativeSecondTimestamps(transcriptSegments, audioStartedAt)
+          ).map((segment, index) => ({
             ...segment,
             id: segment.id || `segment-${index}`,
           })),
-          null
+          null,
+          audioStartedAt
         );
         if (noteId) {
           this._enqueuePostCallPipeline(noteId);
