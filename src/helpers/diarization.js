@@ -18,21 +18,21 @@ const {
 } = require("./transcriptText");
 
 const DIARIZATION_TIMEOUT_MS = 3600000; // 60 minutes
-const POST_MERGE_CONTEXT_WINDOW_MS = 6000;
+const POST_MERGE_CONTEXT_WINDOW_SECONDS = 6;
 const POST_MERGE_CONTEXT_MERGE_LIMIT = 3;
 
-const dedupeMicAgainstSystem = (segments) => {
+const markMicEchoOfSystem = (segments) => {
   const systemSegments = segments.filter((seg) => seg.source === "system" && seg.text);
   if (!systemSegments.length) return segments;
 
-  return segments.filter((seg) => {
-    if (seg.source !== "mic" || !seg.text) return true;
+  return segments.map((seg) => {
+    if (seg.source !== "mic" || !seg.text) return seg;
     if (
       !seg.likelyRenderBleed &&
       !seg.hasBleedEvidence &&
       seg.suppressionReason !== "double_talk"
     ) {
-      return true;
+      return seg;
     }
 
     const matcher =
@@ -40,10 +40,11 @@ const dedupeMicAgainstSystem = (segments) => {
     const candidates = buildMergedCandidates({
       segments: systemSegments,
       timestamp: seg.timestamp,
-      windowMs: POST_MERGE_CONTEXT_WINDOW_MS,
+      maxDistance: POST_MERGE_CONTEXT_WINDOW_SECONDS,
       mergeLimit: POST_MERGE_CONTEXT_MERGE_LIMIT,
     });
-    return !candidates.some((candidateText) => matcher(seg.text, candidateText));
+    if (!candidates.some((candidateText) => matcher(seg.text, candidateText))) return seg;
+    return { ...seg, dedupedAsEcho: true };
   });
 };
 
@@ -715,9 +716,18 @@ class DiarizationManager {
 
   mergeWithTranscript(transcriptSegments, diarizationSegments) {
     if (!transcriptSegments || transcriptSegments.length === 0) return [];
-    const deduped = dedupeMicAgainstSystem(transcriptSegments);
+    const deduped = markMicEchoOfSystem(transcriptSegments);
     if (!diarizationSegments || diarizationSegments.length === 0) {
-      return deduped.map((seg) => ({ ...seg }));
+      return deduped.map((seg) => {
+        const enriched = { ...seg };
+        if (seg.source === "mic") {
+          applyConfirmedSpeaker(enriched, {
+            speaker: "you",
+            speakerIsPlaceholder: false,
+          });
+        }
+        return enriched;
+      });
     }
 
     // Build speaker renumbering map (e.g., speaker_00 → speaker_0)

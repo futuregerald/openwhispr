@@ -243,6 +243,7 @@ export const serializeTranscriptSegments = (segments) =>
       speakerStatus: segment.speakerStatus,
       speakerLocked: segment.speakerLocked,
       speakerLockSource: segment.speakerLockSource,
+      dedupedAsEcho: segment.dedupedAsEcho,
     }))
   );
 
@@ -272,6 +273,7 @@ export const parseTranscriptSegments = (raw, onError) => {
         speakerStatus: s.speakerStatus,
         speakerLocked: s.speakerLocked,
         speakerLockSource: s.speakerLockSource,
+        dedupedAsEcho: s.dedupedAsEcho,
       }))
     );
   } catch (e) {

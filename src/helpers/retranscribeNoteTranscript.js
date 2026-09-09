@@ -261,8 +261,8 @@ function buildDiarizedSegments({ newSegments, diarizationManager, diarizationSeg
   if (!merged?.length) return null;
   // mergeWithTranscript renumbers to speaker_0..n. Namespace those ids so they cannot be
   // confused with the old transcript's speaker_0..n before they are deliberately mapped.
-  // Match on id, not index: mergeWithTranscript can drop segments (echo dedupe), and a
-  // positional join would then attach every speaker to the wrong words.
+  // Match on id, not index: a positional join would attach every speaker to the wrong
+  // words the moment mergeWithTranscript stops returning segments one-for-one.
   const byId = new Map(newSegments.map((seg) => [seg.id, seg]));
   return merged.map((seg, index) => {
     const base = byId.get(seg.id) || newSegments[index] || {};

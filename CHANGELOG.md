@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.4] - 2026-09-09
+
+### Fixed
+- **Your own speech was being dropped from the record of who said what.** When a meeting ends, the app checks each thing you said against what the other side said at roughly the same moment, so your microphone picking up your laptop speakers does not get written down twice. That check was comparing against a window a thousand times too wide -- it looked at the entire meeting instead of the six seconds either side -- so ordinary sentences of yours matched something said an hour earlier and were treated as an echo. On a recent call this silently disowned 108 of 589 things the user said, including whole sentences like "It was Andy, wasn't it?". Those lines stayed in the transcript with nobody's name on them, and the notes are written from that transcript, which is why they could credit one person with what another actually said.
+- **Lines that are set aside as echo are now marked rather than deleted**, so they still get attributed and still carry a comparable timestamp. Deleting them was what allowed them to reappear later with no owner and a timestamp in a different unit from every line around them.
+- **Speech recorded while speaker identification was switched off, or when it found nothing, is now attributed to you as well.** Two paths skipped that step entirely, which is why some meetings came back with every one of your lines unowned. A name you have set yourself is never overwritten.
+
 ## [1.18.3] - 2026-09-08
 
 ### Fixed

@@ -233,6 +233,31 @@ async function postMultipart(url, body, boundary, headers = {}) {
   }
 }
 
+function toRelativeSecondTimestamps(segments, audioStartedAt) {
+  const startMs =
+    (Number.isFinite(audioStartedAt) && audioStartedAt) ||
+    segments.find((segment) => segment.source === "system")?.timestamp ||
+    segments[0]?.timestamp ||
+    0;
+  const isEpochMs = startMs > 1e9;
+  const toRelativeSeconds = (value) =>
+    value != null ? (isEpochMs ? (value - startMs) / 1000 : value) : undefined;
+  return segments.map((segment) => ({
+    ...segment,
+    timestamp: toRelativeSeconds(segment.timestamp),
+    startedAt: toRelativeSeconds(segment.startedAt),
+  }));
+}
+
+function attributeMicSegmentsToUser(segments) {
+  return segments.map((segment) => {
+    if (segment.source !== "mic") return segment;
+    const enriched = { ...segment };
+    applyConfirmedSpeaker(enriched, { speaker: "you", speakerIsPlaceholder: false });
+    return enriched;
+  });
+}
+
 class IPCHandlers {
   constructor(managers) {
     this.environmentManager = managers.environmentManager;
@@ -4082,7 +4107,7 @@ class IPCHandlers {
       return buildMergedCandidates({
         segments: relevant,
         timestamp,
-        windowMs: duplicateTranscriptWindowMs(),
+        maxDistance: duplicateTranscriptWindowMs(),
         mergeLimit: DUPLICATE_TRANSCRIPT_MERGE_LIMIT,
         extraSegment,
       });
@@ -8362,7 +8387,9 @@ class IPCHandlers {
     const diarizationEnabled = (sessionConfig?.enabled ?? this.speakerDiarizationEnabled) !== false;
 
     if (!diarizationEnabled || !this.diarizationManager?.isAvailable() || !rawPcmPath) {
-      const skipped = transcriptSegments.map((segment, index) => ({
+      const skipped = attributeMicSegmentsToUser(
+        toRelativeSecondTimestamps(transcriptSegments, audioStartedAt)
+      ).map((segment, index) => ({
         ...segment,
         id: segment.id || `segment-${index}`,
       }));
@@ -8416,19 +8443,7 @@ class IPCHandlers {
           );
         }
 
-        const startMs =
-          (Number.isFinite(audioStartedAt) && audioStartedAt) ||
-          transcriptSegments.find((segment) => segment.source === "system")?.timestamp ||
-          transcriptSegments[0]?.timestamp ||
-          0;
-        const isEpochMs = startMs > 1e9;
-        const toRelativeSeconds = (value) =>
-          value != null ? (isEpochMs ? (value - startMs) / 1000 : value) : undefined;
-        const normalized = transcriptSegments.map((seg) => ({
-          ...seg,
-          timestamp: toRelativeSeconds(seg.timestamp),
-          startedAt: toRelativeSeconds(seg.startedAt),
-        }));
+        const normalized = toRelativeSecondTimestamps(transcriptSegments, audioStartedAt);
 
         const enrichedSegments = this.diarizationManager.mergeWithTranscript(
           normalized,
