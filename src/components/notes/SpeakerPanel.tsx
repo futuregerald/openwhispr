@@ -114,7 +114,7 @@ export default function SpeakerPanel({
   };
 
   return (
-    <div className="border-t border-border bg-muted/30 p-3">
+    <div className="rounded-lg border border-border bg-background shadow-lg p-3">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
           <Users size={14} />
@@ -164,7 +164,7 @@ export default function SpeakerPanel({
         </div>
       )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-56 overflow-y-auto">
         {speakers.map((speaker, idx) => {
           const isFiltered = activeSpeakerFilter === speaker.id;
           const isMergeSelected = selectedForMerge.includes(speaker.id);

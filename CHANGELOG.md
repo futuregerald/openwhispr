@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.20.1] - 2026-09-09
+
+### Fixed
+- **The speaker panel was opening off-screen.** Clicking "N speakers detected" did toggle the panel open, but it was laid out directly underneath a transcript pane that already filled the whole height, so it sat below the visible area and what little showed was covered by the chat box. It looked like the button did nothing. The panel is now pinned in place just under the button and stays put while the transcript scrolls behind it, and the speaker list scrolls on its own when a meeting has more speakers than fit.
+
 ## [1.20.0] - 2026-09-09
 
 ### Added
