@@ -222,3 +222,117 @@ test("startIndex is the cluster's lowest original index, not its earliest segmen
     [[0, 4, 5]]
   );
 });
+
+// --- membership, added for the note-14 split (Phase D) ---
+//
+// The split needs to know WHICH segments belong to each session, not just where the
+// cluster's lowest and highest indices happen to fall. The JSDoc on detectSessions already
+// warns that [startIndex..endIndex] is not a partition; these tests pin the fields that make
+// the "every segment lands in exactly one note" invariant provable rather than assumed.
+
+test("each session reports the exact indices it owns, ascending", async () => {
+  const { detectSessions } = await load();
+  const segments = [
+    { timestamp: 0 },
+    { timestamp: 10 },
+    { timestamp: 20 },
+    { timestamp: 100000 },
+    { timestamp: 100010 },
+  ];
+
+  const { sessions } = detectSessions(segments, { minSessionSegments: 1 });
+
+  assert.deepStrictEqual(
+    sessions.map((s) => s.indices),
+    [
+      [0, 1, 2],
+      [3, 4],
+    ]
+  );
+});
+
+test("segments with no usable timestamp are reported as unassigned, not silently dropped", async () => {
+  const { detectSessions } = await load();
+  const segments = [
+    { timestamp: 0 },
+    { timestamp: 10 },
+    { text: "no stamp at all" },
+    { timestamp: null },
+    { timestamp: Number.NaN },
+  ];
+
+  const report = detectSessions(segments, { minSessionSegments: 1 });
+
+  assert.deepStrictEqual(report.unassigned, [2, 3, 4]);
+});
+
+// The dangerous case. When a note carries >= 2 epoch stamps the detector keeps ONLY the
+// epoch series and discards every relative one. Those segments are in no cluster and no
+// index window, so a splitter trusting `usable: true` would delete them permanently.
+// They must surface in `unassigned` so the split can refuse to run.
+test("the discarded minority time base is reported as unassigned, not lost", async () => {
+  const { detectSessions } = await load();
+  const segments = [
+    { timestamp: 1785518002177 },
+    { timestamp: 1785518012177 },
+    { timestamp: 5 },
+    { timestamp: 6 },
+    { timestamp: 7 },
+  ];
+
+  const report = detectSessions(segments, { minSessionSegments: 1 });
+
+  assert.strictEqual(report.unit, "epoch-ms");
+  assert.strictEqual(report.usable, true);
+  assert.deepStrictEqual(report.unassigned, [2, 3, 4], "the relative stamps must not vanish");
+});
+
+test("every segment is accounted for exactly once across sessions and unassigned", async () => {
+  const { detectSessions } = await load();
+  const segments = [
+    { timestamp: 0 },
+    { text: "orphan" },
+    { timestamp: 30 },
+    { timestamp: 900000 },
+    { timestamp: null },
+    { timestamp: 900030 },
+  ];
+
+  const report = detectSessions(segments, { minSessionSegments: 1 });
+
+  const owned = report.sessions.flatMap((s) => s.indices);
+  const all = [...owned, ...report.unassigned].sort((a, b) => a - b);
+
+  assert.deepStrictEqual(all, [0, 1, 2, 3, 4, 5], "nothing lost, nothing counted twice");
+  assert.strictEqual(new Set(all).size, segments.length, "no index in two places");
+});
+
+test("an unusable report still accounts for every segment", async () => {
+  const { detectSessions } = await load();
+  const segments = [{ text: "a" }, { timestamp: 5 }];
+
+  const report = detectSessions(segments);
+
+  assert.strictEqual(report.usable, false);
+  assert.deepStrictEqual(report.sessions, []);
+  assert.deepStrictEqual(report.unassigned, [0, 1], "an unusable note orphans everything");
+});
+
+// mergeTranscriptSegments ends with [...preserved, ...unmatchedIncoming], so the stored
+// array is NOT time-ordered: a later array index can hold an earlier timestamp. The cluster
+// is built from the time-sorted series, so without an explicit sort `indices` comes back in
+// TIME order. A consumer slicing the transcript by these indices would reorder the note's
+// segments. This fixture puts value order and index order deliberately at odds.
+test("indices are in array order even when the stored array is not in time order", async () => {
+  const { detectSessions } = await load();
+  const segments = [{ timestamp: 20 }, { timestamp: 0 }, { timestamp: 10 }];
+
+  const { sessions } = detectSessions(segments, { minSessionSegments: 1 });
+
+  assert.strictEqual(sessions.length, 1, "all three are inside one gap-free cluster");
+  assert.deepStrictEqual(
+    sessions[0].indices,
+    [0, 1, 2],
+    "indices must ascend by array position, not by timestamp"
+  );
+});
