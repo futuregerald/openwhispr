@@ -170,3 +170,39 @@ test("a segment with no timestamp does not zero its predecessor's duration", () 
 
   assert.strictEqual(durations[0], 10, "the 10s gap belongs to A, not to a fallback");
 });
+
+// The cap on a single segment's credited duration is the ONLY thing standing between
+// mixed timestamp units and a nonsense talk-time split, in the one case the
+// wall-clock mismatch guard above it cannot see.
+//
+// 25 of 34 real notes mix units on the same source. When the mix is epoch-vs-relative
+// the mismatch guard rejects the pair, because one side clears the 1e9 wall-clock line.
+// When the mix is relative SECONDS vs relative MILLISECONDS, neither side clears it,
+// both look relative, the guard passes the pair, and the raw delta is ~8.4 hours.
+//
+// Deleting the cap as over-engineering therefore looks safe and is not. Anyone who
+// removes it should land here.
+test("seconds mixed with milliseconds on one source cannot buy 8 hours of talk time", () => {
+  const segments = [
+    systemSeg(10, "A"), // 10s, relative seconds
+    systemSeg(30250, "B"), // 30.25s expressed in milliseconds
+    systemSeg(30260, "B"),
+  ];
+
+  const durations = computeSegmentDurations(segments);
+
+  // Both stamps read as relative, so the unit-mismatch guard passes them through and
+  // the unclamped delta would be 30240s. Only the cap keeps A at a plausible turn.
+  assert.strictEqual(
+    durations[0],
+    30,
+    "a seconds/milliseconds mix is invisible to the wall-clock guard; the cap must clamp it"
+  );
+
+  const stats = computeSpeakerStats(segments);
+  const a = stats.find((s) => s.id === "A");
+  assert.ok(
+    a.talkTimePercent < 80,
+    `a unit mix handed A ${a.talkTimePercent}% of the meeting: ${JSON.stringify(stats)}`
+  );
+});
