@@ -2492,7 +2492,14 @@
       "keepingSpeaker": "„{{name}}“ bleibt erhalten – der zuerst gewählte Sprecher wird behalten.",
       "keptBadge": "behalten",
       "lockedSkipped": "{{count}} von dir gesperrte Abschnitte blieben unverändert.",
-      "talkTime": "{{percent}} % Redeanteil"
+      "talkTime": "{{percent}} % Redeanteil",
+      "auditionPlay": "Einige Sekunden dieser Person abspielen",
+      "auditionApproximate": "Einige Sekunden dieser Person abspielen (der Zeitpunkt ist für dieses Meeting ungefähr)",
+      "auditionNoAudio": "Für dieses Meeting ist kein Audio gespeichert",
+      "auditionNoCue": "Für diese Person gibt es nichts abzuspielen",
+      "auditionWhileRecording": "Während der Aufnahme nicht verfügbar",
+      "auditionLoading": "Audio dieses Meetings wird geprüft…",
+      "auditionUnplayable": "Das Audio dieses Meetings konnte nicht abgespielt werden"
     }
   },
   "pipeline": {

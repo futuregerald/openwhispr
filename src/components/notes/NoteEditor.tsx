@@ -48,6 +48,7 @@ import {
   lockTranscriptSpeaker,
   serializeTranscriptSegments,
 } from "../../helpers/transcriptSpeakerState";
+import { foldSpeakersInto } from "../../helpers/speakerFold";
 import NoteParticipants from "./NoteParticipants";
 import MeetingTypePicker from "./MeetingTypePicker";
 import MeetingTypeEditor from "./MeetingTypeEditor";
@@ -451,6 +452,31 @@ export default function NoteEditor({
       });
     },
     [note.id]
+  );
+
+  // Kept on the same side as rename: splitting them lets one overwrite the other, because
+  // displaySegments prefers this local state over the stored transcript.
+  const handleMergeSpeakers = useCallback(
+    async (primaryId: string, targetIds: string[], primaryName: string) => {
+      if (!primaryId || targetIds.length === 0) return;
+      // Not while recording: the live segments are not the stored transcript, so persisting
+      // them writes a mid-recording snapshot over the note. Rename already returns early here.
+      if (isRecording) return;
+      const nextSegments = foldSpeakersInto(
+        displaySegments,
+        primaryId,
+        targetIds,
+        primaryName || speakerMappings[primaryId] || primaryId
+      ) as TranscriptSegment[];
+
+      setSpeakerMappings((prev) => {
+        const next = { ...prev };
+        for (const id of targetIds) delete next[id];
+        return next;
+      });
+      await persistDisplaySegments(nextSegments, !!diarizedSegments || !isRecording);
+    },
+    [diarizedSegments, displaySegments, isRecording, persistDisplaySegments, speakerMappings]
   );
 
   const handleMapSpeaker = useCallback(
@@ -977,6 +1003,8 @@ export default function NoteEditor({
                 onSetSessionDiarizationEnabled={onSetSessionDiarizationEnabled}
                 onSetSessionExpectedCount={onSetSessionExpectedCount}
                 onMapSpeaker={handleMapSpeaker}
+                onMergeSpeakers={handleMergeSpeakers}
+                transcriptOriginSource={note.transcript_origin_source}
                 onConfirmSuggestion={handleConfirmSuggestion}
                 onDismissSuggestion={handleDismissSuggestion}
                 onAttachSpeakerEmail={handleAttachSpeakerEmail}

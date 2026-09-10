@@ -2492,7 +2492,14 @@
       "keepingSpeaker": "« {{name}} » est conservé : le premier intervenant sélectionné est celui qui reste.",
       "keptBadge": "conservé",
       "lockedSkipped": "{{count}} segments que vous aviez verrouillés n’ont pas été modifiés.",
-      "talkTime": "{{percent}} % de temps de parole"
+      "talkTime": "{{percent}} % de temps de parole",
+      "auditionPlay": "Écouter quelques secondes de cet interlocuteur",
+      "auditionApproximate": "Écouter quelques secondes de cet interlocuteur (le repère est approximatif pour cette réunion)",
+      "auditionNoAudio": "Cette réunion n'a pas d'audio enregistré",
+      "auditionNoCue": "Rien à écouter pour cet interlocuteur",
+      "auditionWhileRecording": "Indisponible pendant l'enregistrement",
+      "auditionLoading": "Vérification de l'audio de cette réunion…",
+      "auditionUnplayable": "Impossible de lire l'audio de cette réunion"
     }
   },
   "pipeline": {

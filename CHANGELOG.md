@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-09-09
+
+### Added
+- **You can now hear a speaker before deciding who they are.** Each speaker in the panel has a play button that plays a few seconds of them talking, so naming and merging no longer means guessing from the text alone. It picks a passage where they actually hold the floor rather than their first line, because first lines are often a single word -- one meeting here opens a speaker with "Monday." and another with "Or something like that."
+
+### Fixed
+- **Renaming a speaker from the panel now works on speakers you have already named.** It quietly did nothing in exactly the case you would want it: once a name is confirmed those lines are protected from being relabelled automatically, and the panel was being turned away by that same protection. It reported how many lines it had skipped and changed none of them. Renaming or merging from the panel is now treated as your decision and applied, while automatic relabelling still leaves your names alone. The name is also remembered for future meetings, which only the transcript view did before.
+- **Merging speakers after renaming one no longer undoes the merge.** The two actions were saved by different halves of the app, so a merge could be written and then overwritten by the next rename. Both now go the same way.
+
 ## [1.20.1] - 2026-09-09
 
 ### Fixed
