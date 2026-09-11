@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.21.1] - 2026-09-11
+
+### Removed
+
+- Removed the unused main-process code path for renaming and merging speakers. The speaker
+  panel has done this work itself since 1.21.0, and the old path had drifted out of step with
+  it: it wrote notes without refreshing semantic search or the markdown mirror, so a speaker
+  renamed through it could quietly drop out of search results. Nothing reached it, so there is
+  no change to how renaming or merging behaves.
+
 ## [1.21.0] - 2026-09-09
 
 ### Added

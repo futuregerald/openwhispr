@@ -2491,7 +2491,6 @@
       "mergeInto": "將 {{count}} 個合併至「{{name}}」",
       "keepingSpeaker": "保留「{{name}}」——你最先選取的發言者會被保留。",
       "keptBadge": "保留",
-      "lockedSkipped": "你鎖定的 {{count}} 個片段未被修改。",
       "talkTime": "發言時間 {{percent}}%",
       "auditionPlay": "播放這位發言者的幾秒錄音",
       "auditionApproximate": "播放這位發言者的幾秒錄音（本次會議的定位為近似值）",

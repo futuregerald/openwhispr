@@ -14,10 +14,11 @@ test("folds every target speaker's segments into the primary", () => {
   assert.equal(next[1].speakerName, "Kathy");
 });
 
-// The whole reason the panel's merge moved into the renderer. rename-speaker and
-// merge-speakers both skip locked segments, and a speaker the user has already named is
-// fully locked -- note 4's speaker_1 is locked on all 257 of its segments, so merging it
-// folded 0 of them. A merge started from the panel is the user's own decision.
+// The whole reason the panel's merge moved into the renderer. The main-process path it
+// replaced skipped locked segments, and a speaker the user has already named is fully
+// locked -- note 4's speaker_1 is locked on all 257 of its segments, so merging it folded
+// 0 of them and reported success. A merge started from the panel is the user's own
+// decision, so it applies to locked segments too.
 test("folds segments the user had locked, because merging them was an explicit choice", () => {
   const segments = [
     seg("a", "speaker_0"),

@@ -2491,7 +2491,6 @@
       "mergeInto": "{{count}} in {{name}} zusammenführen",
       "keepingSpeaker": "„{{name}}“ bleibt erhalten – der zuerst gewählte Sprecher wird behalten.",
       "keptBadge": "behalten",
-      "lockedSkipped": "{{count}} von dir gesperrte Abschnitte blieben unverändert.",
       "talkTime": "{{percent}} % Redeanteil",
       "auditionPlay": "Einige Sekunden dieser Person abspielen",
       "auditionApproximate": "Einige Sekunden dieser Person abspielen (der Zeitpunkt ist für dieses Meeting ungefähr)",
