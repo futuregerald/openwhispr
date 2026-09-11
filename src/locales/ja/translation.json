@@ -2492,7 +2492,14 @@
       "keepingSpeaker": "「{{name}}」を残します。最初に選んだ話者が残ります。",
       "keptBadge": "残す",
       "lockedSkipped": "ロック済みの {{count}} セグメントは変更しませんでした。",
-      "talkTime": "発話時間 {{percent}}%"
+      "talkTime": "発話時間 {{percent}}%",
+      "auditionPlay": "この話者の音声を数秒再生します",
+      "auditionApproximate": "この話者の音声を数秒再生します（この会議では再生位置は目安です）",
+      "auditionNoAudio": "この会議には保存された音声がありません",
+      "auditionNoCue": "この話者に再生できる箇所がありません",
+      "auditionWhileRecording": "録音中は使用できません",
+      "auditionLoading": "この会議の音声を確認しています…",
+      "auditionUnplayable": "この会議の音声を再生できませんでした"
     }
   },
   "pipeline": {

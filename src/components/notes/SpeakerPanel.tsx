@@ -1,10 +1,10 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Users, Merge, X } from "lucide-react";
+import { Users, Merge, X, Play, Square } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { useToast } from "../ui/useToast";
 import { computeSpeakerStats } from "../../helpers/speakerTalkTime";
+import { resolveSpeakerAuditionCue } from "../../helpers/speakerAuditionCue";
 import {
   toggleSpeakerSelection,
   toggleSelectAllSpeakers,
@@ -35,7 +35,25 @@ interface SpeakerPanelProps {
   }>;
   onFilterSpeaker: (speakerId: string | null) => void;
   activeSpeakerFilter: string | null;
+  onMapSpeaker: (
+    speakerId: string,
+    displayName: string,
+    email?: string | null,
+    profileId?: number | null
+  ) => void | Promise<void>;
+  onMergeSpeakers: (
+    primaryId: string,
+    targetIds: string[],
+    primaryName: string
+  ) => void | Promise<void>;
+  isRecording?: boolean;
+  transcriptOriginSource?: string | null;
 }
+
+const AUDITION_SECONDS = 8;
+
+const isPlayable = (url: string | null | undefined, path: string | null | undefined) =>
+  Boolean(url) && !String(path ?? "").toLowerCase().endsWith(".pcm");
 
 const SPEAKER_COLORS = [
   "bg-blue-500", "bg-emerald-500", "bg-amber-500", "bg-purple-500",
@@ -49,12 +67,115 @@ export default function SpeakerPanel({
   segments,
   onFilterSpeaker,
   activeSpeakerFilter,
+  onMapSpeaker,
+  onMergeSpeakers,
+  isRecording = false,
+  transcriptOriginSource,
 }: SpeakerPanelProps) {
   const { t } = useTranslation();
-  const { toast } = useToast();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [selectedForMerge, setSelectedForMerge] = useState<string[]>([]);
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  const [auditionError, setAuditionError] = useState<string | null>(null);
+  const [tracksLoaded, setTracksLoaded] = useState(false);
+  const [tracks, setTracks] = useState<{
+    micUrl: string | null;
+    systemUrl: string | null;
+    micPath: string | null;
+    systemPath: string | null;
+    micDuration: number | null;
+    systemDuration: number | null;
+  } | null>(null);
+  const audioRef = useRef<Record<"mic" | "system", HTMLAudioElement | null>>({
+    mic: null,
+    system: null,
+  });
+  const stopAtRef = useRef<number | null>(null);
+  const pendingWriteRef = useRef<Promise<unknown>>(Promise.resolve());
+
+  // Both durations are needed before a cue can say which track to seek, so both are probed.
+  useEffect(() => {
+    let cancelled = false;
+    const api = (window as any).electronAPI;
+    if (!api?.getNoteAudioPaths) {
+      setTracksLoaded(true);
+      return undefined;
+    }
+
+    const load = async () => {
+      const paths = await api.getNoteAudioPaths(noteId).catch(() => null);
+      if (cancelled || !paths) return;
+
+      const durationOf = (url: string | null) =>
+        new Promise<number | null>((resolve) => {
+          if (!url) return resolve(null);
+          const probe = new Audio();
+          probe.preload = "metadata";
+          probe.addEventListener("loadedmetadata", () => resolve(probe.duration), { once: true });
+          probe.addEventListener("error", () => resolve(null), { once: true });
+          probe.src = url;
+        });
+
+      const [micDuration, systemDuration] = await Promise.all([
+        isPlayable(paths.micUrl, paths.micPath) ? durationOf(paths.micUrl) : null,
+        isPlayable(paths.systemUrl, paths.systemPath) ? durationOf(paths.systemUrl) : null,
+      ]);
+      if (cancelled) return;
+      setTracks({ ...paths, micDuration, systemDuration });
+      setTracksLoaded(true);
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [noteId]);
+
+  const stopAudition = () => {
+    stopAtRef.current = null;
+    for (const element of Object.values(audioRef.current)) element?.pause();
+    setPlayingId(null);
+  };
+
+  useEffect(() => stopAudition, []);
+
+
+  const handleAudition = (speakerId: string) => {
+    if (playingId === speakerId) return stopAudition();
+    const cue = auditionCues.get(speakerId);
+    const url = cue?.track === "mic" ? tracks?.micUrl : tracks?.systemUrl;
+    if (!cue || !url) return;
+
+    stopAudition();
+    let element = audioRef.current[cue.track];
+    if (!element) {
+      element = new Audio();
+      audioRef.current[cue.track] = element;
+      // Attached once for the element's life. Adding one per click leaves the previous
+      // handler live with the previous stop point, which pauses the next clip immediately.
+      const owned = element;
+      owned.addEventListener("timeupdate", () => {
+        if (stopAtRef.current !== null && owned.currentTime >= stopAtRef.current) {
+          owned.pause();
+          stopAtRef.current = null;
+          setPlayingId(null);
+        }
+      });
+      owned.addEventListener("ended", () => setPlayingId(null));
+      owned.addEventListener("error", () => {
+        setAuditionError(t("speakers.panel.auditionUnplayable"));
+        setPlayingId(null);
+      });
+    }
+    stopAtRef.current = cue.seconds + AUDITION_SECONDS;
+    if (element.src !== url) element.src = url;
+    element.currentTime = cue.seconds;
+    void element.play().then(
+      () => setPlayingId(speakerId),
+      () => setPlayingId(null)
+    );
+  };
 
   const speakers = useMemo(
     () => computeSpeakerStats(segments) as Speaker[],
@@ -68,25 +189,33 @@ export default function SpeakerPanel({
   const allSelected =
     speakerIds.length > 0 && selectedForMerge.length === speakerIds.length;
 
+  const auditionCues = useMemo(() => {
+    const cues = new Map<string, ReturnType<typeof resolveSpeakerAuditionCue>>();
+    if (!tracks) return cues;
+    for (const speaker of speakers) {
+      cues.set(
+        speaker.id,
+        resolveSpeakerAuditionCue(segments, speaker.id, {
+          micDuration: tracks.micDuration,
+          systemDuration: tracks.systemDuration,
+        })
+      );
+    }
+    return cues;
+  }, [segments, speakers, tracks]);
+
   const handleStartEdit = (speaker: Speaker) => {
     setEditingId(speaker.id);
     setEditValue(speaker.name);
   };
 
-  const reportSkippedLocked = (result: { skippedLockedCount?: number } | undefined) => {
-    const skipped = result?.skippedLockedCount ?? 0;
-    if (skipped > 0) {
-      toast({ title: t("speakers.panel.lockedSkipped", { count: skipped }) });
-    }
-  };
-
+  // Routed through onMapSpeaker rather than the rename IPC: that path skips locked segments,
+  // which makes it a no-op on any speaker already named, and it writes no profile.
   const handleCommitEdit = () => {
     if (editingId && editValue.trim()) {
-      Promise.resolve(
-        (window as any).electronAPI?.renameSpeaker?.(noteId, editingId, editValue.trim())
-      )
-        .then(reportSkippedLocked)
-        .catch(() => {});
+      pendingWriteRef.current = Promise.resolve(
+        onMapSpeaker(editingId, editValue.trim(), null, null)
+      ).catch(() => {});
     }
     setEditingId(null);
   };
@@ -99,17 +228,21 @@ export default function SpeakerPanel({
     setSelectedForMerge((prev) => toggleSelectAllSpeakers(prev, speakerIds));
   };
 
+  // Merge goes the same way as rename. The editor prefers its local segment state over the
+  // stored transcript, so a merge written by the main process would be invisible here and the
+  // next rename would write the pre-merge segments back over it.
   const handleMerge = () => {
     if (!canMergeSelection(selectedForMerge)) return;
-    Promise.resolve(
-      (window as any).electronAPI?.mergeSpeakers?.(
-        noteId,
-        getMergePrimaryId(selectedForMerge),
-        getMergeTargetIds(selectedForMerge)
-      )
-    )
-      .then(reportSkippedLocked)
-      .catch(() => {});
+    const primaryId = getMergePrimaryId(selectedForMerge);
+    const targetIds = getMergeTargetIds(selectedForMerge);
+
+    // A rename committed by this same click's blur is still in flight. Without waiting, the
+    // fold runs against the pre-rename segments and one of the two writes is lost.
+    const pending = pendingWriteRef.current;
+    pendingWriteRef.current = (async () => {
+      await pending;
+      await onMergeSpeakers(primaryId, targetIds, primaryName);
+    })().catch(() => {});
     setSelectedForMerge([]);
   };
 
@@ -182,6 +315,40 @@ export default function SpeakerPanel({
               <div className={`w-6 h-6 rounded-full ${colorClass} shrink-0 flex items-center justify-center text-white text-xs font-bold`}>
                 {speaker.name.charAt(0).toUpperCase()}
               </div>
+              {(() => {
+                const cue = auditionCues.get(speaker.id);
+                const unavailable = isRecording
+                  ? t("speakers.panel.auditionWhileRecording")
+                  : !tracksLoaded
+                    ? t("speakers.panel.auditionLoading")
+                    : auditionError
+                      ? auditionError
+                      : !tracks?.systemUrl && !tracks?.micUrl
+                        ? t("speakers.panel.auditionNoAudio")
+                        : !cue
+                          ? t("speakers.panel.auditionNoCue")
+                          : null;
+                const isPlaying = playingId === speaker.id;
+                return (
+                  <button
+                    type="button"
+                    disabled={Boolean(unavailable)}
+                    title={
+                      unavailable ??
+                      (transcriptOriginSource === "audio:system"
+                        ? t("speakers.panel.auditionPlay")
+                        : t("speakers.panel.auditionApproximate"))
+                    }
+                    className="shrink-0 p-1 rounded hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleAudition(speaker.id);
+                    }}
+                  >
+                    {isPlaying ? <Square size={11} /> : <Play size={11} />}
+                  </button>
+                );
+              })()}
               <div className="flex-1 min-w-0">
                 {editingId === speaker.id ? (
                   <Input

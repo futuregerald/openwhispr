@@ -2492,7 +2492,14 @@
       "keepingSpeaker": "Keeping “{{name}}” — the first speaker you select is the one kept.",
       "keptBadge": "kept",
       "lockedSkipped": "{{count}} segments you had locked were left unchanged.",
-      "talkTime": "{{percent}}% talk time"
+      "talkTime": "{{percent}}% talk time",
+      "auditionPlay": "Play a few seconds of this speaker",
+      "auditionApproximate": "Play a few seconds of this speaker (timing is approximate for this meeting)",
+      "auditionNoAudio": "This meeting has no saved audio",
+      "auditionNoCue": "Nothing to play for this speaker",
+      "auditionWhileRecording": "Not available while recording",
+      "auditionLoading": "Checking this meeting's audio…",
+      "auditionUnplayable": "This meeting's audio could not be played"
     }
   },
   "pipeline": {

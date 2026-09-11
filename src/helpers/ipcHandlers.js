@@ -16,6 +16,7 @@ const {
   findTranscriptOriginBackfills,
   applyTranscriptOriginBackfill,
 } = require("./transcriptOriginBackfill");
+const { toPlayableAudioUrl } = require("./noteAudioUrl");
 const { resolveRetryStep } = require("./noteRetryStep");
 const meetingDetectionHealth = require("./meetingDetectionHealth");
 const { BYOK_API_KEYS } = require("../config/secretKeys");
@@ -878,9 +879,13 @@ class IPCHandlers {
 
     ipcMain.handle("get-note-audio-paths", async (_event, noteId) => {
       const note = this.databaseManager.getNote(noteId);
+      const micPath = note?.mic_audio_path || null;
+      const systemPath = note?.system_audio_path || null;
       return {
-        micPath: note?.mic_audio_path || null,
-        systemPath: note?.system_audio_path || null,
+        micPath,
+        systemPath,
+        micUrl: toPlayableAudioUrl(micPath),
+        systemUrl: toPlayableAudioUrl(systemPath),
       };
     });
 

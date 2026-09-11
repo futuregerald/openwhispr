@@ -2492,7 +2492,14 @@
       "keepingSpeaker": "Se conserva «{{name}}»: se mantiene el primer hablante que selecciones.",
       "keptBadge": "conservado",
       "lockedSkipped": "{{count}} segmentos que habías bloqueado no se modificaron.",
-      "talkTime": "{{percent}} % de tiempo hablado"
+      "talkTime": "{{percent}} % de tiempo hablado",
+      "auditionPlay": "Reproducir unos segundos de este hablante",
+      "auditionApproximate": "Reproducir unos segundos de este hablante (el momento es aproximado en esta reunión)",
+      "auditionNoAudio": "Esta reunión no tiene audio guardado",
+      "auditionNoCue": "No hay nada que reproducir para este hablante",
+      "auditionWhileRecording": "No disponible durante la grabación",
+      "auditionLoading": "Comprobando el audio de esta reunión…",
+      "auditionUnplayable": "No se pudo reproducir el audio de esta reunión"
     }
   },
   "pipeline": {

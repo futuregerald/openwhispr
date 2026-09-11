@@ -2492,7 +2492,14 @@
       "keepingSpeaker": "保留「{{name}}」——你最先選取的發言者會被保留。",
       "keptBadge": "保留",
       "lockedSkipped": "你鎖定的 {{count}} 個片段未被修改。",
-      "talkTime": "發言時間 {{percent}}%"
+      "talkTime": "發言時間 {{percent}}%",
+      "auditionPlay": "播放這位發言者的幾秒錄音",
+      "auditionApproximate": "播放這位發言者的幾秒錄音（本次會議的定位為近似值）",
+      "auditionNoAudio": "本次會議沒有儲存錄音",
+      "auditionNoCue": "這位發言者沒有可播放的內容",
+      "auditionWhileRecording": "錄製期間無法使用",
+      "auditionLoading": "正在檢查本次會議的錄音…",
+      "auditionUnplayable": "無法播放本次會議的錄音"
     }
   },
   "pipeline": {
