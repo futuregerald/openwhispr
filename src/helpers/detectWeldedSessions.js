@@ -6,6 +6,9 @@
  * @typedef {object} WeldedSession
  * @property {number} startIndex lowest index in the ORIGINAL segment array, never the filtered or sorted series
  * @property {number} endIndex highest index in the ORIGINAL segment array, never the filtered or sorted series
+ * @property {number[]} indices every ORIGINAL-array index this session owns, ascending by array
+ * position. This is the cluster membership, and it is what a splitter must use — `startIndex`
+ * and `endIndex` are a summary, not a range to walk.
  * @property {number} count
  * @property {number} startsAt
  * @property {number} endsAt
@@ -18,6 +21,12 @@
  * @property {"epoch-ms" | "relative-seconds"} unit
  * @property {"insufficient-timestamps"} [reason]
  * @property {WeldedSession[]} sessions ascending by time, empty when not usable
+ * @property {number[]} unassigned ORIGINAL-array indices owned by no session: segments with no
+ * finite timestamp, and — the dangerous ones — segments in the time base this report DISCARDED
+ * when the note mixes units. `usable: true` says the dominant base clustered, NOT that every
+ * segment is covered. Anything that rewrites a note must refuse while this is non-empty, or it
+ * will silently drop those segments. Guaranteed: `sum(sessions[].indices.length) +
+ * unassigned.length === segments.length`, with no index in two places.
  */
 
 const EPOCH_THRESHOLD = 1e9;
@@ -56,8 +65,20 @@ export const detectSessions = (segments, options = {}) => {
   );
   const series = isEpoch ? epochStamps : stamps.filter((stamp) => stamp.value <= EPOCH_THRESHOLD);
 
+  const inSeries = new Set(series.map((stamp) => stamp.index));
+  const unassigned = [];
+  for (let index = 0; index < (segments?.length ?? 0); index += 1) {
+    if (!inSeries.has(index)) unassigned.push(index);
+  }
+
   if (series.length < 2) {
-    return { usable: false, unit, reason: "insufficient-timestamps", sessions: [] };
+    return {
+      usable: false,
+      unit,
+      reason: "insufficient-timestamps",
+      sessions: [],
+      unassigned: segments?.map((_, index) => index) ?? [],
+    };
   }
 
   const sorted = [...series].sort((a, b) => a.value - b.value);
@@ -76,11 +97,12 @@ export const detectSessions = (segments, options = {}) => {
   const sessions = clusters.map((cluster) => ({
     startIndex: Math.min(...cluster.map((stamp) => stamp.index)),
     endIndex: Math.max(...cluster.map((stamp) => stamp.index)),
+    indices: cluster.map((stamp) => stamp.index).sort((a, b) => a - b),
     count: cluster.length,
     startsAt: cluster[0].value,
     endsAt: cluster[cluster.length - 1].value,
     isFragment: cluster.length < minSessionSegments,
   }));
 
-  return { usable: true, unit, sessions };
+  return { usable: true, unit, sessions, unassigned };
 };
