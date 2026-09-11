@@ -2491,7 +2491,6 @@
       "mergeInto": "Fusionner {{count}} dans {{name}}",
       "keepingSpeaker": "« {{name}} » est conservé : le premier intervenant sélectionné est celui qui reste.",
       "keptBadge": "conservé",
-      "lockedSkipped": "{{count}} segments que vous aviez verrouillés n’ont pas été modifiés.",
       "talkTime": "{{percent}} % de temps de parole",
       "auditionPlay": "Écouter quelques secondes de cet interlocuteur",
       "auditionApproximate": "Écouter quelques secondes de cet interlocuteur (le repère est approximatif pour cette réunion)",

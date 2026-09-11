@@ -2491,7 +2491,6 @@
       "mergeInto": "Merge {{count}} into {{name}}",
       "keepingSpeaker": "Keeping “{{name}}” — the first speaker you select is the one kept.",
       "keptBadge": "kept",
-      "lockedSkipped": "{{count}} segments you had locked were left unchanged.",
       "talkTime": "{{percent}}% talk time",
       "auditionPlay": "Play a few seconds of this speaker",
       "auditionApproximate": "Play a few seconds of this speaker (timing is approximate for this meeting)",

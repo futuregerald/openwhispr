@@ -367,12 +367,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   setNoteMeetingType: (noteId, meetingTypeId) =>
     ipcRenderer.invoke("set-note-meeting-type", noteId, meetingTypeId),
 
-  // Speaker management (pipeline)
-  renameSpeaker: (noteId, speakerId, newName) =>
-    ipcRenderer.invoke("rename-speaker", noteId, speakerId, newName),
-  mergeSpeakers: (noteId, keepId, mergeIds) =>
-    ipcRenderer.invoke("merge-speakers", noteId, keepId, mergeIds),
-
   // Pipeline settings
   setAutoPostCallPipeline: (enabled) => ipcRenderer.invoke("set-auto-post-call-pipeline", enabled),
   syncNoteFormattingConfig: (config) => ipcRenderer.invoke("sync-note-formatting-config", config),

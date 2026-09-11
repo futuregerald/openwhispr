@@ -2491,7 +2491,6 @@
       "mergeInto": "Combinar {{count}} en {{name}}",
       "keepingSpeaker": "Se conserva «{{name}}»: se mantiene el primer hablante que selecciones.",
       "keptBadge": "conservado",
-      "lockedSkipped": "{{count}} segmentos que habías bloqueado no se modificaron.",
       "talkTime": "{{percent}} % de tiempo hablado",
       "auditionPlay": "Reproducir unos segundos de este hablante",
       "auditionApproximate": "Reproducir unos segundos de este hablante (el momento es aproximado en esta reunión)",
