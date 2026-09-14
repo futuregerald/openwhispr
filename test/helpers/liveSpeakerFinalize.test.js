@@ -224,10 +224,9 @@ test("merges made during stop() reach the caller instead of being reset away", a
 // The route is not exotic. _performRecluster breaks a tie on hasName before
 // count, so a count-1 minted cluster wins only by carrying a display name the
 // established one lacks — which is what the stored-profile branch of
-// _resolveSpeakerForEmbedding gives it. The app arms that branch itself: a
-// 1-on-1 calendar meeting writes a speaker profile carrying the attendee's email
-// (bindOneOnOneAttendeeToSpeaker in ipcHandlers), and getLiveSpeakerProfiles
-// then returns it for every later meeting with that person.
+// _resolveSpeakerForEmbedding gives it. Any stored speaker profile carrying a
+// display name, handed to the identifier through getSpeakerProfiles, arms that
+// branch.
 test("a cluster that absorbed an established speaker is no longer this segment's guess", async () => {
   const live = identifier();
   seedCluster(live, "speaker_0", ALICE);
@@ -300,8 +299,7 @@ test("a merge that cannot proceed leaves the minted set untouched", () => {
 // try/catch, which meant one failed embedding cost the caller everything: the
 // transient state, the final merges, and the reset that the NEXT meeting needs.
 // stopLiveSpeakerIdentification's .catch(() => null) in ipcHandlers swallowed
-// it, so the loss was silent, and startLiveSpeakerIdentification awaits that
-// stop uncaught -- so the throw could also abort the next meeting's startup.
+// it, so the loss was silent.
 test("stop() still returns the meeting's speakers when the last embedding fails", async () => {
   const live = identifier();
   seedCluster(live, "speaker_0", ALICE);

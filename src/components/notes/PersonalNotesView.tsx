@@ -155,8 +155,6 @@ export default function PersonalNotesView({
   const realtimeSegments = useMeetingRecordingStore((s) => s.segments);
   const micPartial = useMeetingRecordingStore((s) => s.micPartial);
   const systemPartial = useMeetingRecordingStore((s) => s.systemPartial);
-  const systemPartialSpeakerId = useMeetingRecordingStore((s) => s.systemPartialSpeakerId);
-  const systemPartialSpeakerName = useMeetingRecordingStore((s) => s.systemPartialSpeakerName);
   const diarizationSessionId = useMeetingRecordingStore((s) => s.diarizationSessionId);
   const sessionDiarizationEnabled = useMeetingRecordingStore((s) => s.sessionDiarizationEnabled);
   const sessionExpectedCount = useMeetingRecordingStore((s) => s.sessionExpectedCount);
@@ -1071,12 +1069,6 @@ export default function PersonalNotesView({
               meetingSegments={isActiveNoteRecording ? realtimeSegments : []}
               meetingMicPartial={isActiveNoteRecording ? micPartial : ""}
               meetingSystemPartial={isActiveNoteRecording ? systemPartial : ""}
-              meetingSystemPartialSpeakerId={
-                isActiveNoteRecording ? systemPartialSpeakerId : undefined
-              }
-              meetingSystemPartialSpeakerName={
-                isActiveNoteRecording ? systemPartialSpeakerName : undefined
-              }
               onLiveSpeakerLock={lockSpeaker}
               liveTranscript={isActiveNoteRecording ? realtimeTranscript : ""}
               sessionDiarizationEnabled={sessionDiarizationEnabled}

@@ -102,8 +102,6 @@ interface NoteEditorProps {
   meetingSegments?: TranscriptSegment[];
   meetingMicPartial?: string;
   meetingSystemPartial?: string;
-  meetingSystemPartialSpeakerId?: string | null;
-  meetingSystemPartialSpeakerName?: string | null;
   onLiveSpeakerLock?: (speakerId: string, displayName: string) => void;
   liveTranscript?: string;
   sessionDiarizationEnabled?: boolean;
@@ -140,8 +138,6 @@ export default function NoteEditor({
   meetingSegments,
   meetingMicPartial,
   meetingSystemPartial,
-  meetingSystemPartialSpeakerId,
-  meetingSystemPartialSpeakerName,
   onLiveSpeakerLock,
   liveTranscript,
   sessionDiarizationEnabled,
@@ -990,8 +986,6 @@ export default function NoteEditor({
                 segments={displaySegments}
                 micPartial={isRecording ? meetingMicPartial : undefined}
                 systemPartial={isRecording ? meetingSystemPartial : undefined}
-                systemPartialSpeakerId={isRecording ? meetingSystemPartialSpeakerId : undefined}
-                systemPartialSpeakerName={isRecording ? meetingSystemPartialSpeakerName : undefined}
                 speakerMappings={speakerMappings}
                 speakerProfiles={knownSpeakers}
                 participants={parsedParticipants}

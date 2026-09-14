@@ -4822,21 +4822,8 @@ class IPCHandlers {
     let meetingMicPcmPath = null;
     let meetingLiveSpeakerActive = false;
     let meetingLiveSpeakerState = null;
-    let meetingLiveSpeakerStartedAt = null;
     let meetingReclusterTimer = null;
     let meetingSpeakerRemapper = (id) => id;
-
-    const createSpeakerRemapper = () => {
-      const map = new Map();
-      return (internalId) => {
-        if (!internalId) return internalId;
-        const existing = map.get(internalId);
-        if (existing !== undefined) return existing;
-        const label = `speaker_${map.size}`;
-        map.set(internalId, label);
-        return label;
-      };
-    };
 
     let meetingLocalBuffers = { mic: [], system: [] };
     const meetingChunkBoundaryFinders = {
@@ -4855,21 +4842,8 @@ class IPCHandlers {
     let meetingPendingMicFinalTimer = null;
     let meetingAecEnabled = false;
     let meetingOneOnOneAttendee = null;
-    let meetingOneOnOneProfileBound = false;
     let meetingNoteId = null;
 
-    const getLiveSpeakerProfiles = () => {
-      const attendees = this._getNoteNonSelfParticipants(meetingNoteId);
-      const attendeeEmails = new Set();
-      for (const p of attendees) {
-        const email = (p.email || "").toLowerCase().trim();
-        if (email) attendeeEmails.add(email);
-      }
-      if (attendeeEmails.size === 0) return [];
-      return this.databaseManager
-        .getSpeakerProfiles(true)
-        .filter((p) => p.email && attendeeEmails.has(p.email.toLowerCase()));
-    };
     const shouldSuppressMicTranscriptSegment = (startedAt, endedAt = Date.now()) =>
       meetingEchoLeakDetector.shouldSuppressMicSegment(startedAt, endedAt);
 
@@ -4880,43 +4854,6 @@ class IPCHandlers {
         return this._resolveOneOnOneOtherParticipant(note?.participants);
       } catch (_) {
         return null;
-      }
-    };
-
-    const resolveDiarizationEnabled = () =>
-      (this.activeMeetingSpeakerConfig?.enabled ?? this.speakerDiarizationEnabled) !== false;
-
-    const resolveSessionMaxSpeakers = () => {
-      // Live diarization should freely detect speakers as they appear.
-      // Use MAX_SPEAKER_COUNT as the ceiling — no artificial cap.
-      return MAX_SPEAKER_COUNT;
-    };
-
-    const bindOneOnOneAttendeeToSpeaker = (speakerId) => {
-      if (!meetingOneOnOneAttendee || meetingOneOnOneProfileBound || !speakerId) return;
-      if (!resolveDiarizationEnabled()) return;
-      const embedding = liveSpeakerIdentifier.getSpeakerEmbedding(speakerId);
-      if (!embedding) return;
-      try {
-        const buffer = Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
-        const profile = this.databaseManager.upsertSpeakerProfile(
-          meetingOneOnOneAttendee.displayName,
-          meetingOneOnOneAttendee.email,
-          buffer
-        );
-        liveSpeakerIdentifier.mapSpeaker(
-          speakerId,
-          profile.id,
-          meetingOneOnOneAttendee.displayName,
-          null
-        );
-        meetingOneOnOneProfileBound = true;
-      } catch (error) {
-        debugLogger.warn(
-          "1-on-1 attendee profile binding failed",
-          { error: error.message },
-          "speaker"
-        );
       }
     };
 
@@ -5181,89 +5118,6 @@ class IPCHandlers {
       // correction for its final segment.
       applyLiveSpeakerMerges(liveSpeakerIdentifier.takeFinalMerges(), win);
       return meetingLiveSpeakerState;
-    };
-
-    const startLiveSpeakerIdentification = async (win, systemAudioMode) => {
-      await stopLiveSpeakerIdentification();
-
-      if (systemAudioMode !== "native" || !liveSpeakerIdentifier.isAvailable()) {
-        return false;
-      }
-
-      const diarizationEnabled = resolveDiarizationEnabled();
-      if (!diarizationEnabled) {
-        return false;
-      }
-
-      meetingLiveSpeakerState = null;
-      meetingLiveSpeakerStartedAt = Date.now();
-      meetingSpeakerRemapper = createSpeakerRemapper();
-      const started = await liveSpeakerIdentifier.start(
-        (identification) => {
-          if (!win || win.isDestroyed()) {
-            return;
-          }
-
-          const publicSpeakerId = meetingSpeakerRemapper(identification.speakerId);
-          bindOneOnOneAttendeeToSpeaker(publicSpeakerId);
-
-          const displayName = meetingOneOnOneAttendee
-            ? meetingOneOnOneAttendee.displayName
-            : identification.displayName;
-
-          const startTime = Math.max(
-            meetingLiveSpeakerStartedAt || 0,
-            (meetingLiveSpeakerStartedAt || 0) + identification.startTime * 1000
-          );
-          const endTime = Math.max(
-            startTime,
-            (meetingLiveSpeakerStartedAt || 0) + identification.endTime * 1000
-          );
-          const enrichedIdentification = {
-            ...identification,
-            speakerId: publicSpeakerId,
-            displayName,
-            startTime,
-            endTime,
-          };
-
-          win.webContents.send("meeting-speaker-identified", enrichedIdentification);
-
-          for (const seg of meetingDiarizationSegments) {
-            const segAnchor = seg.startedAt ?? seg.timestamp;
-            if (
-              seg.source === "system" &&
-              segAnchor != null &&
-              segAnchor >= startTime &&
-              segAnchor <= endTime &&
-              (!seg.speaker || seg.speakerIsPlaceholder)
-            ) {
-              applyConfirmedSpeaker(seg, {
-                speaker: publicSpeakerId,
-                speakerName: displayName || seg.speakerName,
-                speakerIsPlaceholder: false,
-              });
-            }
-          }
-        },
-        {
-          getSpeakerProfiles: getLiveSpeakerProfiles,
-          maxSpeakers: MAX_SPEAKER_COUNT,
-          enabled: true,
-        }
-      );
-
-      if (started) {
-        meetingLiveSpeakerActive = true;
-        meetingReclusterTimer = setInterval(async () => {
-          if (!meetingLiveSpeakerActive || !win || win.isDestroyed()) return;
-          applyLiveSpeakerMerges(await liveSpeakerIdentifier.recluster(), win);
-        }, 30_000);
-      } else {
-        meetingLiveSpeakerStartedAt = null;
-      }
-
-      return started;
     };
 
     const transcribeOneLocalChunk = async (source, { final = false } = {}) => {
@@ -5560,9 +5414,7 @@ class IPCHandlers {
       }
       void stopLiveSpeakerIdentification();
       meetingLiveSpeakerState = null;
-      meetingLiveSpeakerStartedAt = null;
       meetingOneOnOneAttendee = null;
-      meetingOneOnOneProfileBound = false;
       meetingNoteId = null;
       meetingLocalMode = false;
       meetingLocalBuffers = { mic: [], system: [] };
@@ -5697,7 +5549,6 @@ class IPCHandlers {
       this._meetingMicStreaming = null;
       this._meetingSystemStreaming = null;
       meetingSendCounts = { mic: 0, system: 0 };
-      meetingLiveSpeakerStartedAt = null;
       meetingPendingMicChunks = [];
       resetPendingMicFinals();
       meetingAecEnabled = false;
@@ -5918,11 +5769,8 @@ class IPCHandlers {
         let { mode: systemAudioMode, strategy: systemAudioStrategy } = systemAudioPlan;
         meetingEchoLeakDetector.reset();
         meetingOneOnOneAttendee = resolveOneOnOneAttendeeForNote(options.noteId);
-        meetingOneOnOneProfileBound = false;
         meetingNoteId = options.noteId ?? null;
 
-        // Seed the speaker cap from the note/calendar participants up front so live
-        // identification isn't stuck at the default if the renderer never pushes a config.
         if (!this.activeMeetingSpeakerConfig) {
           this.activeMeetingSpeakerConfig = this._resolveInitialMeetingSpeakerConfig(meetingNoteId);
         }
@@ -5941,7 +5789,6 @@ class IPCHandlers {
             attachMeetingStreamingHandlers(this._meetingSystemStreaming, win, "system");
           }
           await startMeetingAec(systemAudioMode);
-          await startLiveSpeakerIdentification(win, systemAudioMode);
           ({ systemAudioMode, systemAudioStrategy } = await startMeetingSystemAudio(
             event,
             systemAudioMode,
@@ -5969,7 +5816,6 @@ class IPCHandlers {
           meetingCeilingNoticeSent = false;
           meetingLocalTranscript = "";
 
-          await startLiveSpeakerIdentification(meetingLocalWin, systemAudioMode);
           await startMeetingAec(systemAudioMode);
 
           meetingLocalTimer = setInterval(() => {
@@ -6003,7 +5849,6 @@ class IPCHandlers {
 
         await connectRealtimeStreaming(event, options);
         const realtimeWin = BrowserWindow.fromWebContents(event.sender);
-        await startLiveSpeakerIdentification(realtimeWin, systemAudioMode);
         await startMeetingAec(systemAudioMode);
         ({ systemAudioMode, systemAudioStrategy } = await startMeetingSystemAudio(
           event,
@@ -7301,9 +7146,6 @@ class IPCHandlers {
         );
         this.activeMeetingSpeakerConfig = { enabled, expectedCount };
         liveSpeakerIdentifier.setEnabled(enabled);
-        // Live identification only labels other speakers (the mic track is "you"),
-        // so cap at expectedCount - 1 to match resolveSessionMaxSpeakers().
-        liveSpeakerIdentifier.setMaxSpeakers(MAX_SPEAKER_COUNT);
         return { success: true };
       } catch (error) {
         return { success: false, error: error.message };
