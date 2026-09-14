@@ -76,6 +76,28 @@ const SILERO_VAD_ONNX = "silero_vad.onnx";
 const DIARIZATION_ENGINE_ENV = "OPENWHISPR_DIARIZATION_ENGINE";
 const FLUIDAUDIO_MODE_ENV = "OPENWHISPR_FLUIDAUDIO_MODE"; // "streaming" (default) | "offline"
 
+const FLUIDAUDIO_OFFLINE_THRESHOLD = 0.9;
+
+function buildFluidAudioArgs({ wavPath, outJson, mode, numSpeakers = -1, maxSpeakers = -1 }) {
+  const args = ["process", wavPath, "--mode", mode, "--output", outJson];
+  if (mode === "offline") {
+    args.push("--threshold", String(FLUIDAUDIO_OFFLINE_THRESHOLD));
+  }
+  if (numSpeakers > 0) {
+    // Exact speaker count requested (rare).
+    if (mode === "streaming") {
+      args.push("--num-clusters", String(numSpeakers));
+    } else {
+      args.push("--min-speakers", String(numSpeakers), "--max-speakers", String(numSpeakers));
+    }
+  } else if (maxSpeakers > 0 && mode === "offline") {
+    // Preferred: auto-detect the count up to a sane upper bound, instead of
+    // forcing a noisy exact count (which over/under-splits speakers).
+    args.push("--max-speakers", String(maxSpeakers));
+  }
+  return args;
+}
+
 class DiarizationManager {
   constructor() {
     // diarize() now runs one call at a time, but a download and a diarization
@@ -494,22 +516,8 @@ class DiarizationManager {
 
     // streaming mode = pyannote segmentation + WeSpeaker embeddings (community-1
     // class, the benchmarked path). numSpeakers maps to --num-clusters there and
-    // to --min/--max-speakers in offline (VBx) mode. OpenWhispr's `threshold` is
-    // NOT forwarded: FluidAudio uses a different threshold scale, so we let it use
-    // its own tuned default rather than over-splitting speakers.
-    const args = ["process", wavPath, "--mode", mode, "--output", outJson];
-    if (numSpeakers > 0) {
-      // Exact speaker count requested (rare).
-      if (mode === "streaming") {
-        args.push("--num-clusters", String(numSpeakers));
-      } else {
-        args.push("--min-speakers", String(numSpeakers), "--max-speakers", String(numSpeakers));
-      }
-    } else if (maxSpeakers > 0 && mode === "offline") {
-      // Preferred: auto-detect the count up to a sane upper bound, instead of
-      // forcing a noisy exact count (which over/under-splits speakers).
-      args.push("--max-speakers", String(maxSpeakers));
-    }
+    // to --min/--max-speakers in offline (VBx) mode.
+    const args = buildFluidAudioArgs({ wavPath, outJson, mode, numSpeakers, maxSpeakers });
 
     debugLogger.notice("Starting FluidAudio diarization", {
       binaryPath,
@@ -935,3 +943,5 @@ class DiarizationManager {
 }
 
 module.exports = DiarizationManager;
+module.exports.buildFluidAudioArgs = buildFluidAudioArgs;
+module.exports.FLUIDAUDIO_OFFLINE_THRESHOLD = FLUIDAUDIO_OFFLINE_THRESHOLD;
