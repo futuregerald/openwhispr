@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.21.2] - 2026-09-14
+
+### Fixed
+
+- Running a note action (such as Enhance) on a meeting note with a local model no longer sends
+  the transcript to the model twice. Long meetings that were refused as "too long for the local
+  model" now split into passes and complete, as they already did for the automatic notes.
+
 ## [1.21.1] - 2026-09-11
 
 ### Removed
