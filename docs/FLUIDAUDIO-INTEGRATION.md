@@ -17,7 +17,7 @@ All logic changes live in **two files**; everything else is additive (a build sc
 - `getDiarizationEngine()` — returns `"fluidaudio"` or `"sherpa"`. Explicit env override wins; otherwise FluidAudio is auto-selected on macOS when its binary is present, else sherpa. Warns on unrecognized env values.
 - `isAvailable()` — now **engine-agnostic**: true if *either* backend can run, so availability gates never skip diarization because the non-active backend is the installed one.
 - `diarize()` — thin dispatcher → `_diarizeFluidAudio()` (new) or `_diarizeSherpa()` (the original body, renamed byte-for-byte). Falls back to sherpa if FluidAudio is selected but its binary is missing.
-- `_diarizeFluidAudio()` — spawns `fluidaudiocli process <wav> --mode streaming --output <tmp.json> [--num-clusters N]`, parses the JSON, returns the standard `{ start, end, speaker }[]` contract. Full parity with sherpa's process tracking, pid file, 60-min timeout, temp-file cleanup on every exit path, and always-resolve-never-throw behavior.
+- `_diarizeFluidAudio()` — spawns `fluidaudiocli process <wav> --mode offline --output <tmp.json> --threshold 0.9 [--min-speakers N --max-speakers N | --max-speakers N]` (arguments built by `buildFluidAudioArgs`), parses the JSON, returns the standard `{ start, end, speaker }[]` contract. Full parity with sherpa's process tracking, pid file, 60-min timeout, temp-file cleanup on every exit path, and always-resolve-never-throw behavior.
 - `_parseFluidAudioOutput()` — maps FluidAudio's `segments[].{speakerId,startTimeSeconds,endTimeSeconds}` to the contract; drops null-speaker / NaN / inverted segments.
 
 ### `src/helpers/ipcHandlers.js`
@@ -32,16 +32,19 @@ Any diarization engine must satisfy:
 - **Output:** `Array<{ start:number, end:number, speaker:string }>` in seconds, or `[]` on any failure (never throws/rejects).
 - **Options:** `{ numSpeakers:int (-1=auto), threshold:number }`.
 
-Note: OpenWhispr's `threshold` (sherpa scale, default 0.55) is **not** forwarded to FluidAudio,
-whose clustering threshold is a different scale (default ~0.70). FluidAudio uses its own tuned
-default to avoid over-splitting speakers. `numSpeakers` maps to `--num-clusters` (streaming mode).
+Note: OpenWhispr's `threshold` option (sherpa scale, default 0.55) is **not** forwarded to FluidAudio,
+whose threshold uses a different scale. In **offline** mode the app passes its own
+`--threshold 0.9` (`FLUIDAUDIO_OFFLINE_THRESHOLD`, measured against real meeting headcounts on
+FluidAudio v0.15.5 — re-check with `scripts/diarization-headcount-eval.js` after any engine bump);
+streaming mode passes no threshold. `numSpeakers` maps to `--min-speakers N --max-speakers N`
+(offline) or `--num-clusters N` (streaming).
 
 ## Configuration (env vars)
 
 | Variable | Values | Effect |
 |---|---|---|
 | `OPENWHISPR_DIARIZATION_ENGINE` | `fluidaudio` \| `sherpa` | Force a backend. Unset = auto (FluidAudio on macOS when installed, else sherpa). |
-| `OPENWHISPR_FLUIDAUDIO_MODE` | `streaming` (default) \| `offline` | FluidAudio pipeline. `streaming` = pyannote seg + WeSpeaker (benchmarked path). `offline` = VBx clustering. Both process the whole recording (this is a post-call pass, not live). |
+| `OPENWHISPR_FLUIDAUDIO_MODE` | `offline` (default) \| `streaming` | FluidAudio pipeline. `streaming` = pyannote seg + WeSpeaker (benchmarked path). `offline` = VBx clustering. Both process the whole recording (this is a post-call pass, not live). |
 
 ## Install / rebuild / revert
 
