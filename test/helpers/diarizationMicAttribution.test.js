@@ -205,3 +205,15 @@ test("the empty-diarization path does not mutate the caller's segments", () => {
 
   assert.equal(input[0].speaker, undefined, "the input array must be left untouched");
 });
+
+test("a system line with no overlapping engine segment goes to the nearest speaker, not the first", () => {
+  const merged = stubbedManager().mergeWithTranscript(
+    [{ id: "s1", text: "late line", source: "system", timestamp: 3000, startedAt: 3000 }],
+    [
+      { speaker: "early", start: 0, end: 5 },
+      { speaker: "late", start: 2990, end: 2999.9 },
+    ]
+  );
+
+  assert.equal(merged[0].speaker, "speaker_1", "renumbered id of `late`");
+});
