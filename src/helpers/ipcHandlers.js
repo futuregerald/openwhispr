@@ -8693,9 +8693,16 @@ class IPCHandlers {
           fs.unlinkSync(rawPcmPath);
         } catch (_) {}
         if (tmpWav) {
-          try {
-            fs.unlinkSync(tmpWav);
-          } catch (_) {}
+          if (process.env.OPENWHISPR_KEEP_DIARIZATION_INPUT === "1") {
+            try {
+              fs.chmodSync(tmpWav, 0o600);
+            } catch (_) {}
+            debugLogger.notice("Diarization input kept for measurement", { tmpWav, noteId });
+          } else {
+            try {
+              fs.unlinkSync(tmpWav);
+            } catch (_) {}
+          }
         }
       }
     })();

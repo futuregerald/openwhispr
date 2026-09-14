@@ -10,6 +10,12 @@ const { getModelsDirForService } = require("./modelDirUtils");
 const { convertToWav } = require("./ffmpegUtils");
 const { getSafeTempDir } = require("./safeTempDir");
 const { applyConfirmedSpeaker } = require("./speakerAssignmentPolicy");
+const {
+  foldMinorSpeakers,
+  foldFloorFor,
+  secondsBySpeaker,
+  NEAR_FLOOR_SECONDS,
+} = require("./foldMinorSpeakers");
 const sidecarPidFile = require("./sidecarPidFile");
 const {
   transcriptsOverlap,
@@ -410,14 +416,47 @@ class DiarizationManager {
     return runWhenFree;
   }
 
+  _foldMinorSpeakersAndLog(segments, options = {}) {
+    if (!Array.isArray(segments) || segments.length === 0) return segments;
+    if (Number(options.numSpeakers) > 0) return segments;
+
+    const before = secondsBySpeaker(segments);
+    const floorSeconds = foldFloorFor(before);
+    const folded = foldMinorSpeakers(segments);
+    const keptIds = new Set(folded.map((segment) => segment.speaker));
+
+    if (keptIds.size < before.size) {
+      debugLogger.notice("Diarization speakers folded", {
+        floorSeconds: Math.round(floorSeconds * 10) / 10,
+        before: Object.fromEntries(before),
+        after: Object.fromEntries(secondsBySpeaker(folded)),
+      });
+    }
+
+    const nearFloor = [...before].filter(
+      ([id, seconds]) => keptIds.has(id) && seconds < floorSeconds + NEAR_FLOOR_SECONDS
+    );
+    if (nearFloor.length > 0) {
+      debugLogger.notice("Diarization kept speakers near the fold floor", {
+        floorSeconds: Math.round(floorSeconds * 10) / 10,
+        nearFloor: Object.fromEntries(nearFloor),
+      });
+    }
+
+    return folded;
+  }
+
   async _diarizeNow(wavPath, options = {}) {
     if (this.getDiarizationEngine() === "fluidaudio") {
       if (this.getFluidAudioBinaryPath()) {
-        return this._diarizeFluidAudio(wavPath, options);
+        return this._foldMinorSpeakersAndLog(
+          await this._diarizeFluidAudio(wavPath, options),
+          options
+        );
       }
       debugLogger.warn("FluidAudio engine selected but binary missing; using sherpa-onnx");
     }
-    return this._diarizeSherpa(wavPath, options);
+    return this._foldMinorSpeakersAndLog(await this._diarizeSherpa(wavPath, options), options);
   }
 
   async _diarizeFluidAudio(wavPath, options = {}) {
@@ -767,7 +806,8 @@ class DiarizationManager {
         const midpoint = segStart + (segEnd - segStart) / 2;
         let bestSpeaker = null;
         let bestOverlap = 0;
-        let bestDistance = Number.POSITIVE_INFINITY;
+        let nearestSpeaker = null;
+        let nearestDistance = Number.POSITIVE_INFINITY;
 
         for (const dSeg of diarizationSegments) {
           const overlap = Math.min(segEnd, dSeg.end) - Math.max(segStart, dSeg.start);
@@ -783,10 +823,14 @@ class DiarizationManager {
                 ? midpoint - dSeg.end
                 : 0;
 
-          if (!bestSpeaker && distance < bestDistance) {
-            bestDistance = distance;
-            bestSpeaker = dSeg.speaker;
+          if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestSpeaker = dSeg.speaker;
           }
+        }
+
+        if (bestOverlap === 0) {
+          bestSpeaker = nearestSpeaker;
         }
 
         if (bestSpeaker) {
