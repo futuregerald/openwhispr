@@ -1,0 +1,60 @@
+{
+  "audioFile": "/tmp/fixture.wav",
+  "durationSeconds": 2506.5918,
+  "processingTimeSeconds": 6.443273067474365,
+  "realTimeFactor": 389.0246,
+  "segments": [
+    {
+      "embedding": [
+        -0.12127916,
+        -0.05699587
+      ],
+      "endTimeSeconds": 6.1460104,
+      "qualityScore": 0,
+      "speakerId": "S1",
+      "startTimeSeconds": 4.804754
+    },
+    {
+      "embedding": [
+        -0.12127916,
+        -0.05699587
+      ],
+      "endTimeSeconds": 48.064518,
+      "qualityScore": 1,
+      "speakerId": "S1",
+      "startTimeSeconds": 43.972836
+    },
+    {
+      "embedding": [
+        -0.13023584,
+        -0.06542167
+      ],
+      "endTimeSeconds": 104.85569,
+      "qualityScore": 1,
+      "speakerId": "S2",
+      "startTimeSeconds": 103.42954
+    },
+    {
+      "embedding": [
+        -0.13023584,
+        -0.06542167
+      ],
+      "endTimeSeconds": 120.23769,
+      "qualityScore": 1,
+      "speakerId": "S2",
+      "startTimeSeconds": 113.27674
+    }
+  ],
+  "speakerCount": 2,
+  "timestamp": "2026-09-15T13:41:35Z",
+  "timings": {
+    "audioLoadingSeconds": 0.09932100772857666,
+    "embeddingExtractionSeconds": 6.176679015159607,
+    "modelCompilationSeconds": 0.14340496063232422,
+    "postProcessingSeconds": 0,
+    "segmentationSeconds": 6.109638929367065,
+    "speakerClusteringSeconds": 0.1354529857635498,
+    "totalInferenceSeconds": 12.421770930290222,
+    "totalProcessingSeconds": 12.664496898651123
+  }
+}

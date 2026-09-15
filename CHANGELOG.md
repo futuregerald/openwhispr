@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.2] - 2026-09-15
+
+### Fixed
+
+- Upgraded the on-device speaker detection engine (FluidAudio) to a version with fixed voice
+  grouping, and re-tuned it against 15 real meetings. One- and two-person calls still come out
+  exactly right; on larger calls the total speaker-count error drops from 19 to 18 and no call gets
+  worse.
+- Building the app now rebuilds the speaker detection engine when its pinned version changes, instead
+  of silently keeping an older copy.
+
 ## [1.22.1] - 2026-09-15
 
 ### Fixed

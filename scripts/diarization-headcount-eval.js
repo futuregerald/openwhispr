@@ -42,14 +42,33 @@ function parseMap(value) {
 }
 
 function parseArgs(argv) {
-  const args = { notes: [], truth: new Map(), expect: new Map() };
+  const args = { notes: [], truth: new Map(), expect: new Map(), binary: null, threshold: null };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     const value = argv[i + 1];
     if (flag === "--notes") args.notes = parseList(value).map(Number);
     else if (flag === "--truth") args.truth = parseMap(value);
     else if (flag === "--expect") args.expect = parseMap(value);
-    else continue;
+    else if (flag === "--binary") {
+      if (value === undefined || value.startsWith("--")) {
+        console.error(`--binary expects a path, got: ${value === undefined ? "(missing)" : value}`);
+        process.exit(2);
+      }
+      args.binary = value;
+    } else if (flag === "--threshold") {
+      if (value === undefined || value.startsWith("--")) {
+        console.error(
+          `--threshold expects a number, got: ${value === undefined ? "(missing)" : value}`
+        );
+        process.exit(2);
+      }
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) {
+        console.error(`--threshold expects a number, got: ${value}`);
+        process.exit(2);
+      }
+      args.threshold = parsed;
+    } else continue;
     i += 1;
   }
   return args;
@@ -83,10 +102,19 @@ function decodeSystemTrack(db, noteId) {
   return wav;
 }
 
-function countSpeakers(wav, noteId) {
+function countSpeakers(wav, noteId, { binary, threshold } = {}) {
   const outJson = path.join(CACHE_DIR, `note-${noteId}-${process.pid}.json`);
   const args = DiarizationManager.buildFluidAudioArgs({ wavPath: wav, outJson, mode: "offline" });
-  execFileSync(BINARY, args, { stdio: "pipe", maxBuffer: 64 * 1024 * 1024 });
+  if (threshold != null) {
+    const thresholdIndex = args.indexOf("--threshold");
+    if (thresholdIndex === -1) {
+      throw new Error(
+        "threshold override given but buildFluidAudioArgs did not include --threshold"
+      );
+    }
+    args[thresholdIndex + 1] = String(threshold);
+  }
+  execFileSync(binary, args, { stdio: "pipe", maxBuffer: 64 * 1024 * 1024 });
   const segments = DiarizationManager.prototype._parseFluidAudioOutput(
     fs.readFileSync(outJson, "utf8")
   );
@@ -95,7 +123,7 @@ function countSpeakers(wav, noteId) {
 }
 
 function main() {
-  const { notes, truth, expect } = parseArgs(process.argv.slice(2));
+  const { notes, truth, expect, binary, threshold } = parseArgs(process.argv.slice(2));
   if (notes.length === 0) {
     console.error(
       "usage: diarization-headcount-eval.js --notes 12,22 --truth 12=1,22=1 [--expect 12=1,22=1]"
@@ -113,7 +141,9 @@ function main() {
   let summedError = 0;
   let mismatches = 0;
 
-  console.log(`threshold ${DiarizationManager.FLUIDAUDIO_OFFLINE_THRESHOLD}, offline mode, folded`);
+  const effectiveThreshold = threshold ?? DiarizationManager.FLUIDAUDIO_OFFLINE_THRESHOLD;
+  const effectiveBinary = binary ?? BINARY;
+  console.log(`threshold ${effectiveThreshold}, offline mode, folded, binary ${effectiveBinary}`);
   console.log("note | speakers | truth | error | expected");
   try {
     for (const noteId of notes) {
@@ -123,7 +153,7 @@ function main() {
         mismatches += 1;
         continue;
       }
-      const speakers = countSpeakers(wav, noteId);
+      const speakers = countSpeakers(wav, noteId, { binary: effectiveBinary, threshold });
       const realCount = truth.get(noteId);
       const error = Number.isFinite(realCount) ? Math.abs(speakers - realCount) : null;
       if (error !== null && realCount > 2) summedError += error;
