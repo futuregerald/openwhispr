@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.1] - 2026-09-15
+
+### Fixed
+
+- After a meeting, speakers who appeared for only a few seconds are merged into the real speaker
+  they sit next to, instead of showing up as extra people in the speaker panel. This applies when
+  the number of speakers is left automatic; a count you set is kept as is.
+- Calls with three or more people are separated into more of the real speakers after the meeting.
+  One- and two-person calls are unchanged. Very large calls can still show fewer speakers than
+  were there.
+- The play button in the speaker panel now starts where that person talks for a while, instead of
+  on a single short line followed by silence or someone else.
+
 ## [1.22.0] - 2026-09-14
 
 ### Changed
