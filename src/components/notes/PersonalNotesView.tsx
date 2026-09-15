@@ -57,6 +57,7 @@ import { cn } from "../lib/utils";
 import { MEETINGS_FOLDER_NAME, findDefaultFolder } from "./shared";
 import logger from "../../utils/logger";
 import { parseTranscriptSegments } from "../../utils/parseTranscriptSegments";
+import { buildNoteActionInput } from "../../utils/noteActionInput";
 import { serializeTranscriptSegments } from "../../helpers/transcriptSpeakerState";
 import { resolveExpectedSpeakerCount } from "../../utils/participants";
 import {
@@ -1093,7 +1094,6 @@ export default function PersonalNotesView({
                     const hasNotes = !!noteContent.trim();
                     if (!hasNotes && !activeNoteRawTranscript) return;
 
-                    let formattedTranscript = "";
                     let isMeetingNote = false;
                     // Carried through to the action so a local run can split a
                     // long transcript on segment boundaries rather than failing.
@@ -1107,30 +1107,23 @@ export default function PersonalNotesView({
                             s.source === "mic" ? t("notes.speaker.you") : t("notes.speaker.them"),
                           text: s.text,
                         }));
-                        formattedTranscript = labelledSegments
-                          .map((s) => `${s.label}: ${s.text}`)
-                          .join("\n");
-                      }
-                      if (!formattedTranscript) {
-                        formattedTranscript = activeNoteRawTranscript;
-                        labelledSegments = [];
                       }
                     }
 
-                    const parts = [
-                      hasNotes ? noteContent : "",
-                      formattedTranscript ? `## Meeting Transcript\n${formattedTranscript}` : "",
-                    ]
-                      .filter(Boolean)
-                      .join("\n\n");
+                    const { promptText, localRunnerNoteContent } = buildNoteActionInput({
+                      notes: noteContent,
+                      rawTranscript: activeNoteRawTranscript,
+                      labelledSegments,
+                    });
                     runAction(
                       action,
-                      parts,
+                      promptText,
                       makeContentHash(`${noteContent}\n${activeNoteRawTranscript}`),
                       {
                         modelId: effectiveModelId,
                         isMeetingNote,
                         segments: labelledSegments,
+                        localRunnerNoteContent,
                         allowTitleGeneration: isRegenerableNoteTitle(
                           editorNote.title,
                           [

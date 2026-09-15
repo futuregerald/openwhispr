@@ -5,6 +5,7 @@ import { appendDictionarySuffix } from "../config/prompts";
 import { generateNoteTitle } from "../utils/generateTitle";
 import { buildNoteFormattingOverrides } from "../helpers/noteFormattingOverrides";
 import type { ActionItem } from "../types/electron";
+import type { LabelledSegment } from "../utils/noteActionInput";
 
 export type ActionProcessingStatus = "idle" | "processing" | "success";
 
@@ -17,11 +18,6 @@ export interface NoteActionState {
   totalPasses?: number | null;
   /** True when some section could not be extracted and was marked as a gap. */
   partial?: boolean;
-}
-
-export interface TranscriptSegmentPayload {
-  label: string;
-  text: string;
 }
 
 export interface ActionErrorEvent {
@@ -151,7 +147,8 @@ export interface RunActionOptions {
    * the database: the editor buffer and the realtime transcript are both ahead
    * of the stored copy, which is only flushed every 30 seconds.
    */
-  segments?: TranscriptSegmentPayload[];
+  segments?: LabelledSegment[];
+  localRunnerNoteContent?: string;
 }
 
 export interface RunActionLabels {
@@ -228,7 +225,7 @@ export function runBackgroundAction(
         ensureProgressSubscription();
         const result = await window.electronAPI.runNoteAction({
           noteId,
-          noteContent,
+          noteContent: options.localRunnerNoteContent ?? noteContent,
           segments: options.segments ?? [],
           systemPrompt,
           modelId,

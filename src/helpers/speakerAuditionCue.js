@@ -3,6 +3,7 @@
 import { computeSegmentDurations } from "./speakerTalkTime.js";
 
 const SEGMENTS_INTO_A_SPEAKER_STILL_CONSIDERED_EARLY = 12;
+const RUN_BREAK_SECONDS = 8;
 // The two captures do not start together, so a system-anchored cue can land just before the
 // mic file begins. Measured skew reaches 2.2 s; beyond this the cue belongs to another track.
 const SECONDS_A_CUE_MAY_PRECEDE_A_TRACK = 5;
@@ -66,16 +67,37 @@ export const resolveSpeakerAuditionCue = (segments, speakerId, tracks) => {
     const shifted = at + shiftFor[track];
     if (shifted >= duration || shifted < -SECONDS_A_CUE_MAY_PRECEDE_A_TRACK) continue;
 
-    playable.push({ at: shifted, heldFor: durations[index], track });
+    playable.push({ at: shifted, raw: at, heldFor: durations[index], track });
   }
   if (playable.length === 0) return null;
 
-  const early = playable
-    .sort((a, b) => a.at - b.at)
-    .slice(0, SEGMENTS_INTO_A_SPEAKER_STILL_CONSIDERED_EARLY);
+  playable.sort((a, b) => a.at - b.at);
+  const earlyLines = new Set(playable.slice(0, SEGMENTS_INTO_A_SPEAKER_STILL_CONSIDERED_EARLY));
 
-  const best = [...early].sort((a, b) => b.heldFor - a.heldFor || a.at - b.at)[0];
-  return { seconds: Math.max(0, best.at), track: best.track };
+  /** @type {Array<{ first: typeof playable[number], last: typeof playable[number] }>} */
+  const runs = [];
+  for (let index = 0; index < playable.length; index += 1) {
+    const line = playable[index];
+    const previous = index > 0 ? playable[index - 1] : null;
+    const gap = previous ? line.raw - previous.raw : Number.POSITIVE_INFINITY;
+    const continuesRun =
+      previous !== null &&
+      previous.track === line.track &&
+      gap <= RUN_BREAK_SECONDS &&
+      previous.heldFor >= gap;
+    if (continuesRun) {
+      runs[runs.length - 1].last = line;
+    } else {
+      runs.push({ first: line, last: line });
+    }
+  }
+
+  const spanOf = (run) =>
+    run.last.at + Math.min(run.last.heldFor, RUN_BREAK_SECONDS) - run.first.at;
+  const best = runs
+    .filter((run) => earlyLines.has(run.first))
+    .sort((a, b) => spanOf(b) - spanOf(a) || a.first.at - b.first.at)[0];
+  return { seconds: Math.max(0, best.first.at), track: best.first.track };
 };
 
 export default { resolveSpeakerAuditionCue };
