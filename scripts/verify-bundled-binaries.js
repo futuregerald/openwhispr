@@ -49,4 +49,24 @@ if (missing.length) {
   process.exit(1);
 }
 
+if (platform === "darwin") {
+  const {
+    readInstalledCommit,
+    isPinnedEngineInstalled,
+    FLUIDAUDIO_COMMIT,
+    FLUIDAUDIO_TAG,
+  } = require("./setup-fluidaudio.js");
+  const fluidAudioBinPath = path.join(binDir, `fluidaudio-diarize-${tag}`);
+  const binaryExists = fs.existsSync(fluidAudioBinPath);
+  const installedCommit = readInstalledCommit(binDir, platform, arch);
+  if (!isPinnedEngineInstalled({ binaryExists, installedCommit })) {
+    console.error(
+      `\n[verify-binaries] BUILD ABORTED — installed FluidAudio engine (${installedCommit || "no stamp"}) ` +
+        `does not match the pinned ${FLUIDAUDIO_TAG} (${FLUIDAUDIO_COMMIT}).\n` +
+        `Run: npm run setup:fluidaudio\n`
+    );
+    process.exit(1);
+  }
+}
+
 console.log(`[verify-binaries] OK — all ${required.length} required binaries present for ${tag}.`);

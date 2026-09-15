@@ -76,7 +76,7 @@ const SILERO_VAD_ONNX = "silero_vad.onnx";
 const DIARIZATION_ENGINE_ENV = "OPENWHISPR_DIARIZATION_ENGINE";
 const FLUIDAUDIO_MODE_ENV = "OPENWHISPR_FLUIDAUDIO_MODE"; // "streaming" (default) | "offline"
 
-const FLUIDAUDIO_OFFLINE_THRESHOLD = 0.9;
+const FLUIDAUDIO_OFFLINE_THRESHOLD = 0.5;
 
 function buildFluidAudioArgs({ wavPath, outJson, mode, numSpeakers = -1, maxSpeakers = -1 }) {
   const args = ["process", wavPath, "--mode", mode, "--output", outJson];
