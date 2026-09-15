@@ -1,17 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Sparkles, Users, X } from "lucide-react";
+import { Check, Users, X } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "../ui/popover";
 import { cn } from "../lib/utils";
 import type { TranscriptSegment } from "../../stores/meetingRecordingStore";
-import {
-  isTranscriptSpeakerLocked,
-  type TranscriptSpeakerStatus,
-} from "../../helpers/transcriptSpeakerState";
+import { isTranscriptSpeakerLocked } from "../../helpers/transcriptSpeakerState";
 import SpeakerMorphPill from "./SpeakerMorphPill";
 import SpeakerPanel from "./SpeakerPanel";
 import SpeakerPicker, { type SpeakerProfileLite } from "./SpeakerPicker";
 import { isLikelyEmail } from "../../helpers/emailNames";
+import { recordingSideOf, RECORDING_SIDE_LABEL_KEYS } from "../../utils/recordingSpeakerSide";
 
 const BUBBLE_STYLES = {
   mic: {
@@ -70,32 +68,14 @@ const getSpeakerNumber = (speakerId: string) => {
   return match ? Number(match[1]) + 1 : 1;
 };
 
-const getSpeakerStateLabel = (state: TranscriptSpeakerStatus, t: (key: string) => string) => {
-  switch (state) {
-    case "locked":
-      return t("notes.speaker.state.locked");
-    case "provisional":
-      return t("notes.speaker.state.provisional");
-    case "suggested":
-      return t("notes.speaker.state.suggested");
-    case "confirmed":
-    default:
-      return t("notes.speaker.state.confirmed");
-  }
-};
-
 function PartialBubble({
   text,
   source,
   speakerLabel,
-  speakerState,
-  t,
 }: {
   text: string;
   source: "mic" | "system";
   speakerLabel?: string;
-  speakerState?: TranscriptSpeakerStatus;
-  t: (key: string, opts?: Record<string, unknown>) => string;
 }) {
   const s = BUBBLE_STYLES[source];
   return (
@@ -107,12 +87,6 @@ function PartialBubble({
         {speakerLabel && (
           <div className="mb-0.5 flex items-center gap-1 px-1">
             <span className="text-[11px] font-medium text-muted-foreground/70">{speakerLabel}</span>
-            {speakerState === "provisional" && (
-              <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-muted-foreground/40">
-                <Sparkles size={9} />
-                {getSpeakerStateLabel("provisional", t)}
-              </span>
-            )}
           </div>
         )}
         <div
@@ -133,7 +107,6 @@ function PartialBubble({
     </div>
   );
 }
-
 
 function AddContactButton({
   profile,
@@ -414,8 +387,6 @@ interface MeetingTranscriptChatProps {
   segments: TranscriptSegment[];
   micPartial?: string;
   systemPartial?: string;
-  systemPartialSpeakerId?: string | null;
-  systemPartialSpeakerName?: string | null;
   speakerMappings?: Record<string, string>;
   speakerProfiles?: SpeakerProfileLite[];
   participants?: Array<{ email: string; displayName: string | null }>;
@@ -450,8 +421,6 @@ export function MeetingTranscriptChat({
   segments,
   micPartial,
   systemPartial,
-  systemPartialSpeakerId,
-  systemPartialSpeakerName,
   speakerMappings,
   speakerProfiles,
   participants,
@@ -502,16 +471,6 @@ export function MeetingTranscriptChat({
   }, [segments, micPartial, systemPartial]);
 
   const hasContent = segments.length > 0 || micPartial || systemPartial;
-  const systemPartialSpeakerLabel =
-    systemPartialSpeakerName ||
-    (systemPartialSpeakerId
-      ? t("notes.speaker.label", { n: getSpeakerNumber(systemPartialSpeakerId) })
-      : undefined);
-  const systemPartialSpeakerState = systemPartialSpeakerId
-    ? systemPartialSpeakerName
-      ? "confirmed"
-      : "provisional"
-    : undefined;
 
   const colorByKey = useMemo(() => {
     const map = new Map<string, number>();
@@ -548,29 +507,34 @@ export function MeetingTranscriptChat({
 
   return (
     <div className="h-full relative">
-      <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10">
-        <SpeakerMorphPill
-          noteId={noteId}
-          isDiarizing={!!isDiarizing}
-          speakerCount={speakerCount}
-          showPanel={showSpeakerPanel}
-          onTogglePanel={() => setShowSpeakerPanel(prev => !prev)}
-        />
-      </div>
+      {!isRecording && (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10">
+          <SpeakerMorphPill
+            noteId={noteId}
+            isDiarizing={!!isDiarizing}
+            speakerCount={speakerCount}
+            showPanel={showSpeakerPanel}
+            onTogglePanel={() => setShowSpeakerPanel(prev => !prev)}
+          />
+        </div>
+      )}
       <div
         ref={scrollRef}
         className="h-full overflow-y-auto px-4 pt-3 pb-24 flex flex-col gap-1.5 agent-chat-scroll"
       >
         {segments.map((segment, i) => {
-          const selfSide = isSelfSide(segment);
+          const side = recordingSideOf(segment);
+          const selfSide = isRecording ? side === "you" : isSelfSide(segment);
           const prevSegment = i > 0 ? segments[i - 1] : null;
           const sameSpeaker = prevSegment
-            ? getSpeakerKey(prevSegment) === getSpeakerKey(segment)
+            ? isRecording
+              ? recordingSideOf(prevSegment) === side
+              : getSpeakerKey(prevSegment) === getSpeakerKey(segment)
             : false;
 
           const hasSpeaker = !!segment.speaker;
           const isOriginallyYou = segment.speaker === "you";
-          const isSystemSpeaker = hasSpeaker && !selfSide;
+          const isSystemSpeaker = !isRecording && hasSpeaker && !selfSide;
           const effectiveKey = getEffectiveSpeakerKey(segment, speakerMappings);
           const colorIdx = isSystemSpeaker ? (colorByKey.get(effectiveKey) ?? 0) : 0;
           const isSelected = selectedSegmentIds?.has(segment.id) ?? false;
@@ -587,32 +551,39 @@ export function MeetingTranscriptChat({
             !matchedProfile.email &&
             !!onAttachSpeakerEmail;
 
-          const labelElement = hasSpeaker && (
-            <div className="flex items-center gap-1">
-              <SpeakerLabel
-                speakerId={segment.speaker!}
-                segment={segment}
-                mappedName={speakerMappings?.[segment.speaker!]}
-                speakerProfiles={speakerProfiles}
-                participants={participants}
-                colorIdx={colorIdx}
-                isOriginallyYou={isOriginallyYou}
-                onMap={onMapSpeaker}
-                onConfirm={onConfirmSuggestion}
-                onDismiss={onDismissSuggestion}
-                t={t}
-              />
-              {canAddContact && matchedProfile && matchedProfile.id != null && (
-                <AddContactButton
-                  profile={{ id: matchedProfile.id, display_name: matchedProfile.display_name }}
-                  onAttachEmail={onAttachSpeakerEmail!}
+          const labelElement = isRecording ? (
+            <span className="mb-0.5 px-1 text-[11px] font-medium text-muted-foreground/70">
+              {t(RECORDING_SIDE_LABEL_KEYS[side])}
+            </span>
+          ) : (
+            hasSpeaker && (
+              <div className="flex items-center gap-1">
+                <SpeakerLabel
+                  speakerId={segment.speaker!}
+                  segment={segment}
+                  mappedName={speakerMappings?.[segment.speaker!]}
+                  speakerProfiles={speakerProfiles}
+                  participants={participants}
+                  colorIdx={colorIdx}
+                  isOriginallyYou={isOriginallyYou}
+                  onMap={onMapSpeaker}
+                  onConfirm={onConfirmSuggestion}
+                  onDismiss={onDismissSuggestion}
                   t={t}
                 />
-              )}
-            </div>
+                {canAddContact && matchedProfile && matchedProfile.id != null && (
+                  <AddContactButton
+                    profile={{ id: matchedProfile.id, display_name: matchedProfile.display_name }}
+                    onAttachEmail={onAttachSpeakerEmail!}
+                    t={t}
+                  />
+                )}
+              </div>
+            )
           );
 
-          const isFilteredOut = activeSpeakerFilter != null && segment.speaker !== activeSpeakerFilter;
+          const isFilteredOut =
+            !isRecording && activeSpeakerFilter != null && segment.speaker !== activeSpeakerFilter;
 
           return (
             <div
@@ -670,11 +641,15 @@ export function MeetingTranscriptChat({
         })}
 
         {[
-          { text: micPartial, source: "mic" as const, speakerLabel: undefined },
+          {
+            text: micPartial,
+            source: "mic" as const,
+            speakerLabel: t(RECORDING_SIDE_LABEL_KEYS.you),
+          },
           {
             text: systemPartial,
             source: "system" as const,
-            speakerLabel: systemPartialSpeakerLabel,
+            speakerLabel: t(RECORDING_SIDE_LABEL_KEYS.them),
           },
         ].map(
           ({ text, source, speakerLabel }) =>
@@ -684,13 +659,11 @@ export function MeetingTranscriptChat({
                 text={text}
                 source={source}
                 speakerLabel={speakerLabel}
-                speakerState={source === "system" ? systemPartialSpeakerState : undefined}
-                t={t}
               />
             )
         )}
       </div>
-      {showSpeakerPanel && (
+      {showSpeakerPanel && !isRecording && (
         <div className="absolute top-11 left-2 right-2 z-20">
           <SpeakerPanel
             noteId={noteId}

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-09-14
+
+### Changed
+
+- During a meeting the transcript now shows You and Them instead of guessing individual speakers,
+  which often invented a dozen or more people. Speakers are worked out when the meeting ends, as
+  before. Speakers can no longer be named while the meeting is still running; name them once it
+  has finished.
+- The app no longer runs voice matching on the other side of the call while you record, which
+  saves a steady amount of processing for the whole meeting.
+
 ## [1.21.2] - 2026-09-14
 
 ### Fixed
