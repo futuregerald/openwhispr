@@ -4,7 +4,7 @@ import { Calendar, Loader2, Monitor, Video } from "lucide-react";
 import { Button } from "./ui/button";
 import { cn } from "./lib/utils";
 import type { CalendarEvent } from "../types/calendar";
-import { formatUpcomingDateGroup } from "../utils/dateFormatting";
+import { formatUpcomingDateGroup, parseEventDate } from "../utils/dateFormatting";
 import { useSystemAudioPermission } from "../hooks/useSystemAudioPermission";
 import { useSettingsStore } from "../stores/settingsStore";
 import { canManageSystemAudioInApp } from "../utils/systemAudioAccess";
@@ -38,7 +38,9 @@ export default function UpcomingMeetings({ events, isLoading }: UpcomingMeetings
     let currentLabel: string | null = null;
 
     for (const event of events) {
-      const label = formatUpcomingDateGroup(event.start_time, t);
+      const startsAt = parseEventDate(event.start_time);
+      if (!startsAt) continue;
+      const label = formatUpcomingDateGroup(startsAt, t);
       if (label !== currentLabel) {
         groups.push({ label, items: [event] });
         currentLabel = label;
@@ -90,7 +92,7 @@ export default function UpcomingMeetings({ events, isLoading }: UpcomingMeetings
       )}
 
       {/* Empty state */}
-      {!isLoading && events.length === 0 && (
+      {!isLoading && groupedEvents.length === 0 && (
         <div className="flex flex-col items-center justify-center py-8 px-3">
           {needsSystemAudioGrant ? (
             <>

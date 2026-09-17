@@ -7,7 +7,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey?style=flat" alt="Platform" />
-  <img src="https://img.shields.io/badge/version-1.22.2-informational?style=flat" alt="Version 1.22.2" />
+  <img src="https://img.shields.io/badge/version-1.22.3-informational?style=flat" alt="Version 1.22.3" />
   <img src="https://img.shields.io/badge/build-from%20source-orange?style=flat" alt="Build from source" />
   <img src="https://img.shields.io/badge/telemetry-none-brightgreen?style=flat" alt="No telemetry" />
 </p>
