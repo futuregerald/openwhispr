@@ -6954,9 +6954,9 @@ class IPCHandlers {
       }
     });
 
-    ipcMain.handle("gcal-disconnect", async () => {
+    ipcMain.handle("gcal-disconnect", async (_event, email) => {
       try {
-        this.googleCalendarManager.disconnect();
+        this.googleCalendarManager.disconnect(email);
         return { success: true };
       } catch (error) {
         debugLogger.error(

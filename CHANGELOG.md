@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.3] - 2026-09-16
+
+### Fixed
+
+- Recordings made in the evening no longer appear under tomorrow's date. Timestamps are stored in
+  UTC, but the date headers on the history list read them as local time, so anything recorded after
+  about 8 PM was filed a day ahead and "Today" and "Yesterday" stopped appearing altogether. The
+  row's own clock was right the whole time, which made the two disagree on screen.
+- Disconnecting one Google Calendar account no longer disconnects all of them. The account you
+  picked was never passed through to the code doing the disconnecting, so it fell back to clearing
+  every account and all of their cached events.
+- The assistant can answer questions about your calendar again. It was reading three fields that do
+  not exist on a stored event, so meeting times came back empty. It now reads the real start and end
+  times, and includes the join link where there is one.
+- All-day calendar events no longer risk being grouped under the previous day, and an event with an
+  unreadable start time is skipped instead of rendering a blank date header.
+
+Ported from upstream OpenWhispr (`269e1b33`, `858e8240`, `2ef397bc`), with one deliberate
+divergence: a malformed date-only value such as `2026-13-45` is now rejected rather than silently
+rolling over into the following year.
+
 ## [1.22.2] - 2026-09-15
 
 ### Fixed
