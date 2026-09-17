@@ -89,7 +89,14 @@ FLUIDAUDIO_REF=v0.16.0 npm run setup:fluidaudio   # build a different ref instea
 
 ## Packaging note
 
-For a distributable `.dmg`, run `npm run setup:fluidaudio` **before** `npm run build:mac` so the
-binary is bundled into `resources/bin`. Distribution to other machines requires the whole app to
-be signed/notarized (Apple Developer ID) or recipients must clear the quarantine attribute —
-see `FORK-SETUP.md`.
+`npm run build:mac` (and `pack` / `dist`) runs `setup:fluidaudio` before packaging, so the pinned
+binary is built into `resources/bin` and bundled automatically. Distribution to other machines
+requires the whole app to be signed/notarized (Apple Developer ID) or recipients must clear the
+quarantine attribute — see `FORK-SETUP.md`.
+
+## Known limitations
+
+- **Intel Macs (x64) — won't fix.** FluidAudio is built for the architecture of the machine running
+  the build, and the x64 macOS release leg runs on an Apple Silicon runner. The Intel build therefore
+  carries an arm64 `fluidaudio-diarize` binary it cannot run, and diarization on Intel Macs uses
+  sherpa-onnx instead. No one using this fork is on an Intel Mac, so this is not being fixed.
