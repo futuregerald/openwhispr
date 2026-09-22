@@ -10,7 +10,7 @@
  * with the old name, so treat them as a wire format: add, never rename.
  */
 const JOB_KINDS = {
-  // The whole post-call pipeline: retranscribe, title, classify, notes.
+  // The whole post-call pipeline: retranscribe, classify, title, notes.
   // `fromStep` restarts partway, which is what per-note retry uses.
   POST_CALL_PIPELINE: "post-call-pipeline",
   // Just the notes step, for "regenerate notes" on a meeting that already has a

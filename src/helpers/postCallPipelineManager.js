@@ -6,8 +6,9 @@ const { i18nMain, SUPPORTED_UI_LANGUAGES } = require("./i18nMain");
 const { MainProcessInference } = require("./mainProcessInference");
 const { runNoteAction } = require("./noteActionRunner");
 const { resolveSpeaker, buildSpeakerMappings } = require("./transcriptFormatter");
+const { CHARS_PER_TOKEN, MIN_CONTEXT, PROMPT_SHARE } = require("./llamaContext");
 
-const STEP_ORDER = ["retranscribe", "title", "classify", "notes"];
+const STEP_ORDER = ["retranscribe", "classify", "title", "notes"];
 
 // STEP_ORDER.indexOf returns -1 for anything unrecognised, and -1 <= 0, so an
 // unvalidated fromStep silently ran the ENTIRE pipeline including
@@ -120,8 +121,20 @@ FORMAT RULES (strict):
 - Refer to each person by exactly the label the transcript uses. Never present a \`Speaker N\` label and a name as one identity. If someone is named only in what was said, write it as \`Speaker 3 (introduced themselves as Jay)\` so the reader can see the name came from the conversation and not from voice identification.
 - Preserve important quotes or specific commitments verbatim when they carry weight.`;
 
-const TITLE_PROMPT =
-  "Generate a concise 3-8 word title for this meeting transcript. Return ONLY the title text, nothing else — no quotes, no prefix, no explanation.";
+const TITLE_PROMPT = `Generate a concise 3-8 word title for this meeting. Return ONLY the title text, nothing else — no quotes, no prefix, no explanation.
+
+You are given a participant roster and excerpts from the beginning, middle and end of the meeting. Use all of it. The opening minutes are usually greetings, logistics and audio checks, and almost never describe what the meeting was actually for.
+
+When the meeting is between two people, name the other person — "1:1 with Mike" beats "Discussion About Projects". Never present a \`Speaker N\` label and a name as one identity, and never put a bare \`Speaker N\` in a title; if nobody is identified by name, describe the subject instead.`;
+
+// Must not become a flat number. The title step is fatal to the run
+// (`if (titleResult.error) return;`) and a local model refuses a prompt over
+// `contextSize * PROMPT_SHARE` -- 1228 tokens at the 2048 floor -- so a fixed
+// 6k digest costs the user their notes as well as their title.
+const CLOUD_DIGEST_CHARS = 6000;
+const LEGACY_DIGEST_CHARS = 2000;
+const DIGEST_BUDGET_MARGIN = 0.85;
+const MAX_ROSTER_NAMES = 8;
 
 class PostCallPipelineManager {
   constructor({
@@ -163,30 +176,8 @@ class PostCallPipelineManager {
       }
     }
 
-    // Step 2: Generate title
-    //
-    // Guarded twice on purpose. The first check keeps "reprocess all meetings"
-    // from spending one title call per note on the user's own API key only to
-    // discard every result; the second closes the race the first cannot, since
-    // re-transcription runs for minutes and the user can title the note in that
-    // window.
+    // Step 2: Classify meeting type (non-fatal — errors don't halt pipeline)
     if (fromIndex <= 1) {
-      if (await this._mayGenerateTitle(noteId)) {
-        const titleResult = await this._runStep(noteId, "title", () =>
-          this._generateTitle(noteId, this._transcriptAsOfNow(noteId, transcript))
-        );
-        if (titleResult.error) return;
-        if (titleResult.value && (await this._mayGenerateTitle(noteId))) {
-          this._db.updateNote(noteId, { title: titleResult.value });
-          this._broadcastNoteUpdate(noteId);
-        }
-      } else {
-        this._emitStatus(noteId, "title", "skipped");
-      }
-    }
-
-    // Step 3: Classify meeting type (non-fatal — errors don't halt pipeline)
-    if (fromIndex <= 2) {
       try {
         const classifyResult = await this._runStep(noteId, "classify", () =>
           this._classifyMeetingType(noteId, this._transcriptAsOfNow(noteId, transcript))
@@ -198,6 +189,28 @@ class PostCallPipelineManager {
       } catch (err) {
         debugLogger.warn("Pipeline: classify step failed (non-fatal)", { noteId, error: err.message }, "meeting");
         this._emitStatus(noteId, "classify", "error", err.message);
+      }
+    }
+
+    // Step 3: Generate title
+    //
+    // Guarded twice on purpose. The first check keeps "reprocess all meetings"
+    // from spending one title call per note on the user's own API key only to
+    // discard every result; the second closes the race the first cannot, since
+    // re-transcription runs for minutes and the user can title the note in that
+    // window.
+    if (fromIndex <= 2) {
+      if (await this._mayGenerateTitle(noteId)) {
+        const titleResult = await this._runStep(noteId, "title", () =>
+          this._generateTitle(noteId, this._transcriptAsOfNow(noteId, transcript))
+        );
+        if (titleResult.error) return;
+        if (titleResult.value && (await this._mayGenerateTitle(noteId))) {
+          this._db.updateNote(noteId, { title: titleResult.value });
+          this._broadcastNoteUpdate(noteId);
+        }
+      } else {
+        this._emitStatus(noteId, "title", "skipped");
       }
     }
 
@@ -381,15 +394,158 @@ class PostCallPipelineManager {
     const config = this._getInferenceConfig();
     if (!config) return null;
 
-    const text = this._flattenTranscript(noteId, transcript);
-    const title = await this._inference.processText(text.slice(0, 2000), {
-      ...config,
-      systemPrompt: TITLE_PROMPT,
-      temperature: 0.3,
-    });
+    const systemPrompt = this._buildTitlePrompt(noteId);
+    const budget = await this._digestBudget(config, systemPrompt);
+
+    let title;
+    try {
+      title = await this._inference.processText(
+        this._transcriptDigest(noteId, transcript, budget),
+        { ...config, systemPrompt, temperature: 0.3 }
+      );
+    } catch (err) {
+      if (err?.code !== "LOCAL_CONTEXT_EXCEEDED") throw err;
+      debugLogger.warn(
+        "Pipeline: title digest overran the local context, retrying smaller",
+        { noteId, budget },
+        "meeting"
+      );
+      title = await this._inference.processText(
+        this._transcriptDigest(noteId, transcript, LEGACY_DIGEST_CHARS),
+        { ...config, systemPrompt, temperature: 0.3 }
+      );
+    }
 
     const cleaned = title.trim().replace(/^["']|["']$/g, "");
     return cleaned.length > 0 && cleaned.length < 100 ? cleaned : null;
+  }
+
+  _buildTitlePrompt(noteId) {
+    const typeName = this._meetingTypeName(noteId);
+    return typeName
+      ? `${TITLE_PROMPT}\n\nThis meeting has already been classified as "${typeName}". Let that shape the title.`
+      : TITLE_PROMPT;
+  }
+
+  _meetingTypeName(noteId) {
+    try {
+      const typeId = this._db.getNote(noteId)?.meeting_type_id;
+      if (!typeId) return null;
+      return this._db.getMeetingType?.(typeId)?.name || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async _digestBudget(config, systemPrompt) {
+    const servedLocally =
+      MainProcessInference.resolveProvider(config.provider, config.model) === "local";
+    if (!servedLocally || !this._resolveModelContext) return CLOUD_DIGEST_CHARS;
+
+    try {
+      const { contextSize } = await this._resolveModelContext(config.model);
+      const budgetTokens = Math.floor((contextSize || MIN_CONTEXT) * PROMPT_SHARE);
+      const available =
+        Math.floor(budgetTokens * CHARS_PER_TOKEN * DIGEST_BUDGET_MARGIN) - systemPrompt.length;
+      return Math.max(0, Math.min(CLOUD_DIGEST_CHARS, available));
+    } catch {
+      return LEGACY_DIGEST_CHARS;
+    }
+  }
+
+  _transcriptDigest(noteId, transcript, budgetChars) {
+    const segments = this._transcriptSegments(noteId, transcript);
+    const roster = this._participantRoster(segments);
+    const rosterLine = roster ? `Participants: ${roster}\n\n` : "";
+
+    const lines =
+      segments.length > 0
+        ? segments.map((s) => (s.label ? `${s.label}: ${s.text}` : s.text))
+        : this._plainTextLines(this._flattenTranscript(noteId, transcript));
+
+    const sampled = this._sampleLines(lines, Math.max(0, budgetChars - rosterLine.length));
+    return `${rosterLine}${sampled}`.slice(0, Math.max(0, budgetChars));
+  }
+
+  _participantRoster(segments) {
+    const seen = [];
+    for (const segment of segments) {
+      if (segment.label && !seen.includes(segment.label)) seen.push(segment.label);
+    }
+    if (seen.length === 0) return "";
+
+    const generic = new Set(
+      [
+        i18nMain.t("transcript.speaker.you"),
+        i18nMain.t("transcript.speaker.others"),
+        "You",
+        "Others",
+        "Unknown Speaker",
+      ].filter(Boolean)
+    );
+    const isPlaceholder = (label) => /^Speaker \d+$/.test(label) || generic.has(label);
+    const ordered = [...seen.filter((l) => !isPlaceholder(l)), ...seen.filter(isPlaceholder)];
+    const shown = ordered.slice(0, MAX_ROSTER_NAMES);
+    const rest = ordered.length - shown.length;
+    return rest > 0 ? `${shown.join(", ")}, +${rest} others` : shown.join(", ");
+  }
+
+  // Sampling is line-granular, so a plain-text transcript needs at least three
+  // lines before it has a middle and an end to sample at all. Blank lines are
+  // dropped because an empty line would end a window early.
+  _plainTextLines(text) {
+    const lines = text.split("\n").filter((line) => line.trim());
+    if (lines.length >= 3) return lines;
+
+    const sentences = (text.match(/[^.!?]+[.!?]+\s*|[^.!?]+$/g) || [])
+      .map((sentence) => sentence.trim())
+      .filter(Boolean);
+    if (sentences.length >= 3) return sentences;
+
+    const width = Math.max(1, Math.ceil(text.length / 3));
+    const windows = [];
+    for (let start = 0; start < text.length; start += width) {
+      windows.push(text.slice(start, start + width));
+    }
+    return windows.length > 0 ? windows : lines;
+  }
+
+  _sampleLines(lines, budgetChars) {
+    const whole = lines.join("\n");
+    if (whole.length <= budgetChars) return whole;
+
+    const markers = "[BEGINNING]\n\n\n[MIDDLE]\n\n\n[END]\n".length;
+    const share = Math.max(0, Math.floor((budgetChars - markers) / 3));
+
+    // A window claims the lines it used so the next one cannot repeat them.
+    // Without this a two-line transcript is sent three times over.
+    const claimed = new Set();
+    const take = (from, step) => {
+      const picked = [];
+      let used = 0;
+      for (let i = from; i >= 0 && i < lines.length && used < share; i += step) {
+        if (claimed.has(i)) break;
+        claimed.add(i);
+        // Cut inside the line rather than taking it whole: a plain-text
+        // transcript with no newlines is ONE line, and letting the first line
+        // through unconditionally would spend the entire context on it.
+        const line = lines[i].slice(0, share - used);
+        if (!line) break;
+        picked.push(line);
+        used += line.length + 1;
+      }
+      return step < 0 ? picked.reverse() : picked;
+    };
+
+    const beginning = take(0, 1);
+    const end = take(lines.length - 1, -1);
+    const middle = take(Math.floor(lines.length / 2), 1);
+
+    return (
+      `[BEGINNING]\n${beginning.join("\n")}\n\n` +
+      `[MIDDLE]\n${middle.join("\n")}\n\n` +
+      `[END]\n${end.join("\n")}`
+    );
   }
 
   async _classifyMeetingType(noteId, transcript) {
@@ -417,11 +573,14 @@ ${typeList}
 
 Reply with ONLY the numeric id of the best matching meeting type. If none match well, reply with "none".`;
 
-        const result = await this._inference.processText(text.slice(0, 2000), {
-          ...config,
-          systemPrompt: classifyPrompt,
-          temperature: 0,
-        });
+        const result = await this._inference.processText(
+          this._transcriptDigest(
+            noteId,
+            transcript,
+            await this._digestBudget(config, classifyPrompt)
+          ),
+          { ...config, systemPrompt: classifyPrompt, temperature: 0 }
+        );
 
         const match = result.trim().match(/^\d+$/);
         const matchedId = match ? parseInt(match[0], 10) : NaN;
