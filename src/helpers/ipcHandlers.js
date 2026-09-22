@@ -446,12 +446,8 @@ class IPCHandlers {
   }
 
   _buildSpeakerMappings(noteId) {
-    const arr = this.databaseManager.getSpeakerMappings(noteId);
-    const map = {};
-    for (const m of arr) {
-      map[m.speaker_id] = m.display_name;
-    }
-    return map;
+    const { buildSpeakerMappings } = require("./transcriptFormatter");
+    return buildSpeakerMappings(this.databaseManager, noteId);
   }
 
   _parseNonSelfParticipants(participantsJson) {

@@ -3,7 +3,7 @@ const { i18nMain } = require("./i18nMain");
 function resolveSpeaker(seg, speakerMappings) {
   if (seg.speakerName && !seg.speakerIsPlaceholder) return seg.speakerName;
   if (seg.speaker && speakerMappings[seg.speaker]) return speakerMappings[seg.speaker];
-  if (seg.speaker === "you") return "You";
+  if (seg.speaker === "you") return i18nMain.t("transcript.speaker.you");
   if (seg.speaker) {
     const num = parseInt(seg.speaker.replace("speaker_", ""), 10);
     if (!isNaN(num)) return `Speaker ${num + 1}`;
@@ -11,6 +11,15 @@ function resolveSpeaker(seg, speakerMappings) {
   if (seg.source === "mic") return i18nMain.t("transcript.speaker.you");
   if (seg.source === "system") return i18nMain.t("transcript.speaker.others");
   return "Unknown Speaker";
+}
+
+function buildSpeakerMappings(db, noteId) {
+  const rows = db?.getSpeakerMappings?.(noteId) || [];
+  const map = {};
+  for (const row of rows) {
+    map[row.speaker_id] = row.display_name;
+  }
+  return map;
 }
 
 function mergeSegments(segments) {
@@ -135,4 +144,11 @@ function formatMd(note, segments, speakerMappings) {
   return lines.join("\n");
 }
 
-module.exports = { formatTxt, formatSrt, formatJson, formatMd };
+module.exports = {
+  formatTxt,
+  formatSrt,
+  formatJson,
+  formatMd,
+  resolveSpeaker,
+  buildSpeakerMappings,
+};

@@ -1,6 +1,6 @@
 {
   "name": "open-whispr",
-  "version": "1.22.3",
+  "version": "1.23.0",
   "description": "A desktop dictation application using whisper.cpp for speech-to-text transcription",
   "main": "main.js",
   "private": true,

@@ -5,6 +5,7 @@ const { retranscribeNoteTranscript } = require("./retranscribeNoteTranscript");
 const { i18nMain, SUPPORTED_UI_LANGUAGES } = require("./i18nMain");
 const { MainProcessInference } = require("./mainProcessInference");
 const { runNoteAction } = require("./noteActionRunner");
+const { resolveSpeaker, buildSpeakerMappings } = require("./transcriptFormatter");
 
 const STEP_ORDER = ["retranscribe", "title", "classify", "notes"];
 
@@ -73,6 +74,7 @@ FORMAT RULES (strict):
 - Do NOT use tables, horizontal rules, or block quotes.
 - Use markdown headings (##, ###) and bullet points for scannability.
 - Keep the tone professional but direct. Capture meaning and sentiment, not just words.
+- Refer to each person by exactly the label the transcript uses. Never present a \`Speaker N\` label and a name as one identity. If someone is named only in what was said, write it as \`Speaker 3 (introduced themselves as Jay)\` so the reader can see the name came from the conversation and not from voice identification.
 - Preserve important quotes or commitments verbatim when they carry weight.`;
 }
 
@@ -115,6 +117,7 @@ FORMAT RULES (strict):
 - Use markdown headings (##, ###) and bullet points for scannability.
 - Keep the tone professional but direct. Capture meaning and sentiment, not just words.
 - Consolidate repeated points — don't echo every utterance.
+- Refer to each person by exactly the label the transcript uses. Never present a \`Speaker N\` label and a name as one identity. If someone is named only in what was said, write it as \`Speaker 3 (introduced themselves as Jay)\` so the reader can see the name came from the conversation and not from voice identification.
 - Preserve important quotes or specific commitments verbatim when they carry weight.`;
 
 const TITLE_PROMPT =
@@ -170,7 +173,7 @@ class PostCallPipelineManager {
     if (fromIndex <= 1) {
       if (await this._mayGenerateTitle(noteId)) {
         const titleResult = await this._runStep(noteId, "title", () =>
-          this._generateTitle(transcript)
+          this._generateTitle(noteId, this._transcriptAsOfNow(noteId, transcript))
         );
         if (titleResult.error) return;
         if (titleResult.value && (await this._mayGenerateTitle(noteId))) {
@@ -186,7 +189,7 @@ class PostCallPipelineManager {
     if (fromIndex <= 2) {
       try {
         const classifyResult = await this._runStep(noteId, "classify", () =>
-          this._classifyMeetingType(noteId, transcript)
+          this._classifyMeetingType(noteId, this._transcriptAsOfNow(noteId, transcript))
         );
         if (!classifyResult.error && classifyResult.value) {
           this._db.updateNote(noteId, { meeting_type_id: classifyResult.value });
@@ -201,7 +204,7 @@ class PostCallPipelineManager {
     // Step 4: Generate notes
     if (fromIndex <= 3) {
       const notesResult = await this._runStep(noteId, "notes", () =>
-        this._generateNotes(noteId, transcript)
+        this._generateNotes(noteId, this._transcriptAsOfNow(noteId, transcript))
       );
       if (notesResult.error) return;
       if (notesResult.value) {
@@ -240,7 +243,7 @@ class PostCallPipelineManager {
       }
     } else if (step === "title") {
       const result = await this._runStep(noteId, "title", () =>
-        this._generateTitle(transcript)
+        this._generateTitle(noteId, transcript)
       );
       if (!result.error && result.value) {
         this._db.updateNote(noteId, { title: result.value });
@@ -374,11 +377,11 @@ class PostCallPipelineManager {
     return { transcript: result.transcript };
   }
 
-  async _generateTitle(transcript) {
+  async _generateTitle(noteId, transcript) {
     const config = this._getInferenceConfig();
     if (!config) return null;
 
-    const text = this._flattenTranscript(transcript);
+    const text = this._flattenTranscript(noteId, transcript);
     const title = await this._inference.processText(text.slice(0, 2000), {
       ...config,
       systemPrompt: TITLE_PROMPT,
@@ -401,7 +404,7 @@ class PostCallPipelineManager {
     const types = this._db.getMeetingTypes();
     if (!types || types.length === 0) return null;
 
-    const text = this._flattenTranscript(transcript);
+    const text = this._flattenTranscript(noteId, transcript);
 
     // Try LLM classification first
     const config = this._getInferenceConfig();
@@ -467,7 +470,7 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
       }
     }
 
-    const text = this._flattenTranscript(transcript);
+    const text = this._flattenTranscript(noteId, transcript);
 
     // `resolveProvider` and not `config.provider`: Settings has been observed
     // persisting a model family ("gemma") into the provider field, and a local
@@ -492,7 +495,7 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
    */
   async _generateNotesInPasses({ noteId, config, systemPrompt, transcript, text }) {
     const { contextSize, isGpuBackend } = await this._resolveModelContext(config.model);
-    const segments = this._transcriptSegments(transcript);
+    const segments = this._transcriptSegments(noteId, transcript);
 
     const result = await runNoteAction({
       systemPrompt,
@@ -525,16 +528,28 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
    * plain text. Segments chunk on speaker turns; plain text can only chunk on
    * sentences.
    */
-  _transcriptSegments(transcript) {
+  _transcriptSegments(noteId, transcript) {
     if (typeof transcript !== "string" || !transcript.startsWith("[")) return [];
     try {
       const parsed = JSON.parse(transcript);
       if (!Array.isArray(parsed)) return [];
+      const speakerMappings = buildSpeakerMappings(this._db, noteId);
       return parsed
-        .map((s) => ({ label: s.speakerName || s.speaker || "", text: String(s.text ?? "") }))
+        .map((s) => ({
+          label: resolveSpeaker(s, speakerMappings),
+          text: String(s.text ?? ""),
+        }))
         .filter((s) => s.text.trim());
     } catch {
       return [];
+    }
+  }
+
+  _transcriptAsOfNow(noteId, snapshot) {
+    try {
+      return this._db.getNote(noteId)?.transcript || snapshot;
+    } catch {
+      return snapshot;
     }
   }
 
@@ -548,14 +563,15 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
     return { provider, model, temperature: 0.3 };
   }
 
-  _flattenTranscript(transcript) {
+  _flattenTranscript(noteId, transcript) {
     if (typeof transcript !== "string") return String(transcript);
     if (!transcript.startsWith("[")) return transcript;
     try {
       const segments = JSON.parse(transcript);
+      const speakerMappings = buildSpeakerMappings(this._db, noteId);
       return segments
         .map((s) => {
-          const speaker = s.speakerName || s.speaker || "";
+          const speaker = resolveSpeaker(s, speakerMappings);
           return speaker ? `${speaker}: ${s.text}` : s.text;
         })
         .join("\n");
