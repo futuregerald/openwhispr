@@ -461,7 +461,7 @@ class PostCallPipelineManager {
     const lines =
       segments.length > 0
         ? segments.map((s) => (s.label ? `${s.label}: ${s.text}` : s.text))
-        : this._flattenTranscript(noteId, transcript).split("\n");
+        : this._plainTextLines(this._flattenTranscript(noteId, transcript));
 
     const sampled = this._sampleLines(lines, Math.max(0, budgetChars - rosterLine.length));
     return `${rosterLine}${sampled}`.slice(0, Math.max(0, budgetChars));
@@ -488,6 +488,26 @@ class PostCallPipelineManager {
     const shown = ordered.slice(0, MAX_ROSTER_NAMES);
     const rest = ordered.length - shown.length;
     return rest > 0 ? `${shown.join(", ")}, +${rest} others` : shown.join(", ");
+  }
+
+  // Sampling is line-granular, so a plain-text transcript needs at least three
+  // lines before it has a middle and an end to sample at all. Blank lines are
+  // dropped because an empty line would end a window early.
+  _plainTextLines(text) {
+    const lines = text.split("\n").filter((line) => line.trim());
+    if (lines.length >= 3) return lines;
+
+    const sentences = (text.match(/[^.!?]+[.!?]+\s*|[^.!?]+$/g) || [])
+      .map((sentence) => sentence.trim())
+      .filter(Boolean);
+    if (sentences.length >= 3) return sentences;
+
+    const width = Math.max(1, Math.ceil(text.length / 3));
+    const windows = [];
+    for (let start = 0; start < text.length; start += width) {
+      windows.push(text.slice(start, start + width));
+    }
+    return windows.length > 0 ? windows : lines;
   }
 
   _sampleLines(lines, budgetChars) {

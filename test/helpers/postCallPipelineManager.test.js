@@ -1471,6 +1471,52 @@ test("a single-line plain-text transcript is not sent three times over", async (
   const digest = manager._transcriptDigest(1, transcript, 6000);
   assert.ok(digest.length <= 6000, `plain text digest was ${digest.length} chars`);
   assert.ok(digest.includes("z"), "the transcript never reached the digest at all");
+
+  // Sampling is line-granular, so one long line has no middle or end unless it
+  // is broken up first. Without that, `claimed` leaves two windows empty and
+  // the end of the meeting -- the whole point of this change -- is never seen.
+  for (const marker of ["BEGINNING", "MIDDLE", "END"]) {
+    const section = digest.match(new RegExp(`\\[${marker}\\]\\n([\\s\\S]*?)(?=\\n\\n\\[|$)`));
+    assert.ok(
+      section && section[1].trim().length > 0,
+      `the ${marker} window is empty for a single-line transcript`
+    );
+  }
+});
+
+test("a paragraph-formatted transcript does not lose its middle to blank lines", async () => {
+  // Plain text separated by "\n\n" is the shape transcriptPassChunker splits
+  // on, so it is a supported input. An empty line used to end a sampling window
+  // the moment it was reached: a 200-paragraph transcript came back as 187
+  // characters against a 6000 budget -- less than the 2000-char slice this
+  // change replaced.
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const transcript = Array.from(
+    { length: 200 },
+    (_, i) => `Paragraph ${i}: we discussed the rollout and agreed the staffing plan.`
+  ).join("\n\n");
+
+  const manager = new PostCallPipelineManager({
+    broadcast: () => {},
+    databaseManager: { getNote: () => ({ transcript }), getSpeakerMappings: () => [] },
+    whisperManager: {},
+    diarizationManager: {},
+    inference: {},
+    convertToWav: async () => {},
+  });
+
+  const digest = manager._transcriptDigest(1, transcript, 3000);
+  assert.ok(digest.length <= 3000, `digest was ${digest.length} chars`);
+  assert.ok(
+    digest.length > 2000,
+    `only ${digest.length} of a 3000-char budget was used — blank lines truncated the windows`
+  );
+  assert.ok(digest.includes("Paragraph 0:"), "the opening never reached the digest");
+  assert.ok(
+    /Paragraph (9[5-9]|10[0-5]):/.test(digest),
+    "the MIDDLE of the meeting never reached the digest"
+  );
+  assert.ok(digest.includes("Paragraph 199:"), "the end never reached the digest");
 });
 
 test("a title that overruns the local context retries instead of killing the notes", async () => {
