@@ -22,8 +22,8 @@ function isPlaceholderTitle(title) {
  * so the answer has to come from something durable, and the note's own columns
  * are the only durable record there is.
  *
- * The order matters and follows STEP_ORDER: the earliest thing still missing is
- * what to retry, because every later step depends on it.
+ * The order is deliberately NOT STEP_ORDER: notes are checked before the title,
+ * because retrying from `title` would regenerate the notes as well.
  *
  * @returns {{step: string|null, reason: string}} `step` is null when there is
  *   nothing to retry — either the note is complete, or it has no audio and no

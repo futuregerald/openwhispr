@@ -177,6 +177,7 @@ module.exports = {
   resolveContextSize,
   estimatePromptTokens,
   checkPromptFitsContext,
+  CHARS_PER_TOKEN,
   MIN_CONTEXT,
   PROMPT_SHARE,
 };

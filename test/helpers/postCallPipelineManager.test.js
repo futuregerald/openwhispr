@@ -44,7 +44,7 @@ function createMocks() {
   };
 }
 
-test("runs steps in order: retranscribe -> title -> notes", async () => {
+test("runs steps in order: retranscribe -> classify -> title -> notes", async () => {
   const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
   const mocks = createMocks();
   const fs = require("fs");
@@ -256,7 +256,7 @@ test("fromStep skips earlier steps", async () => {
   }
 });
 
-test("STEP_ORDER includes classify between title and notes", async () => {
+test("STEP_ORDER puts classify before title, so the title knows the type", async () => {
   const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
   // Access the module-level STEP_ORDER via a pipeline run and check step ordering
   const mocks = createMocks();
@@ -288,14 +288,15 @@ test("STEP_ORDER includes classify between title and notes", async () => {
       .filter((e) => e.channel === "post-call-pipeline-status")
       .map((e) => `${e.step}:${e.status}`);
 
-    // classify should appear after title and before notes
-    const classifyIdx = steps.findIndex((s) => s.startsWith("classify:"));
-    const titleComplete = steps.indexOf("title:complete");
+    // Classification has to be settled before the title is written, or the
+    // title can never say "1:1 with Mike".
+    const classifyComplete = steps.findIndex((s) => s.startsWith("classify:"));
+    const titleRunning = steps.indexOf("title:running");
     const notesRunning = steps.indexOf("notes:running");
 
-    assert.ok(classifyIdx > -1, "classify step should appear in pipeline");
-    assert.ok(titleComplete < classifyIdx, "classify should come after title:complete");
-    assert.ok(classifyIdx < notesRunning, "classify should come before notes:running");
+    assert.ok(classifyComplete > -1, "classify step should appear in pipeline");
+    assert.ok(classifyComplete < titleRunning, "classify should come before title:running");
+    assert.ok(titleRunning < notesRunning, "title should come before notes:running");
   } finally {
     delete process.env.NOTE_FORMATTING_PROVIDER;
     delete process.env.NOTE_FORMATTING_MODEL;
@@ -1119,4 +1120,471 @@ test("the chunked path resolves labels the same way as the single-call path", as
     segments.map((s) => s.label),
     ["Jay", "Speaker 6"]
   );
+});
+
+// ── Title context (1.24.0) ──────────────────────────────────────────────────
+//
+// Titles were generated from `text.slice(0, 2000)` of the flattened transcript,
+// before classification, with no participant names in the prompt. A 2h19m call
+// with 11 speakers came out as "Meeting Logistics and Introductions Discussed":
+// the model only ever saw the opening small talk.
+//
+// The fix is a bounded digest (roster + beginning/middle/end), classify moved
+// ahead of title so the type is known, and both threaded into the prompt. The
+// budget is derived from the model's context on a local provider, because the
+// title step is FATAL to the run (`if (titleResult.error) return;`) and a prompt
+// over the 2048-context floor would cost the user the notes as well.
+
+const TITLE_SEGMENTS = Array.from({ length: 400 }, (_, i) => ({
+  text: `Segment ${i}: we discussed the quarterly rollout and agreed on the staffing plan.`,
+  speaker: i === 0 ? "speaker_0" : `speaker_${i % 3}`,
+  source: "system",
+  timestamp: i,
+}));
+
+function titleMocks(createMocks, overrides = {}) {
+  const mocks = createMocks();
+  const transcript = overrides.transcript ?? JSON.stringify(TITLE_SEGMENTS);
+  mocks.databaseManager.getNote = (id) => ({
+    id,
+    transcript,
+    title: "New note",
+    system_audio_path: null,
+    mic_audio_path: null,
+    meeting_type_id: overrides.meetingTypeId ?? null,
+    audio_duration_seconds: 8361,
+  });
+  return mocks;
+}
+
+// Records every inference call, keyed by which step made it. The shared mock
+// routes on `systemPrompt.includes("title")`, so the title prompt must keep
+// that word — if it stops doing so these tests capture the notes call instead.
+const isTitlePrompt = (systemPrompt) => systemPrompt.includes("Generate a concise");
+const isClassifyPrompt = (systemPrompt) => systemPrompt.includes("meeting classifier");
+
+function captureCalls(mocks) {
+  const calls = [];
+  mocks.inference.processText = async (text, opts) => {
+    calls.push({ text, opts });
+    if (isTitlePrompt(opts.systemPrompt)) return "1:1 with Mike";
+    if (isClassifyPrompt(opts.systemPrompt)) return "none";
+    return "## Summary\nTest notes";
+  };
+  const titleCall = () => calls.find((c) => isTitlePrompt(c.opts.systemPrompt));
+  const classifyCall = () => calls.find((c) => isClassifyPrompt(c.opts.systemPrompt));
+  return { calls, titleCall, classifyCall };
+}
+
+function buildManager(PostCallPipelineManager, mocks, extra = {}) {
+  return new PostCallPipelineManager({
+    broadcast: mocks.broadcast,
+    databaseManager: mocks.databaseManager,
+    whisperManager: mocks.whisperManager,
+    diarizationManager: mocks.diarizationManager,
+    inference: mocks.inference,
+    convertToWav: mocks.convertToWav,
+    ...extra,
+  });
+}
+
+test("the title sees the end of a long meeting, not just its opening", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = titleMocks(createMocks);
+  const { titleCall } = captureCalls(mocks);
+
+  process.env.NOTE_FORMATTING_PROVIDER = "openai";
+  process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+
+  try {
+    await buildManager(PostCallPipelineManager, mocks).run(1);
+
+    const call = titleCall();
+    assert.ok(call, "the title step never called the model");
+    assert.ok(call.text.includes("Segment 0"), "the opening never reached the title model");
+    assert.ok(
+      call.text.includes("Segment 399"),
+      "the END of the meeting never reached the title model — this is the whole defect"
+    );
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+});
+
+test("the title prompt is told who was in the room", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = titleMocks(createMocks);
+  mocks.databaseManager.getSpeakerMappings = () => [
+    { speaker_id: "speaker_0", display_name: "Mike" },
+  ];
+  const { titleCall } = captureCalls(mocks);
+
+  process.env.NOTE_FORMATTING_PROVIDER = "openai";
+  process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+
+  try {
+    await buildManager(PostCallPipelineManager, mocks).run(1);
+
+    const call = titleCall();
+    assert.ok(call, "the title step never called the model");
+    assert.match(
+      call.text,
+      /Participants:/,
+      "the digest carries no participant roster, so the model cannot write \"1:1 with Mike\""
+    );
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+});
+
+test("classify runs before title, so the title knows the meeting type", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = titleMocks(createMocks);
+  mocks.databaseManager.getMeetingTypes = () => [
+    { id: 7, name: "1:1", keyword_rules: JSON.stringify(["one on one"]) },
+  ];
+  mocks.databaseManager.getMeetingType = (id) => (id === 7 ? { id: 7, name: "1:1" } : null);
+
+  // The write has to be visible to the next getNote, or _buildTitlePrompt reads
+  // a null type and the "did the type reach the prompt" assertion below is
+  // testing nothing.
+  const note = {
+    id: 1,
+    transcript: JSON.stringify(TITLE_SEGMENTS),
+    title: "New note",
+    system_audio_path: null,
+    mic_audio_path: null,
+    meeting_type_id: null,
+    audio_duration_seconds: 8361,
+  };
+  mocks.databaseManager.getNote = () => ({ ...note });
+  let classified = false;
+  mocks.databaseManager.updateNote = (id, updates) => {
+    Object.assign(note, updates);
+    if (updates.meeting_type_id) classified = true;
+    return { success: true };
+  };
+
+  const calls = [];
+  mocks.inference.processText = async (text, opts) => {
+    calls.push({ text, opts, classifiedByNow: classified });
+    if (isTitlePrompt(opts.systemPrompt)) return "1:1 with Mike";
+    if (isClassifyPrompt(opts.systemPrompt)) return "7";
+    return "## Summary\nTest notes";
+  };
+
+  process.env.NOTE_FORMATTING_PROVIDER = "openai";
+  process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+
+  try {
+    await buildManager(PostCallPipelineManager, mocks).run(1);
+
+    const title = calls.find((c) => isTitlePrompt(c.opts.systemPrompt));
+    assert.ok(title, "the title step never called the model");
+    assert.ok(
+      title.classifiedByNow,
+      "the title ran before the meeting type was written — it cannot know this is a 1:1"
+    );
+    assert.match(
+      title.opts.systemPrompt,
+      /classified as "1:1"/,
+      "the classified meeting type never reached the title prompt"
+    );
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+});
+
+test("a 2048-context local model gets a title prompt that fits its budget", async () => {
+  // The title step is fatal: `if (titleResult.error) return;`. At the MIN_CONTEXT
+  // floor the budget is floor(2048 * 0.6) = 1228 tokens over systemPrompt+prompt
+  // at 3.6 chars/token. A flat 6k digest overruns it, throws
+  // LOCAL_CONTEXT_EXCEEDED, and takes the notes down with it.
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const { estimatePromptTokens } = require("../../src/helpers/llamaContext.js");
+  const mocks = titleMocks(createMocks);
+  const { titleCall } = captureCalls(mocks);
+
+  process.env.NOTE_FORMATTING_PROVIDER = "local";
+  process.env.NOTE_FORMATTING_MODEL = "gemma-4-e4b";
+
+  try {
+    const manager = buildManager(PostCallPipelineManager, mocks, {
+      resolveModelContext: async () => ({ contextSize: 2048, isGpuBackend: false }),
+    });
+
+    await manager.run(1);
+
+    const call = titleCall();
+    assert.ok(call, "the title step never called the model");
+
+    const estimated = estimatePromptTokens(`${call.opts.systemPrompt}${call.text}`);
+    assert.ok(
+      estimated <= 1228,
+      `title prompt is ${estimated} tokens against a budget of 1228 — this throws ` +
+        `LOCAL_CONTEXT_EXCEEDED and costs the user the notes as well`
+    );
+    assert.ok(
+      call.text.length > 2000,
+      "the digest shrank below the old 2000-char slice, so the fix bought nothing here"
+    );
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+});
+
+test("a plain-text transcript still reaches the title model", async () => {
+  // _transcriptSegments returns [] for anything not starting with "[", and the
+  // codebase treats plain text as a real input. A segment-only digest would send
+  // an empty string.
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const longPlainText = Array.from(
+    { length: 400 },
+    (_, i) => `Line ${i}: we discussed the quarterly rollout and agreed on the staffing plan.`
+  ).join("\n");
+  const mocks = titleMocks(createMocks, { transcript: longPlainText });
+  const { titleCall } = captureCalls(mocks);
+
+  process.env.NOTE_FORMATTING_PROVIDER = "openai";
+  process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+
+  try {
+    await buildManager(PostCallPipelineManager, mocks).run(1);
+
+    const call = titleCall();
+    assert.ok(call, "the title step never called the model");
+    assert.ok(call.text.trim().length > 0, "the digest sent an EMPTY prompt for plain text");
+    assert.ok(call.text.includes("Line 0"), "the opening never reached the title model");
+    assert.ok(call.text.includes("Line 399"), "the end never reached the title model");
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+});
+
+test("the classify keyword fallback still matches a keyword spoken late in the meeting", async () => {
+  // The .slice(0, 2000) at the classify LLM call is NOT what the keyword
+  // fallback reads -- it reads the whole flattened transcript. Replacing that
+  // shared variable with the digest would lose a "one on one" said at minute 50.
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const segments = TITLE_SEGMENTS.map((s) => ({ ...s }));
+  segments[250] = { ...segments[250], text: "Segment 250: this is really a one on one." };
+  const mocks = titleMocks(createMocks, { transcript: JSON.stringify(segments) });
+  mocks.databaseManager.getMeetingTypes = () => [
+    { id: 7, name: "1:1", keyword_rules: JSON.stringify(["one on one"]) },
+  ];
+  mocks.databaseManager.getMeetingType = (id) => (id === 7 ? { id: 7, name: "1:1" } : null);
+
+  const writes = [];
+  mocks.databaseManager.updateNote = (id, updates) => {
+    writes.push(updates);
+    return { success: true };
+  };
+
+  mocks.inference.processText = async (text, opts) => {
+    // The LLM classifier declines, so the keyword fallback decides.
+    if (isClassifyPrompt(opts.systemPrompt)) return "none";
+    if (isTitlePrompt(opts.systemPrompt)) return "1:1 with Mike";
+    return "## Summary\nTest notes";
+  };
+
+  process.env.NOTE_FORMATTING_PROVIDER = "openai";
+  process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+
+  try {
+    await buildManager(PostCallPipelineManager, mocks).run(1);
+
+    assert.ok(
+      writes.some((w) => w.meeting_type_id === 7),
+      "a keyword at minute 50 stopped matching — the fallback no longer reads the full transcript"
+    );
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+});
+
+test("the digest never exceeds the budget it was given", async () => {
+  // The budget is not a preference, it is the promise the local context guard
+  // relies on: `checkPromptFitsContext` throws above `contextSize * PROMPT_SHARE`,
+  // a throwing title step aborts run(), and the user loses their notes too.
+  //
+  // The first draft let the first line of each window through unconditionally,
+  // so a plain-text transcript -- which flattens to ONE line -- came back at
+  // 150,089 characters against a 6,000 budget, the same line repeated in all
+  // three windows.
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+
+  const shapes = {
+    "many short lines": Array.from({ length: 400 }, (_, i) => ({
+      text: `Segment ${i}: ${"x".repeat(60)}`,
+      speaker: `speaker_${i % 3}`,
+    })),
+    "one enormous line": [{ text: "y".repeat(50000), speaker: "speaker_0" }],
+    "two long lines": [
+      { text: "a".repeat(4000), speaker: "speaker_0" },
+      { text: "b".repeat(4000), speaker: "speaker_1" },
+    ],
+    "no segments at all": [],
+  };
+
+  for (const [shape, segments] of Object.entries(shapes)) {
+    const transcript = JSON.stringify(segments);
+    const manager = new PostCallPipelineManager({
+      broadcast: () => {},
+      databaseManager: {
+        getNote: () => ({ transcript }),
+        getSpeakerMappings: () => [],
+      },
+      whisperManager: {},
+      diarizationManager: {},
+      inference: {},
+      convertToWav: async () => {},
+    });
+
+    for (const budget of [6000, 3278, 100, 0]) {
+      const digest = manager._transcriptDigest(1, transcript, budget);
+      assert.ok(
+        digest.length <= budget,
+        `${shape} at budget ${budget} produced ${digest.length} chars`
+      );
+    }
+  }
+});
+
+test("a single-line plain-text transcript is not sent three times over", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const transcript = "z".repeat(50000);
+  const manager = new PostCallPipelineManager({
+    broadcast: () => {},
+    databaseManager: { getNote: () => ({ transcript }), getSpeakerMappings: () => [] },
+    whisperManager: {},
+    diarizationManager: {},
+    inference: {},
+    convertToWav: async () => {},
+  });
+
+  const digest = manager._transcriptDigest(1, transcript, 6000);
+  assert.ok(digest.length <= 6000, `plain text digest was ${digest.length} chars`);
+  assert.ok(digest.includes("z"), "the transcript never reached the digest at all");
+});
+
+test("a title that overruns the local context retries instead of killing the notes", async () => {
+  // `_resolveModelContext` and the llama server's own contextSize are read from
+  // different places and can disagree. When they do, modelManagerBridge throws
+  // ModelError(code: "LOCAL_CONTEXT_EXCEEDED") -- which reaches here intact,
+  // because localReasoningBridge rethrows the original and processText returns
+  // the handler's promise unwrapped. Without the retry, `if (titleResult.error)
+  // return;` costs the user the notes as well as the title.
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = titleMocks(createMocks);
+
+  const calls = [];
+  mocks.inference.processText = async (text, opts) => {
+    calls.push({ text, opts });
+    if (isTitlePrompt(opts.systemPrompt)) {
+      const titleAttempts = calls.filter((c) => isTitlePrompt(c.opts.systemPrompt)).length;
+      if (titleAttempts === 1) {
+        const err = new Error("Prompt is too long for this model");
+        err.code = "LOCAL_CONTEXT_EXCEEDED";
+        throw err;
+      }
+      return "1:1 with Mike";
+    }
+    if (isClassifyPrompt(opts.systemPrompt)) return "none";
+    return "## Summary\nTest notes";
+  };
+
+  const writes = [];
+  mocks.databaseManager.updateNote = (id, updates) => {
+    writes.push(updates);
+    return { success: true };
+  };
+
+  process.env.NOTE_FORMATTING_PROVIDER = "local";
+  process.env.NOTE_FORMATTING_MODEL = "gemma-4-e4b";
+
+  try {
+    await buildManager(PostCallPipelineManager, mocks, {
+      resolveModelContext: async () => ({ contextSize: 2048, isGpuBackend: false }),
+    }).run(1);
+
+    const titleAttempts = calls.filter((c) => isTitlePrompt(c.opts.systemPrompt));
+    assert.equal(titleAttempts.length, 2, "the title step did not retry after the context refusal");
+    assert.ok(
+      titleAttempts[1].text.length < titleAttempts[0].text.length,
+      "the retry resent a prompt no smaller than the one that was just refused"
+    );
+    assert.equal(writes.find((w) => w.title !== undefined)?.title, "1:1 with Mike");
+    // Whether the notes then SUCCEED is the notes path's own business -- at a
+    // 2048 context it refuses a transcript this long, and did so before this
+    // change. What matters here is that run() reached the step at all rather
+    // than returning at `if (titleResult.error) return;`.
+    assert.ok(
+      mocks.events.some((e) => e.step === "notes" && e.status === "running"),
+      "run() aborted before the notes step — this is the failure the retry exists to prevent"
+    );
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+});
+
+// BLAST-RADIUS: the reorder changes what each `fromStep` re-runs, and the retry
+// menu (PersonalNotesView -> retry-pipeline-step) feeds it whatever
+// resolveRetryStep decided. Walk every value that function can actually emit.
+test("every step the retry menu can ask for re-runs the right set", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const { resolveRetryStep } = require("../../src/helpers/noteRetryStep.js");
+
+  const emitted = new Set(
+    [
+      { transcript: null, system_audio_path: "/tmp/a.opus" },
+      { transcript: "words", enhanced_content: null },
+      { transcript: "words", enhanced_content: "## Notes", title: "New note" },
+      { transcript: "words", enhanced_content: "## Notes", title: "Real Title" },
+    ]
+      .map((note) => resolveRetryStep(note).step)
+      .filter(Boolean)
+  );
+  assert.deepEqual(
+    [...emitted].sort(),
+    ["notes", "retranscribe", "title"],
+    "resolveRetryStep emits a step this test does not cover"
+  );
+
+  const expected = {
+    retranscribe: ["retranscribe", "classify", "title", "notes"],
+    // Classification is settled before the title now, so a title retry can no
+    // longer rewrite the meeting type the user chose.
+    title: ["title", "notes"],
+    notes: ["notes"],
+  };
+
+  for (const [fromStep, wanted] of Object.entries(expected)) {
+    const mocks = titleMocks(createMocks);
+    captureCalls(mocks);
+    mocks.databaseManager.getMeetingTypes = () => [];
+
+    process.env.NOTE_FORMATTING_PROVIDER = "openai";
+    process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+    try {
+      await buildManager(PostCallPipelineManager, mocks).run(1, { fromStep });
+      const ran = [
+        ...new Set(
+          mocks.events
+            .filter((e) => e.channel === "post-call-pipeline-status" && e.step !== "pipeline")
+            .map((e) => e.step)
+        ),
+      ];
+      assert.deepEqual(ran, wanted, `fromStep "${fromStep}" ran ${ran.join(",")}`);
+    } finally {
+      delete process.env.NOTE_FORMATTING_PROVIDER;
+      delete process.env.NOTE_FORMATTING_MODEL;
+    }
+  }
 });

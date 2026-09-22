@@ -194,9 +194,13 @@ test("a guard read that throws skips the title without killing the pipeline", as
     undefined,
     "an unreadable title must fail closed, not be overwritten"
   );
+  // Classification now runs BEFORE the title, so retrying from "title" no
+  // longer re-runs it. That is the point of the reorder: a title retry stops
+  // rewriting meeting_type_id. What still matters here is that a throwing
+  // guard does not take the rest of the pipeline down with it.
   assert.ok(
-    harness.statuses.some((s) => s.step === "classify"),
-    "classify must still run"
+    !harness.statuses.some((s) => s.step === "classify"),
+    "retrying from title must not re-classify — it would overwrite the meeting type"
   );
   assert.ok(
     harness.writes.some((w) => w.updates.enhanced_content !== undefined),

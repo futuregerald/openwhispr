@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-09-22
+
+### Fixed
+
+- Meeting titles now reflect the whole conversation instead of its first few minutes. The
+  title was written from the opening 2,000 characters of the transcript — on a two-hour call
+  with eleven people that is about 1.7% of it, and it is the part where everyone is saying
+  hello and checking their microphones. That is how a two-hour session came out as "Meeting
+  Logistics and Introductions Discussed". The title is now written from a summary of the
+  whole meeting: who took part, plus excerpts from the beginning, the middle and the end.
+- Titles can now name the people in the call — "1:1 with Mike" rather than "Discussion About
+  Projects" — because the participant list is given to the model along with the transcript.
+- The meeting type is now detected before the title is written rather than after, so a call
+  identified as a 1:1 or a standup can be titled as one.
+- Detecting the meeting type also no longer relies only on the opening minutes.
+
+### Changed
+
+- Retrying just the title of a meeting no longer re-runs meeting-type detection, so a title
+  retry can no longer change the type you picked.
+
 ## [1.23.0] - 2026-09-22
 
 ### Fixed
