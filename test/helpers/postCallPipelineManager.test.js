@@ -970,3 +970,153 @@ test("retranscribing clears the transcript origin instead of leaving a stale anc
     delete process.env.NOTE_FORMATTING_MODEL;
   }
 });
+
+// Speaker labels reaching the notes model. The bug these cover: run() snapshotted
+// the transcript once, so speaker attribution landing mid-pipeline was invisible to
+// the notes step, and the model spliced a heard name onto a raw id --
+// "Speaker 2 (Jay Carenderia)".
+
+function speakerLabelMocks({ transcripts, mappings = [] }) {
+  const calls = [];
+  let getNoteCount = 0;
+  return {
+    calls,
+    databaseManager: {
+      getNote: () => {
+        const transcript = transcripts[Math.min(getNoteCount, transcripts.length - 1)];
+        getNoteCount += 1;
+        return {
+          id: 70,
+          transcript: JSON.stringify(transcript),
+          meeting_type_id: null,
+          audio_duration_seconds: 300,
+        };
+      },
+      updateNote: () => ({ success: true }),
+      getMeetingType: () => null,
+      getMeetingTypes: () => [],
+      getSpeakerMappings: () => mappings,
+    },
+    whisperManager: { getModelPath: () => null },
+    diarizationManager: { isAvailable: () => false },
+    inference: {
+      processText: async (text, opts) => {
+        calls.push({ text, systemPrompt: opts.systemPrompt });
+        return "## Summary\nnotes";
+      },
+    },
+    convertToWav: async () => {},
+  };
+}
+
+async function runNotesStep(mocks) {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  process.env.NOTE_FORMATTING_PROVIDER = "openai";
+  process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+  try {
+    const manager = new PostCallPipelineManager({ broadcast: () => {}, ...mocks });
+    await manager.run(70, { fromStep: "notes" });
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+  return mocks.calls[mocks.calls.length - 1]?.text ?? "";
+}
+
+test("notes step sees a name written after run() took its transcript snapshot", async () => {
+  const unnamed = [{ speaker: "speaker_2", text: "Morning all.", source: "system", timestamp: 1 }];
+  const named = [
+    {
+      speaker: "speaker_2",
+      speakerName: "Jay",
+      speakerIsPlaceholder: false,
+      text: "Morning all.",
+      source: "system",
+      timestamp: 1,
+    },
+  ];
+  const mocks = speakerLabelMocks({ transcripts: [unnamed, named] });
+  const text = await runNotesStep(mocks);
+  assert.match(text, /^Jay: Morning all\./m);
+  assert.doesNotMatch(text, /speaker_2/);
+});
+
+test("notes step does not trust a placeholder name over the stored mapping", async () => {
+  const segments = [
+    {
+      speaker: "speaker_2",
+      speakerName: "Speaker 3",
+      speakerIsPlaceholder: true,
+      text: "Morning all.",
+      source: "system",
+      timestamp: 1,
+    },
+  ];
+  const mocks = speakerLabelMocks({
+    transcripts: [segments],
+    mappings: [{ speaker_id: "speaker_2", display_name: "Jay" }],
+  });
+  const text = await runNotesStep(mocks);
+  assert.match(text, /^Jay: Morning all\./m);
+});
+
+test("an unnamed speaker reaches the model one-indexed, never as a raw id", async () => {
+  const segments = [{ speaker: "speaker_2", text: "Morning all.", source: "system", timestamp: 1 }];
+  const mocks = speakerLabelMocks({ transcripts: [segments] });
+  const text = await runNotesStep(mocks);
+  assert.match(text, /^Speaker 3: Morning all\./m);
+  assert.doesNotMatch(text, /speaker_2/);
+});
+
+test("mic turns reach the model as You", async () => {
+  const segments = [{ speaker: "you", text: "Thanks everybody.", source: "mic", timestamp: 1 }];
+  const mocks = speakerLabelMocks({ transcripts: [segments] });
+  const text = await runNotesStep(mocks);
+  assert.match(text, /^You: Thanks everybody\./m);
+});
+
+test("an unattributed system turn is labelled rather than left bare", async () => {
+  const segments = [{ text: "Somewhere in Berlin.", source: "system", timestamp: 1 }];
+  const mocks = speakerLabelMocks({ transcripts: [segments] });
+  const text = await runNotesStep(mocks);
+  const othersLabel = require("../../src/helpers/i18nMain.js").i18nMain.t(
+    "transcript.speaker.others"
+  );
+  assert.equal(text, `${othersLabel}: Somewhere in Berlin.`);
+});
+
+test("notes are still generated when the database has no getSpeakerMappings", async () => {
+  const segments = [{ speaker: "speaker_2", text: "Morning all.", source: "system", timestamp: 1 }];
+  const mocks = speakerLabelMocks({ transcripts: [segments] });
+  delete mocks.databaseManager.getSpeakerMappings;
+  const text = await runNotesStep(mocks);
+  assert.match(text, /^Speaker 3: Morning all\./m);
+});
+
+test("the notes prompt forbids gluing a heard name onto a speaker label", async () => {
+  const segments = [{ speaker: "speaker_2", text: "Morning all.", source: "system", timestamp: 1 }];
+  const mocks = speakerLabelMocks({ transcripts: [segments] });
+  await runNotesStep(mocks);
+  const { systemPrompt } = mocks.calls[mocks.calls.length - 1];
+  assert.match(systemPrompt, /introduced themselves as/);
+});
+
+test("the chunked path resolves labels the same way as the single-call path", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const manager = new PostCallPipelineManager({
+    broadcast: () => {},
+    ...speakerLabelMocks({
+      transcripts: [[]],
+      mappings: [{ speaker_id: "speaker_2", display_name: "Jay" }],
+    }),
+  });
+  const transcript = JSON.stringify([
+    { speaker: "speaker_2", text: "Morning all.", source: "system", timestamp: 1 },
+    { speaker: "speaker_5", text: "Hello.", source: "system", timestamp: 2 },
+  ]);
+  const segments = manager._transcriptSegments(70, transcript);
+  assert.deepEqual(
+    segments.map((s) => s.label),
+    ["Jay", "Speaker 6"]
+  );
+});

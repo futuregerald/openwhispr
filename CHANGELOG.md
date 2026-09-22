@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-09-22
+
+### Fixed
+
+- Meeting notes generated automatically after a call now use the speaker names you have
+  assigned, instead of labelling people
+  "Speaker 2 (Jay Carenderia)". The note-writing step used the transcript as it looked when the
+  pipeline started, so names that finished being attributed a moment later were invisible to it.
+  The model then saw a numbered label, heard the person's name in the conversation, and printed
+  both. Titles and meeting-type detection were reading that same stale copy and now re-read the
+  transcript too.
+- A speaker with no stored name reaches the notes as "Speaker 3" rather than the internal id
+  "speaker_2", and your own microphone track is labelled "You". Where someone is named only in
+  what was said, the notes now write it as "Speaker 3 (introduced themselves as Jay)", so it is
+  clear the name came from the conversation rather than from voice identification.
+- Placeholder speaker labels are no longer mistaken for real names when notes are written.
+
 ## [1.22.3] - 2026-09-16
 
 ### Fixed
