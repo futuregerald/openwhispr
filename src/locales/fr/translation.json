@@ -2347,6 +2347,22 @@
     "notABot": {
       "title": "OpenWhispr est un enregistreur de réunions, pas un bot",
       "description": "OpenWhispr capture l'audio directement depuis votre système — il ne rejoint jamais vos réunions en tant que participant. Connectez simplement votre calendrier et prenez vos notes normalement."
+    },
+    "mcp": {
+      "title": "Accès agent (MCP)",
+      "description": "Permet à Claude Code, Claude Desktop ou Cursor de lire vos notes, vos transcriptions et les personnes qui y figurent.",
+      "loading": "Détermination de la commande pour cette installation…",
+      "unavailable": "Le serveur MCP est introuvable dans cette installation. Réinstallez OpenWhispr pour le rétablir.",
+      "addLabel": "Ajouter le serveur",
+      "requiresNode": "Nécessite Node dans votre PATH. OpenWhispr doit être lancé quand l'agent l'appelle.",
+      "noNodeToggle": "Node n'est pas installé ?",
+      "noNodeDescription": "Cette variante exécute le serveur avec l'environnement d'OpenWhispr.",
+      "writeToggle": "Autoriser l'agent à écrire des notes",
+      "writeWarning": "Le mode écriture permet à un agent de créer et d'écraser des notes. Il n'y a pas d'historique de versions, et une note peut être écrasée par des instructions cachées dans une transcription. Laissez-le désactivé sauf nécessité.",
+      "removeLabel": "Supprimer le serveur",
+      "indexBuilding_one": "Construction de l'index des transcriptions — {{count}} note restante",
+      "indexBuilding_other": "Construction de l'index des transcriptions — {{count}} notes restantes",
+      "tierNote": "Le mode lecture seule limite ce que ce serveur propose à votre agent. Ce n'est pas un bac à sable : un agent capable d'exécuter des commandes shell n'est pas confiné par lui."
     }
   },
   "calendar": {

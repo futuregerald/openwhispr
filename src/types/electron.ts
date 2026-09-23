@@ -986,6 +986,31 @@ declare global {
 
       openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
 
+      getMcpConfig: () => Promise<{
+        serverName: string;
+        serverPath: string | null;
+        execPath: string;
+        isPackaged: boolean;
+        platform: string;
+        writeEnvVar: string;
+        commands: {
+          read: string;
+          readWrite: string;
+          fallbackRead: string;
+          fallbackReadWrite: string;
+          remove: string;
+        } | null;
+      }>;
+
+      getSearchIndexStatus: () => Promise<{
+        transcript_segments: {
+          indexed_notes: number;
+          pending_notes: number;
+          total_segments: number;
+        };
+        transcriptions_fts: { ready: boolean };
+      }>;
+
       // Hotkey management
       updateHotkey: (key: string) => Promise<{ success: boolean; message: string }>;
       setHotkeyListeningMode?: (enabled: boolean) => Promise<{ success: boolean }>;

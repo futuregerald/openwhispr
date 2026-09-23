@@ -2347,6 +2347,22 @@
     "notABot": {
       "title": "OpenWhispr è un registratore di riunioni, non un bot",
       "description": "OpenWhispr cattura l'audio direttamente dal tuo sistema — non entra mai nelle tue riunioni come partecipante. Basta collegare il calendario e prendere appunti normalmente."
+    },
+    "mcp": {
+      "title": "Accesso per agenti (MCP)",
+      "description": "Consente a Claude Code, Claude Desktop o Cursor di leggere le tue note, le trascrizioni e le persone che vi compaiono.",
+      "loading": "Individuazione del comando per questa installazione…",
+      "unavailable": "Server MCP non trovato in questa installazione. Reinstalla OpenWhispr per ripristinarlo.",
+      "addLabel": "Aggiungi il server",
+      "requiresNode": "Richiede Node nel PATH. OpenWhispr deve essere in esecuzione quando l'agente lo chiama.",
+      "noNodeToggle": "Node non installato?",
+      "noNodeDescription": "Questa variante avvia il server con l'ambiente di OpenWhispr.",
+      "writeToggle": "Consenti all'agente di scrivere note",
+      "writeWarning": "La modalità di scrittura consente a un agente di creare e sovrascrivere note. Non esiste una cronologia delle versioni e una nota può essere sovrascritta da istruzioni nascoste in una trascrizione. Lasciala disattivata se non serve.",
+      "removeLabel": "Rimuovi il server",
+      "indexBuilding_one": "Creazione dell'indice delle trascrizioni — {{count}} nota rimanente",
+      "indexBuilding_other": "Creazione dell'indice delle trascrizioni — {{count}} note rimanenti",
+      "tierNote": "La modalità di sola lettura limita ciò che questo server offre al tuo agente. Non è una sandbox: un agente che può anche eseguire comandi di shell non ne è vincolato."
     }
   },
   "calendar": {

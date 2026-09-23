@@ -1,3 +1,5 @@
+const MAX_SEARCH_TOKENS = 32;
+
 function buildNoteSearchQuery(input) {
   if (typeof input !== "string") return "";
 
@@ -8,7 +10,10 @@ function buildNoteSearchQuery(input) {
 
   if (!tokens?.length) return "";
 
-  return tokens.map((token) => `"${token.replace(/"/g, '""')}"*`).join(" ");
+  return tokens
+    .slice(0, MAX_SEARCH_TOKENS)
+    .map((token) => `"${token.replace(/"/g, '""')}"*`)
+    .join(" ");
 }
 
 module.exports = { buildNoteSearchQuery };

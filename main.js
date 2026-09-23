@@ -164,6 +164,7 @@ const DiarizationManager = require("./src/helpers/diarization");
 const TrayManager = require("./src/helpers/tray");
 const IPCHandlers = require("./src/helpers/ipcHandlers");
 const CliBridge = require("./src/helpers/cliBridge");
+const { startTranscriptSegmentBackfill } = require("./src/helpers/transcriptSegmentIndex");
 const UpdateManager = require("./src/updater");
 const GlobeKeyManager = require("./src/helpers/globeKeyManager");
 const WindowsKeyManager = require("./src/helpers/windowsKeyManager");
@@ -400,6 +401,13 @@ async function startApp() {
     debugLogger.error("CLI bridge failed to start", { error: err.message });
     cliBridge = null;
   });
+
+  try {
+    ipcHandlers?.databaseManager?.startTranscriptSegmentIndexer();
+    startTranscriptSegmentBackfill(ipcHandlers?.databaseManager);
+  } catch (error) {
+    debugLogger.error("Transcript segment indexer failed to start", { error: error.message });
+  }
 
   windowManager.setActivationModeCache(environmentManager.getActivationMode());
   windowManager.setFloatingIconAutoHide(environmentManager.getFloatingIconAutoHide());
@@ -1215,6 +1223,9 @@ function performSyncTeardown() {
     cliBridge.stop().catch(() => {});
     cliBridge = null;
   }
+  try {
+    ipcHandlers?.databaseManager?.stopTranscriptSegmentIndexer();
+  } catch {}
   if (windowManager && isLiveWindow(windowManager.agentWindow)) {
     windowManager.agentWindow.destroy();
   }

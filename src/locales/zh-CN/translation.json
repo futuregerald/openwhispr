@@ -2347,6 +2347,22 @@
     "notABot": {
       "title": "OpenWhispr 是会议录制工具，不是机器人",
       "description": "OpenWhispr 直接从您的系统捕获音频 — 它不会以参与者身份加入您的会议。只需连接日历，正常记录笔记即可。"
+    },
+    "mcp": {
+      "title": "代理访问（MCP）",
+      "description": "让 Claude Code、Claude Desktop 或 Cursor 读取你的笔记、转录以及其中提到的人。",
+      "loading": "正在确定此安装对应的命令…",
+      "unavailable": "在此安装中找不到 MCP 服务器。请重新安装 OpenWhispr。",
+      "addLabel": "添加服务器",
+      "requiresNode": "需要 PATH 中有 Node。代理调用时 OpenWhispr 必须正在运行。",
+      "noNodeToggle": "没有安装 Node？",
+      "noNodeDescription": "这种形式使用 OpenWhispr 自带的运行时启动服务器。",
+      "writeToggle": "允许代理写入笔记",
+      "writeWarning": "写入模式允许代理创建和覆盖笔记。没有版本历史，而且笔记可能被隐藏在转录中的指令覆盖。非必要请保持关闭。",
+      "removeLabel": "移除服务器",
+      "indexBuilding_one": "正在建立转录索引 — 还剩 {{count}} 条笔记",
+      "indexBuilding_other": "正在建立转录索引 — 还剩 {{count}} 条笔记",
+      "tierNote": "只读模式限制的是此服务器向代理提供的内容。它不是沙箱——能够执行 shell 命令的代理不受其约束。"
     }
   },
   "calendar": {

@@ -423,6 +423,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // External link opener
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
+  getMcpConfig: () => ipcRenderer.invoke("mcp-get-config"),
+  getSearchIndexStatus: () => ipcRenderer.invoke("db-search-index-status"),
 
   // Model management functions
   modelGetAll: () => ipcRenderer.invoke("model-get-all"),

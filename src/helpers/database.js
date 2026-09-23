@@ -4,6 +4,8 @@ const fs = require("fs");
 const { randomUUID } = require("crypto");
 const debugLogger = require("./debugLogger");
 const { buildNoteSearchQuery } = require("./noteSearch");
+const peopleResolver = require("./peopleResolver");
+const { resolveDateRange } = require("./searchDateRange");
 const { app } = require("electron");
 
 // Server-enforced trigger cap (openwhispr-api); enforced here so one oversized
@@ -11,6 +13,22 @@ const { app } = require("electron");
 const MAX_SNIPPET_TRIGGER_LENGTH = 100;
 
 const TRANSCRIPT_ORIGIN_SOURCES = new Set(["audio:system", "first-segment", "unanchored"]);
+
+const MAX_NOTE_SUMMARY_LIMIT = 50;
+const NOTE_PREVIEW_CHARS = 400;
+const NOTE_PREVIEW_SEGMENTS = 20;
+const NOTE_SNIPPET_CHARS = 300;
+const MAX_STATS_SPEAKERS = 100;
+const MAX_NOTE_FIELD_CHARS = 100000;
+const MAX_TRANSCRIPT_PAGE = 500;
+const MAX_SEGMENT_SEARCH_LIMIT = 50;
+const MAX_SEGMENT_CONTEXT = 2;
+const MAX_SEGMENT_TEXT_CHARS = 500;
+
+const TRANSCRIPT_INDEX_TICK_MS = 5000;
+const TRANSCRIPT_INDEX_BATCH = 3;
+const TRANSCRIPT_INDEX_RECONCILE_BATCH = 25;
+const TRANSCRIPT_INDEX_RECONCILE_EVERY_TICKS = 12;
 
 // SQLite's INTEGER affinity stores "not-a-number" verbatim, so an origin arriving through
 // an arbitrary update body would read back as authoritative and be wrong.
@@ -24,7 +42,16 @@ function isAcceptableNoteValue(field, value) {
 class DatabaseManager {
   constructor() {
     this.db = null;
+    this._dirtyTranscriptNotes = new Set();
+    this._transcriptIndexTimer = null;
+    this._transcriptIndexCursor = 0;
+    this._transcriptIndexTickCount = 0;
     this.initDatabase();
+  }
+
+  _markTranscriptDirty(id) {
+    if (id == null) return;
+    this._dirtyTranscriptNotes.add(Number(id));
   }
 
   initDatabase() {
@@ -668,6 +695,111 @@ class DatabaseManager {
       `);
       this.db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, id)");
 
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS transcript_segments (
+          note_id INTEGER NOT NULL,
+          seq INTEGER NOT NULL,
+          speaker_id TEXT,
+          speaker_name TEXT,
+          text TEXT NOT NULL,
+          offset_ms INTEGER,
+          started_at_ms INTEGER,
+          timestamp_kind TEXT NOT NULL DEFAULT 'unknown',
+          PRIMARY KEY (note_id, seq),
+          FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+        )
+      `);
+
+      this.db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_transcript_segments_speaker ON transcript_segments(speaker_name)"
+      );
+
+      this.db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS transcript_segments_fts USING fts5(
+          text,
+          speaker_name,
+          content='transcript_segments',
+          content_rowid='rowid'
+        )
+      `);
+
+      this.db.exec(`
+        CREATE TRIGGER IF NOT EXISTS transcript_segments_fts_insert
+        AFTER INSERT ON transcript_segments BEGIN
+          INSERT INTO transcript_segments_fts(rowid, text, speaker_name)
+          VALUES (new.rowid, new.text, new.speaker_name);
+        END
+      `);
+
+      this.db.exec(`
+        CREATE TRIGGER IF NOT EXISTS transcript_segments_fts_update
+        AFTER UPDATE OF text, speaker_name ON transcript_segments BEGIN
+          INSERT INTO transcript_segments_fts(transcript_segments_fts, rowid, text, speaker_name)
+          VALUES ('delete', old.rowid, old.text, old.speaker_name);
+          INSERT INTO transcript_segments_fts(rowid, text, speaker_name)
+          VALUES (new.rowid, new.text, new.speaker_name);
+        END
+      `);
+
+      this.db.exec(`
+        CREATE TRIGGER IF NOT EXISTS transcript_segments_fts_delete
+        AFTER DELETE ON transcript_segments BEGIN
+          INSERT INTO transcript_segments_fts(transcript_segments_fts, rowid, text, speaker_name)
+          VALUES ('delete', old.rowid, old.text, old.speaker_name);
+        END
+      `);
+
+      this.db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS transcriptions_fts USING fts5(
+          text,
+          raw_text,
+          content='transcriptions',
+          content_rowid='id'
+        )
+      `);
+
+      this.db.exec(`
+        CREATE TRIGGER IF NOT EXISTS transcriptions_fts_insert
+        AFTER INSERT ON transcriptions BEGIN
+          INSERT INTO transcriptions_fts(rowid, text, raw_text)
+          VALUES (new.id, new.text, new.raw_text);
+        END
+      `);
+
+      this.db.exec(`
+        CREATE TRIGGER IF NOT EXISTS transcriptions_fts_update
+        AFTER UPDATE OF text, raw_text ON transcriptions BEGIN
+          INSERT INTO transcriptions_fts(transcriptions_fts, rowid, text, raw_text)
+          VALUES ('delete', old.id, old.text, old.raw_text);
+          INSERT INTO transcriptions_fts(rowid, text, raw_text)
+          VALUES (new.id, new.text, new.raw_text);
+        END
+      `);
+
+      this.db.exec(`
+        CREATE TRIGGER IF NOT EXISTS transcriptions_fts_delete
+        AFTER DELETE ON transcriptions BEGIN
+          INSERT INTO transcriptions_fts(transcriptions_fts, rowid, text, raw_text)
+          VALUES ('delete', old.id, old.text, old.raw_text);
+        END
+      `);
+
+      if (this.db.pragma("user_version", { simple: true }) < 2) {
+        this.db.exec("INSERT INTO transcriptions_fts(transcriptions_fts) VALUES('rebuild')");
+        this.db.pragma("user_version = 2");
+      }
+
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS transcript_segment_index (
+          note_id INTEGER PRIMARY KEY,
+          transcript_hash TEXT NOT NULL,
+          segment_count INTEGER NOT NULL,
+          mixed_units INTEGER NOT NULL DEFAULT 0,
+          indexed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+        )
+      `);
+
       // Seed built-in meeting types
       const { seedMeetingTypes } = require("./meetingTypesData");
       seedMeetingTypes(this.db);
@@ -1240,6 +1372,7 @@ class DatabaseManager {
         )
         .run(originMs, source, id);
       if (info.changes === 0) return { success: false };
+      this._markTranscriptDirty(id);
       return { success: true, note: this.db.prepare("SELECT * FROM notes WHERE id = ?").get(id) };
     } catch (error) {
       debugLogger.error(
@@ -1249,6 +1382,116 @@ class DatabaseManager {
       );
       throw error;
     }
+  }
+
+  startTranscriptSegmentIndexer() {
+    if (this._transcriptIndexTimer) return;
+    this._transcriptIndexTimer = setInterval(() => {
+      this._transcriptIndexTick();
+    }, TRANSCRIPT_INDEX_TICK_MS);
+    this._transcriptIndexTimer.unref?.();
+  }
+
+  _transcriptIndexTick() {
+    const drained = this._drainDirtyTranscriptNotes();
+    if (drained > 0) return drained;
+
+    this._transcriptIndexTickCount += 1;
+    if (this._transcriptIndexTickCount % TRANSCRIPT_INDEX_RECONCILE_EVERY_TICKS !== 0) return 0;
+
+    return this.reconcileTranscriptSegments();
+  }
+
+  stopTranscriptSegmentIndexer() {
+    if (!this._transcriptIndexTimer) return;
+    clearInterval(this._transcriptIndexTimer);
+    this._transcriptIndexTimer = null;
+  }
+
+  _transcriptIndexIsUsable() {
+    if (this.db && this.db.open) return true;
+    this.stopTranscriptSegmentIndexer();
+    return false;
+  }
+
+  _drainDirtyTranscriptNotes(batchSize = TRANSCRIPT_INDEX_BATCH) {
+    if (!this._transcriptIndexIsUsable()) return 0;
+
+    const { reshredNote } = require("./transcriptSegmentIndex.js");
+    let processed = 0;
+    for (const noteId of this._dirtyTranscriptNotes) {
+      if (processed >= batchSize) break;
+      this._dirtyTranscriptNotes.delete(noteId);
+      try {
+        reshredNote(this.db, noteId);
+      } catch (error) {
+        debugLogger.error(
+          "Transcript segment reshred failed",
+          { noteId, error: error.message },
+          "transcript-index"
+        );
+      }
+      processed += 1;
+    }
+    return processed;
+  }
+
+  reconcileTranscriptSegments(batchSize = TRANSCRIPT_INDEX_RECONCILE_BATCH) {
+    if (!this._transcriptIndexIsUsable()) return 0;
+
+    const candidates = this.db
+      .prepare(
+        "SELECT id FROM notes WHERE deleted_at IS NULL AND id > ? ORDER BY id ASC LIMIT ?"
+      )
+      .all(this._transcriptIndexCursor, batchSize);
+
+    if (candidates.length === 0 && this._transcriptIndexCursor !== 0) {
+      this._transcriptIndexCursor = 0;
+      return 0;
+    }
+
+    for (const { id } of candidates) this._markTranscriptDirty(id);
+    this._transcriptIndexCursor = candidates.length
+      ? candidates[candidates.length - 1].id
+      : this._transcriptIndexCursor;
+
+    return this._drainDirtyTranscriptNotes();
+  }
+
+  getPendingTranscriptIndexNoteIds(limit = null) {
+    if (!this.db) throw new Error("Database not initialized");
+    const sql = `SELECT id FROM notes
+       WHERE transcript IS NOT NULL AND deleted_at IS NULL
+         AND id NOT IN (SELECT note_id FROM transcript_segment_index)
+       ORDER BY updated_at DESC${limit != null ? " LIMIT ?" : ""}`;
+    const rows = limit != null ? this.db.prepare(sql).all(limit) : this.db.prepare(sql).all();
+    return rows.map((row) => row.id);
+  }
+
+  getSearchIndexStatus() {
+    if (!this.db) throw new Error("Database not initialized");
+    const indexed = this.db
+      .prepare("SELECT COUNT(*) AS c FROM transcript_segment_index")
+      .get().c;
+    const totalSegments = this.db
+      .prepare("SELECT COUNT(*) AS c FROM transcript_segments")
+      .get().c;
+    const pending = this.db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM notes
+           WHERE transcript IS NOT NULL AND deleted_at IS NULL
+             AND id NOT IN (SELECT note_id FROM transcript_segment_index)`
+      )
+      .get().c;
+
+    return {
+      transcript_segments: {
+        indexed_notes: indexed,
+        pending_notes: pending,
+        total_segments: totalSegments,
+      },
+      transcriptions_fts: { ready: true },
+    };
   }
 
   listNoteTranscripts() {
@@ -1278,6 +1521,7 @@ class DatabaseManager {
             .run(transcript, origin.ms, origin.source, id)
         : this.db.prepare("UPDATE notes SET transcript = ? WHERE id = ?").run(transcript, id);
       if (info.changes === 0) return { success: false };
+      this._markTranscriptDirty(id);
       return { success: true, note: this.db.prepare("SELECT * FROM notes WHERE id = ?").get(id) };
     } catch (error) {
       debugLogger.error(
@@ -1334,6 +1578,16 @@ class DatabaseManager {
       values.push(id);
       const stmt = this.db.prepare(`UPDATE notes SET ${fields.join(", ")} WHERE id = ?`);
       stmt.run(...values);
+      if (
+        fields.some(
+          (field) =>
+            field.startsWith("transcript = ") ||
+            field.startsWith("transcript_origin_ms = ") ||
+            field.startsWith("deleted_at = ")
+        )
+      ) {
+        this._markTranscriptDirty(id);
+      }
       const fetchStmt = this.db.prepare("SELECT * FROM notes WHERE id = ?");
       const note = fetchStmt.get(id);
       return { success: true, note };
@@ -1952,6 +2206,544 @@ class DatabaseManager {
     }
   }
 
+  toTranscriptionSummary(transcription) {
+    const text = transcription.text || "";
+    return {
+      id: transcription.id,
+      timestamp: transcription.timestamp,
+      created_at: transcription.created_at,
+      chars: text.length,
+      snippet: text.slice(0, NOTE_SNIPPET_CHARS),
+    };
+  }
+
+  toNoteSearchSummary(note) {
+    const enhanced = (note.enhanced_content || "").trim();
+    const plain = (note.content || "").trim();
+    const bodyKind = enhanced ? "enhanced" : plain ? "plain" : note.transcript ? "transcript" : "empty";
+    const source = enhanced || plain || "";
+
+    return {
+      id: note.id,
+      title: note.title,
+      note_type: note.note_type,
+      folder_id: note.folder_id,
+      created_at: note.created_at,
+      updated_at: note.updated_at,
+      calendar_event_id: note.calendar_event_id,
+      meeting_type_id: note.meeting_type_id,
+      body_kind: bodyKind,
+      has_enhanced: enhanced.length > 0,
+      has_transcript: note.transcript != null,
+      snippet: source.slice(0, NOTE_SNIPPET_CHARS),
+    };
+  }
+
+  getNoteSummaries(options = {}) {
+    if (!this.db) throw new Error("Database not initialized");
+
+    const {
+      noteType = null,
+      folderId = null,
+      since = null,
+      until = null,
+      limit = 20,
+    } = options;
+
+    const { from, to } = resolveDateRange(since, until);
+    const cappedLimit = Math.max(1, Math.min(Number(limit) || 20, MAX_NOTE_SUMMARY_LIMIT));
+
+    const where = ["n.deleted_at IS NULL"];
+    const params = [];
+    if (noteType) {
+      where.push("n.note_type = ?");
+      params.push(noteType);
+    }
+    if (folderId != null) {
+      where.push("n.folder_id = ?");
+      params.push(folderId);
+    }
+    if (from) {
+      where.push("datetime(n.created_at) >= datetime(?)");
+      params.push(from.sql);
+    }
+    if (to) {
+      where.push("datetime(n.created_at) < datetime(?)");
+      params.push(to.sql);
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT n.id, n.title, n.note_type, n.folder_id, n.created_at, n.updated_at,
+                n.calendar_event_id, n.meeting_type_id,
+                f.name AS folder,
+                n.transcript IS NOT NULL AS has_transcript,
+                length(COALESCE(n.enhanced_content, '')) AS enhanced_chars,
+                length(COALESCE(n.content, '')) AS content_chars,
+                substr(COALESCE(n.enhanced_content, ''), 1, ?) AS enhanced_preview,
+                substr(COALESCE(n.content, ''), 1, ?) AS content_preview,
+                EXISTS(
+                  SELECT 1 FROM transcript_segments ts
+                  WHERE ts.note_id = n.id AND ts.speaker_name IS NULL AND ts.speaker_id IS NOT NULL
+                ) AS has_unmapped_speakers
+         FROM notes n
+         LEFT JOIN folders f ON f.id = n.folder_id
+         WHERE ${where.join(" AND ")}
+         ORDER BY n.updated_at DESC
+         LIMIT ?`
+      )
+      .all(NOTE_PREVIEW_CHARS, NOTE_PREVIEW_CHARS, ...params, cappedLimit);
+
+    const { renderSegments } = require("./noteBody");
+    const { segmentRowsForNote, readSpeakerMappings } = require("./transcriptSegmentIndex");
+
+    const notes = rows.map((row) => {
+      const enhanced = (row.enhanced_preview || "").trim();
+      const plain = (row.content_preview || "").trim();
+
+      let bodyKind = "empty";
+      let preview = "";
+      let bodyChars = 0;
+
+      if (enhanced) {
+        bodyKind = "enhanced";
+        preview = enhanced;
+        bodyChars = row.enhanced_chars;
+      } else if (plain) {
+        bodyKind = "plain";
+        preview = plain;
+        bodyChars = row.content_chars;
+      } else if (row.has_transcript) {
+        const segments = segmentRowsForNote(this.db, row.id, NOTE_PREVIEW_SEGMENTS);
+        const rendered = renderSegments(segments, readSpeakerMappings(this.db, row.id));
+        if (rendered.segmentCount > 0 && rendered.text) {
+          bodyKind = "transcript";
+          preview = rendered.text.slice(0, NOTE_PREVIEW_CHARS);
+          bodyChars = rendered.text.length;
+        }
+      }
+
+      return {
+        id: row.id,
+        title: row.title,
+        note_type: row.note_type,
+        folder: row.folder,
+        folder_id: row.folder_id,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        calendar_event_id: row.calendar_event_id,
+        meeting_type_id: row.meeting_type_id,
+        body_kind: bodyKind,
+        body_chars: bodyChars,
+        has_enhanced: row.enhanced_chars > 0,
+        has_transcript: Boolean(row.has_transcript),
+        has_unmapped_speakers: Boolean(row.has_unmapped_speakers),
+        preview,
+      };
+    });
+
+    return {
+      notes,
+      resolved_range: { since: from ? from.sql : null, until: to ? to.sql : null },
+    };
+  }
+
+  getNoteDetail(id, options = {}) {
+    if (!this.db) throw new Error("Database not initialized");
+
+    const {
+      include = ["body"],
+      maxChars = 20000,
+      transcriptOffset = 0,
+      transcriptLimit = 200,
+    } = options;
+
+    const note = this.db.prepare("SELECT * FROM notes WHERE id = ?").get(id);
+    if (!note || note.deleted_at) {
+      const error = new Error(`Note ${id} not found`);
+      error.code = "NOT_FOUND";
+      throw error;
+    }
+
+    const cappedChars = Math.max(1, Math.min(Number(maxChars) || 20000, MAX_NOTE_FIELD_CHARS));
+    const { resolveNoteBody } = require("./noteBody");
+    const wanted = new Set(include);
+
+    const detail = {
+      id: note.id,
+      title: note.title,
+      note_type: note.note_type,
+      folder_id: note.folder_id,
+      created_at: note.created_at,
+      updated_at: note.updated_at,
+      calendar_event_id: note.calendar_event_id,
+      meeting_type_id: note.meeting_type_id,
+      has_enhanced: Boolean((note.enhanced_content || "").trim()),
+      has_transcript: note.transcript != null,
+    };
+
+    const resolved = resolveNoteBody(this.db, note, { maxChars: cappedChars });
+    detail.body_kind = resolved.body_kind;
+    detail.body_chars = resolved.body_chars;
+    detail.has_unmapped_speakers = resolved.has_unmapped_speakers;
+
+    if (wanted.has("body")) {
+      detail.body = resolved.body;
+      detail.body_truncated = resolved.truncated;
+    }
+
+    for (const [key, column] of [
+      ["enhanced_content", "enhanced_content"],
+      ["content", "content"],
+    ]) {
+      if (!wanted.has(key)) continue;
+      const value = note[column] ?? "";
+      detail[key] = value.slice(0, cappedChars);
+      detail[`${key}_truncated`] = value.length > cappedChars;
+      detail[`${key}_chars`] = value.length;
+    }
+
+    if (wanted.has("transcript")) {
+      const { segmentRowsForNote } = require("./transcriptSegmentIndex");
+      const offset = Math.max(0, Number(transcriptOffset) || 0);
+      const limit = Math.max(1, Math.min(Number(transcriptLimit) || 200, MAX_TRANSCRIPT_PAGE));
+
+      const indexed = this.db
+        .prepare("SELECT COUNT(*) AS c FROM transcript_segment_index WHERE note_id = ?")
+        .get(id).c > 0;
+
+      const all = segmentRowsForNote(this.db, id);
+      const segments = all
+        .slice(offset, offset + limit)
+        .map(({ note_id: _noteId, ...row }) => row);
+
+      detail.transcript = {
+        segments,
+        total_segments: all.length,
+        indexed,
+        next_offset: offset + segments.length < all.length ? offset + segments.length : null,
+      };
+    }
+
+    return detail;
+  }
+
+  resolvePerson(name, limit = 5) {
+    if (!this.db) throw new Error("Database not initialized");
+    return peopleResolver.resolve(this.db, name, limit);
+  }
+
+  getPersonActivity(options = {}) {
+    if (!this.db) throw new Error("Database not initialized");
+    return peopleResolver.activity(this.db, options);
+  }
+
+  listPeople(options = {}) {
+    if (!this.db) throw new Error("Database not initialized");
+    return peopleResolver.list(this.db, options);
+  }
+
+  getFolderSummaries() {
+    if (!this.db) throw new Error("Database not initialized");
+    return this.db
+      .prepare(
+        `SELECT f.id, f.name, f.is_default,
+                (SELECT COUNT(*) FROM notes n WHERE n.folder_id = f.id AND n.deleted_at IS NULL) AS note_count
+         FROM folders f
+         ORDER BY f.sort_order ASC, f.name ASC`
+      )
+      .all();
+  }
+
+  getMeetingTypeSummaries() {
+    if (!this.db) throw new Error("Database not initialized");
+    return this.db
+      .prepare(
+        "SELECT id, name, is_builtin FROM meeting_types ORDER BY is_builtin DESC, name ASC"
+      )
+      .all();
+  }
+
+  getCalendarEventsForMcp(options = {}) {
+    if (!this.db) throw new Error("Database not initialized");
+    const { since = null, until = null, noteId = null, eventId = null, limit = 20 } = options;
+    const { from, to } = resolveDateRange(since, until);
+    const cappedLimit = Math.max(1, Math.min(Number(limit) || 20, MAX_NOTE_SUMMARY_LIMIT));
+
+    const where = [];
+    const params = [];
+    if (eventId) {
+      where.push("e.id = ?");
+      params.push(eventId);
+    }
+    if (noteId != null) {
+      where.push(
+        "EXISTS (SELECT 1 FROM notes n WHERE n.calendar_event_id = e.id AND n.deleted_at IS NULL AND n.id = ?)"
+      );
+      params.push(noteId);
+    }
+    if (from) {
+      where.push(
+        `((e.is_all_day = 1 AND date(e.start_time) >= date(?))
+          OR (e.is_all_day = 0 AND datetime(e.start_time) >= datetime(?)))`
+      );
+      params.push(from.localDate, from.sql);
+    }
+    if (to) {
+      where.push(
+        `((e.is_all_day = 1 AND date(e.start_time) < date(?))
+          OR (e.is_all_day = 0 AND datetime(e.start_time) < datetime(?)))`
+      );
+      params.push(to.localDate, to.sql);
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT e.id, e.summary, e.start_time, e.end_time, e.is_all_day, e.status,
+                e.organizer_email, e.hangout_link, e.attendees,
+                (SELECT n.id FROM notes n
+                  WHERE n.calendar_event_id = e.id AND n.deleted_at IS NULL
+                  ORDER BY n.id LIMIT 1) AS linked_note_id
+         FROM calendar_events e
+         ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+         ORDER BY e.start_time DESC
+         LIMIT ?`
+      )
+      .all(...params, cappedLimit);
+
+    return rows.map((row) => {
+      let attendees = [];
+      try {
+        attendees = JSON.parse(row.attendees || "[]");
+      } catch {
+        attendees = [];
+      }
+      if (!Array.isArray(attendees)) attendees = [];
+      return {
+        ...row,
+        is_all_day: Boolean(row.is_all_day),
+        attendees_count: attendees.length,
+        attendees: attendees.map((attendee) => ({
+          email: attendee?.email ?? null,
+          display_name: attendee?.displayName ?? null,
+          response_status: attendee?.responseStatus ?? null,
+        })),
+      };
+    });
+  }
+
+  getStats(options = {}) {
+    if (!this.db) throw new Error("Database not initialized");
+    const { groupBy = "week", since = null, until = null, bySpeaker = false } = options;
+    const { from, to } = resolveDateRange(since, until);
+
+    const buckets_by_group = { day: "%Y-%m-%d", week: "%Y-W%W", month: "%Y-%m" };
+    const bucket = Object.prototype.hasOwnProperty.call(buckets_by_group, groupBy)
+      ? buckets_by_group[groupBy]
+      : null;
+    if (!bucket) {
+      const error = new Error(`Invalid group_by: ${groupBy}`);
+      error.code = "VALIDATION";
+      throw error;
+    }
+
+    const where = ["deleted_at IS NULL"];
+    const params = [];
+    if (from) {
+      where.push("datetime(created_at) >= datetime(?)");
+      params.push(from.sql);
+    }
+    if (to) {
+      where.push("datetime(created_at) < datetime(?)");
+      params.push(to.sql);
+    }
+
+    const buckets = this.db
+      .prepare(
+        `SELECT strftime('${bucket}', created_at) AS bucket,
+                COUNT(*) AS notes,
+                SUM(CASE WHEN note_type = 'meeting' THEN 1 ELSE 0 END) AS meetings,
+                SUM(COALESCE(audio_duration_seconds, 0)) AS total_duration_seconds
+         FROM notes
+         WHERE ${where.join(" AND ")}
+         GROUP BY bucket
+         ORDER BY bucket ASC`
+      )
+      .all(...params);
+
+    const result = { group_by: groupBy, buckets };
+
+    if (bySpeaker) {
+      const speakerWhere = ["s.speaker_name IS NOT NULL", "n.deleted_at IS NULL"];
+      const speakerParams = [];
+      if (from) {
+        speakerWhere.push("datetime(n.created_at) >= datetime(?)");
+        speakerParams.push(from.sql);
+      }
+      if (to) {
+        speakerWhere.push("datetime(n.created_at) < datetime(?)");
+        speakerParams.push(to.sql);
+      }
+
+      result.by_speaker = this.db
+        .prepare(
+          `SELECT s.speaker_name AS speaker,
+                  COUNT(*) AS segments,
+                  SUM(CASE WHEN trim(s.text) = '' THEN 0
+                           ELSE length(trim(s.text)) - length(replace(trim(s.text), ' ', '')) + 1 END) AS words
+           FROM transcript_segments s
+           JOIN notes n ON n.id = s.note_id
+           WHERE ${speakerWhere.join(" AND ")}
+           GROUP BY s.speaker_name
+           ORDER BY segments DESC
+           LIMIT ?`
+        )
+        .all(...speakerParams, MAX_STATS_SPEAKERS);
+    }
+
+    return result;
+  }
+
+  searchTranscriptSegments(options = {}) {
+    if (!this.db) throw new Error("Database not initialized");
+
+    const {
+      query = null,
+      speaker = null,
+      noteId = null,
+      since = null,
+      until = null,
+      limit = 20,
+      offset = 0,
+      contextSegments = 0,
+    } = options;
+
+    const ftsQuery = query ? buildNoteSearchQuery(query) : "";
+    if (query && !ftsQuery) {
+      const error = new Error(`Search query has no searchable terms: ${query}`);
+      error.code = "VALIDATION";
+      throw error;
+    }
+    if (!ftsQuery && speaker == null && noteId == null) {
+      const error = new Error("A query, speaker or note_id is required");
+      error.code = "VALIDATION";
+      throw error;
+    }
+
+    const { from, to } = resolveDateRange(since, until);
+    const cappedLimit = Math.max(1, Math.min(Number(limit) || 20, MAX_SEGMENT_SEARCH_LIMIT));
+    const cappedOffset = Math.max(0, Number(offset) || 0);
+    const context = Math.max(0, Math.min(Number(contextSegments) || 0, MAX_SEGMENT_CONTEXT));
+
+    const where = ["n.deleted_at IS NULL"];
+    const params = [];
+
+    if (ftsQuery) {
+      where.push("transcript_segments_fts MATCH ?");
+      params.push(ftsQuery);
+    }
+    if (speaker != null) {
+      where.push("s.speaker_name = ?");
+      params.push(speaker);
+    }
+    if (noteId != null) {
+      where.push("s.note_id = ?");
+      params.push(noteId);
+    }
+    if (from) {
+      where.push(
+        `((s.timestamp_kind = 'absolute' AND s.started_at_ms IS NOT NULL AND s.started_at_ms >= ?)
+          OR ((s.timestamp_kind <> 'absolute' OR s.started_at_ms IS NULL) AND datetime(n.created_at) >= datetime(?)))`
+      );
+      params.push(from.ms, from.sql);
+    }
+    if (to) {
+      where.push(
+        `((s.timestamp_kind = 'absolute' AND s.started_at_ms IS NOT NULL AND s.started_at_ms < ?)
+          OR ((s.timestamp_kind <> 'absolute' OR s.started_at_ms IS NULL) AND datetime(n.created_at) < datetime(?)))`
+      );
+      params.push(to.ms, to.sql);
+    }
+
+    const join = ftsQuery
+      ? "JOIN transcript_segments_fts ON transcript_segments_fts.rowid = s.rowid"
+      : "";
+    const order = ftsQuery ? "ORDER BY transcript_segments_fts.rank" : "ORDER BY s.note_id, s.seq";
+
+    const rows = this.db
+      .prepare(
+        `SELECT s.note_id, s.seq, s.speaker_id, s.speaker_name, s.text,
+                s.offset_ms, s.started_at_ms, s.timestamp_kind, n.title AS note_title
+         FROM transcript_segments s
+         ${join}
+         JOIN notes n ON n.id = s.note_id
+         WHERE ${where.join(" AND ")}
+         ${order}
+         LIMIT ? OFFSET ?`
+      )
+      .all(...params, cappedLimit, cappedOffset);
+
+    const neighbours =
+      context > 0
+        ? this.db.prepare(
+            `SELECT seq, speaker_name, text FROM transcript_segments
+             WHERE note_id = ? AND seq >= ? AND seq <= ? AND seq <> ?
+             ORDER BY seq`
+          )
+        : null;
+
+    return rows.map((row) => {
+      const text = row.text ?? "";
+      const capped = text.length > MAX_SEGMENT_TEXT_CHARS;
+      const result = {
+        ...row,
+        text: capped ? text.slice(0, MAX_SEGMENT_TEXT_CHARS) : text,
+        truncated: capped,
+        ...(from || to
+          ? {
+              date_filter_basis:
+                row.timestamp_kind === "absolute" && row.started_at_ms != null
+                  ? "segment_started_at"
+                  : "note_created_at",
+            }
+          : {}),
+      };
+
+      if (neighbours) {
+        const around = neighbours.all(row.note_id, row.seq - context, row.seq + context, row.seq);
+        result.context = {
+          before: around.filter((item) => item.seq < row.seq),
+          after: around.filter((item) => item.seq > row.seq),
+        };
+      }
+
+      return result;
+    });
+  }
+
+  searchTranscriptions(query, limit = 50) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      const ftsQuery = buildNoteSearchQuery(query);
+      if (!ftsQuery) return [];
+      return this.db
+        .prepare(
+          `
+        SELECT t.*
+        FROM transcriptions t
+        JOIN transcriptions_fts ON transcriptions_fts.rowid = t.id
+        WHERE transcriptions_fts MATCH ? AND t.deleted_at IS NULL
+        ORDER BY transcriptions_fts.rank
+        LIMIT ?
+      `
+        )
+        .all(ftsQuery, limit);
+    } catch (error) {
+      debugLogger.error("Error searching transcriptions", { error: error.message }, "database");
+      throw error;
+    }
+  }
+
   getUpcomingEvents(windowMinutes = 1440) {
     try {
       if (!this.db) throw new Error("Database not initialized");
@@ -2348,6 +3140,12 @@ class DatabaseManager {
     const finalEmail = winner.email || loser.email || null;
     const finalName = winner.display_name || loser.display_name;
 
+    const relabelled = this.db
+      .prepare(
+        "SELECT DISTINCT note_id FROM speaker_mappings WHERE profile_id = ? OR profile_id = ?"
+      )
+      .all(winner.id, loser.id);
+
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
@@ -2362,6 +3160,8 @@ class DatabaseManager {
       this.db.prepare("DELETE FROM speaker_profiles WHERE id = ?").run(loser.id);
     });
     tx();
+
+    for (const row of relabelled) this._markTranscriptDirty(row.note_id);
 
     return this.db.prepare("SELECT * FROM speaker_profiles WHERE id = ?").get(winner.id);
   }
@@ -2388,6 +3188,7 @@ class DatabaseManager {
           "INSERT OR REPLACE INTO speaker_mappings (note_id, speaker_id, profile_id, display_name) VALUES (?, ?, ?, ?)"
         )
         .run(noteId, speakerId, profileId, displayName);
+      this._markTranscriptDirty(noteId);
       return { success: true };
     } catch (error) {
       debugLogger.error("Error setting speaker mapping", { error: error.message }, "database");
@@ -2519,6 +3320,7 @@ class DatabaseManager {
       this.db
         .prepare("DELETE FROM speaker_mappings WHERE note_id = ? AND speaker_id = ?")
         .run(noteId, speakerId);
+      this._markTranscriptDirty(noteId);
       return { success: true };
     } catch (error) {
       debugLogger.error("Error removing speaker mapping", { error: error.message }, "database");
