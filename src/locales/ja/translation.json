@@ -2347,6 +2347,22 @@
     "notABot": {
       "title": "OpenWhispr はミーティング録音ツールであり、ボットではありません",
       "description": "OpenWhispr はシステムから直接オーディオをキャプチャします — 参加者としてミーティングに参加することはありません。カレンダーを接続して、通常通りノートを取るだけです。"
+    },
+    "mcp": {
+      "title": "エージェントアクセス（MCP）",
+      "description": "Claude Code、Claude Desktop、Cursor からノートや文字起こし、そこに登場する人物を読み取れるようにします。",
+      "loading": "この環境用のコマンドを確認しています…",
+      "unavailable": "このインストールで MCP サーバーが見つかりません。OpenWhispr を再インストールしてください。",
+      "addLabel": "サーバーを追加",
+      "requiresNode": "PATH に Node が必要です。エージェントが呼び出すときに OpenWhispr が起動している必要があります。",
+      "noNodeToggle": "Node がない場合",
+      "noNodeDescription": "この形式では OpenWhispr 自身のランタイムでサーバーを起動します。",
+      "writeToggle": "エージェントにノートの書き込みを許可",
+      "writeWarning": "書き込みモードではエージェントがノートを作成・上書きできます。履歴は残らず、文字起こしに潜む指示でノートが上書きされるおそれもあります。必要ない限りオフのままにしてください。",
+      "removeLabel": "サーバーを削除",
+      "indexBuilding_one": "文字起こしの索引を作成中 — 残り {{count}} 件",
+      "indexBuilding_other": "文字起こしの索引を作成中 — 残り {{count}} 件",
+      "tierNote": "読み取りモードは、このサーバーがエージェントに提供する範囲を制限します。サンドボックスではありません。シェルコマンドを実行できるエージェントはこれに縛られません。"
     }
   },
   "calendar": {

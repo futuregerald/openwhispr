@@ -6,6 +6,8 @@ const crypto = require("crypto");
 const debugLogger = require("./debugLogger");
 const { isPortAvailable } = require("../utils/serverUtils");
 
+const MAX_NOTE_FIELD_CHARS = 100000;
+
 const PORT_RANGE_START = 8200;
 const PORT_RANGE_END = 8219;
 const HOST = "127.0.0.1";
@@ -72,6 +74,24 @@ function parseIdParam(value) {
   return id;
 }
 
+function validationError(message) {
+  const err = new Error(message);
+  err.code = "VALIDATION";
+  return err;
+}
+
+const MAX_ID_PARAM = Number.MAX_SAFE_INTEGER;
+
+function numberParam(query, name, fallback, { min = 0, max = 1000 } = {}) {
+  const raw = query.get(name);
+  if (raw == null || raw === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw validationError(`Invalid ${name}: ${raw}`);
+  }
+  return value;
+}
+
 function unwrapMutationResult(result, label) {
   if (!result?.success || !result[label]) {
     throw new Error(result?.error || `Failed to write ${label}`);
@@ -123,6 +143,7 @@ class CliBridge {
     if (!this.server) return;
     await new Promise((resolve) => {
       this.server.close(() => resolve());
+      this.server.closeAllConnections?.();
     });
     this.server = null;
     this.port = null;
@@ -166,12 +187,9 @@ class CliBridge {
       return;
     }
 
-    const auth = req.headers["authorization"] || "";
-    const expected = `Bearer ${this.token}`;
-    if (
-      auth.length !== expected.length ||
-      !crypto.timingSafeEqual(Buffer.from(auth), Buffer.from(expected))
-    ) {
+    const auth = Buffer.from(req.headers["authorization"] || "");
+    const expected = Buffer.from(`Bearer ${this.token}`);
+    if (auth.length !== expected.length || !crypto.timingSafeEqual(auth, expected)) {
       sendV1Error(res, 401, "unauthorized", "Unauthorized");
       return;
     }
@@ -209,6 +227,10 @@ class CliBridge {
   _sendError(res, err) {
     if (err.code === "NOT_FOUND") {
       sendV1Error(res, 404, "not_found", err.message);
+      return;
+    }
+    if (err.code === "VALIDATION") {
+      sendV1Error(res, 400, "validation_error", err.message);
       return;
     }
     debugLogger.error("CLI bridge route error", { error: err.message }, "cli-bridge");
@@ -262,6 +284,12 @@ class CliBridge {
       return id;
     };
 
+    const requireQuery = (query) => {
+      const q = (query.get("q") || "").trim();
+      if (!q) throw validationError("Search query is required");
+      return q;
+    };
+
     const requireSuccess = (result, message) => {
       if (!result?.success) {
         const err = new Error(result?.error || message);
@@ -280,15 +308,43 @@ class CliBridge {
         return { data: notes, has_more: false, next_cursor: null };
       }),
       exact("GET", "/v1/notes/search", ({ query }) => {
-        const q = query.get("q") || "";
-        if (!q.trim()) {
-          const err = new Error("Search query is required");
-          err.code = "VALIDATION";
-          throw err;
-        }
-        const limit = query.get("limit") ? Number(query.get("limit")) : 20;
+        const q = requireQuery(query);
+        const limit = numberParam(query, "limit", 20);
         const notes = db.searchNotes(q, limit);
-        return { data: notes, has_more: false, next_cursor: null };
+        return { data: notes.map((note) => db.toNoteSearchSummary(note)), has_more: false, next_cursor: null };
+      }),
+      exact("GET", "/v1/notes/semantic-search", async ({ query }) => {
+        const q = requireQuery(query);
+        const limit = numberParam(query, "limit", 10);
+        const notes = await ipc.semanticSearchNotes(q, limit);
+        return { data: notes.map((note) => db.toNoteSearchSummary(note)), has_more: false, next_cursor: null };
+      }),
+      exact("GET", "/v1/notes/summaries", ({ query }) => {
+        const result = db.getNoteSummaries({
+          noteType: query.get("note_type") || null,
+          folderId: numberParam(query, "folder_id", null, { max: MAX_ID_PARAM }),
+          since: query.get("since") || null,
+          until: query.get("until") || null,
+          limit: numberParam(query, "limit", 20),
+        });
+        return {
+          data: result.notes,
+          resolved_range: result.resolved_range,
+          has_more: false,
+          next_cursor: null,
+        };
+      }),
+      param("GET", "/v1/notes/", "/detail", "id", ({ params, query }) => {
+        const id = requireId(params, "note");
+        const include = query.get("include");
+        return {
+          data: db.getNoteDetail(id, {
+            include: include ? include.split(",").map((field) => field.trim()) : ["body"],
+            maxChars: numberParam(query, "max_chars", 20000, { max: MAX_NOTE_FIELD_CHARS }),
+            transcriptOffset: numberParam(query, "transcript_offset", 0, { max: MAX_ID_PARAM }),
+            transcriptLimit: numberParam(query, "transcript_limit", 200),
+          }),
+        };
       }),
       param("GET", "/v1/notes/", "", "id", ({ params }) => {
         const id = requireId(params, "note");
@@ -349,10 +405,93 @@ class CliBridge {
         },
         201
       ),
+      exact("GET", "/v1/transcriptions/search", ({ query }) => {
+        const q = requireQuery(query);
+        const limit = numberParam(query, "limit", 10);
+        return {
+          data: db.searchTranscriptions(q, limit).map((row) => db.toTranscriptionSummary(row)),
+          has_more: false,
+          next_cursor: null,
+        };
+      }),
+      exact("GET", "/v1/transcripts/search", ({ query }) => {
+        const results = db.searchTranscriptSegments({
+          query: query.get("q") || null,
+          speaker: query.get("speaker") || null,
+          noteId: numberParam(query, "note_id", null, { max: MAX_ID_PARAM }),
+          since: query.get("since") || null,
+          until: query.get("until") || null,
+          limit: numberParam(query, "limit", 20),
+          offset: numberParam(query, "offset", 0, { max: MAX_ID_PARAM }),
+          contextSegments: numberParam(query, "context", 0),
+        });
+        return { data: results, has_more: false, next_cursor: null };
+      }),
+      exact("GET", "/v1/people/resolve", ({ query }) => {
+        const name = (query.get("name") || "").trim();
+        if (!name) throw validationError("A name is required");
+        const limit = numberParam(query, "limit", 5);
+        return { data: db.resolvePerson(name, limit) };
+      }),
+      exact("GET", "/v1/people/activity", ({ query }) => {
+        const kinds = query.get("kinds");
+        return {
+          data: db.getPersonActivity({
+            personId: query.get("person_id") || null,
+            name: query.get("name") || null,
+            kinds: kinds ? kinds.split(",").map((kind) => kind.trim()) : undefined,
+            since: query.get("since") || null,
+            until: query.get("until") || null,
+            limit: numberParam(query, "limit", 20),
+          }),
+        };
+      }),
+      exact("GET", "/v1/people/list", ({ query }) => {
+        return {
+          data: db.listPeople({
+            sort: query.get("sort") || "mentions",
+            limit: numberParam(query, "limit", 25),
+          }),
+          has_more: false,
+          next_cursor: null,
+        };
+      }),
+      exact("GET", "/v1/folders/summaries", () => {
+        return { data: db.getFolderSummaries(), has_more: false, next_cursor: null };
+      }),
+      exact("GET", "/v1/meeting-types/list", () => {
+        return { data: db.getMeetingTypeSummaries(), has_more: false, next_cursor: null };
+      }),
+      exact("GET", "/v1/calendar/events", ({ query }) => {
+        return {
+          data: db.getCalendarEventsForMcp({
+            since: query.get("since") || null,
+            until: query.get("until") || null,
+            noteId: numberParam(query, "note_id", null, { max: MAX_ID_PARAM }),
+            eventId: query.get("event_id") || null,
+            limit: numberParam(query, "limit", 20),
+          }),
+          has_more: false,
+          next_cursor: null,
+        };
+      }),
+      exact("GET", "/v1/stats", ({ query }) => {
+        return {
+          data: db.getStats({
+            groupBy: query.get("group_by") || "week",
+            since: query.get("since") || null,
+            until: query.get("until") || null,
+            bySpeaker: query.get("by_speaker") === "1" || query.get("by_speaker") === "true",
+          }),
+        };
+      }),
+      exact("GET", "/v1/index/status", () => {
+        return { data: db.getSearchIndexStatus() };
+      }),
       exact("GET", "/v1/transcriptions/list", ({ query }) => {
         const limit = query.get("limit") ? Number(query.get("limit")) : 50;
         return {
-          data: db.getTranscriptions(limit),
+          data: db.getTranscriptions(limit).map((row) => db.toTranscriptionSummary(row)),
           has_more: false,
           next_cursor: null,
         };

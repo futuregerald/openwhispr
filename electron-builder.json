@@ -140,6 +140,10 @@
     {
       "from": "resources/mediaremote-adapter/LICENSE",
       "to": "bin/mediaremote-adapter.LICENSE"
+    },
+    {
+      "from": "mcp/",
+      "to": "mcp/"
     }
   ],
   "mac": {

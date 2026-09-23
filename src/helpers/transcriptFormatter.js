@@ -149,6 +149,8 @@ module.exports = {
   formatSrt,
   formatJson,
   formatMd,
+  mergeSegments,
+  formatTimestamp,
   resolveSpeaker,
   buildSpeakerMappings,
 };

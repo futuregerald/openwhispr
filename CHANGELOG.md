@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-09-22
+
+### Added
+
+- Your coding agent can now read your notes. Settings → Integrations has a new **Agent access
+  (MCP)** card with a command to copy into Claude Code, Claude Desktop or Cursor. Once it is
+  added, you can ask things like "what did Jorge say about the pricing model?" or "summarise
+  last week's meetings" and the agent answers from your own notes, on your own machine.
+  Nothing is uploaded — the agent talks to OpenWhispr over a loopback connection while the
+  app is running.
+- Search by person. Ask about someone by name and OpenWhispr works out who they are across
+  your contacts, your saved voices and the speaker labels on your transcripts, then finds
+  what they said, where they are mentioned and which meetings they attended. If two people
+  share a name, it says so and asks rather than guessing.
+- Search what was actually said. Transcripts are now indexed sentence by sentence, so an
+  agent can find the moment a topic came up, who said it, and where it sits in the recording
+  — and quote the lines either side for context. One-off dictations are searchable too.
+- The agent is read-only by default. Letting it create or change notes is a separate, clearly
+  marked command, because a note that gets overwritten cannot be recovered.
+
+### Changed
+
+- The command-line tool now gets a `400 Bad Request` instead of a `500 Internal Server Error`
+  when a search is sent with an empty query. If you have scripted against that endpoint and
+  branch on the status code, this is the one thing to check.
+
 ## [1.24.0] - 2026-09-22
 
 ### Fixed

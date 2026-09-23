@@ -1107,50 +1107,9 @@ class IPCHandlers {
       return this.databaseManager.searchNotes(query, limit);
     });
 
-    ipcMain.handle("db-semantic-search-notes", async (event, query, limit = 5) => {
-      const vectorIndex = require("./vectorIndex");
-      if (!vectorIndex.isReady()) {
-        return this.databaseManager.searchNotes(query, limit);
-      }
-
-      try {
-        const [ftsResults, vectorResults] = await Promise.all([
-          this.databaseManager.searchNotes(query, limit * 2),
-          vectorIndex.search(query, limit * 2),
-        ]);
-
-        // Filter low-confidence semantic matches before RRF
-        const filteredVectorResults = vectorResults.filter(({ score }) => score > 0.3);
-
-        // Reciprocal Rank Fusion (K=60, matching cloud implementation)
-        const scores = new Map();
-        ftsResults.forEach((note, i) => {
-          scores.set(note.id, (scores.get(note.id) || 0) + 1 / (60 + i));
-        });
-        filteredVectorResults.forEach(({ noteId }, i) => {
-          scores.set(noteId, (scores.get(noteId) || 0) + 1 / (60 + i));
-        });
-
-        const rankedIds = [...scores.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, limit)
-          .map(([id]) => id);
-
-        const noteMap = new Map();
-        ftsResults.forEach((n) => noteMap.set(n.id, n));
-        for (const id of rankedIds) {
-          if (!noteMap.has(id)) {
-            const note = this.databaseManager.getNote(id);
-            if (note) noteMap.set(id, note);
-          }
-        }
-
-        return rankedIds.map((id) => noteMap.get(id)).filter(Boolean);
-      } catch (error) {
-        debugLogger.error("Semantic search failed, falling back to FTS5", { error: error.message });
-        return this.databaseManager.searchNotes(query, limit);
-      }
-    });
+    ipcMain.handle("db-semantic-search-notes", async (event, query, limit = 5) =>
+      this.semanticSearchNotes(query, limit)
+    );
 
     ipcMain.handle("db-semantic-reindex-all", async () => {
       const vectorIndex = require("./vectorIndex");
@@ -2561,6 +2520,19 @@ class IPCHandlers {
 
     ipcMain.handle("stop-window-drag", async (event) => {
       return await this.windowManager.stopWindowDrag();
+    });
+
+    ipcMain.handle("db-search-index-status", () => {
+      return this.databaseManager.getSearchIndexStatus();
+    });
+
+    ipcMain.handle("mcp-get-config", () => {
+      const { getMcpConfig } = require("./mcpConfig");
+      return getMcpConfig({
+        resourcesPath: process.resourcesPath,
+        appPath: app.getAppPath(),
+        isPackaged: app.isPackaged,
+      });
     });
 
     ipcMain.handle("open-external", async (event, url) => {
@@ -8555,6 +8527,49 @@ class IPCHandlers {
       });
     }
     return result;
+  }
+
+  async semanticSearchNotes(query, limit = 5) {
+    const vectorIndex = require("./vectorIndex");
+    if (!vectorIndex.isReady()) {
+      return this.databaseManager.searchNotes(query, limit);
+    }
+
+    try {
+      const [ftsResults, vectorResults] = await Promise.all([
+        this.databaseManager.searchNotes(query, limit * 2),
+        vectorIndex.search(query, limit * 2),
+      ]);
+
+      const filteredVectorResults = vectorResults.filter(({ score }) => score > 0.3);
+
+      const scores = new Map();
+      ftsResults.forEach((note, i) => {
+        scores.set(note.id, (scores.get(note.id) || 0) + 1 / (60 + i));
+      });
+      filteredVectorResults.forEach(({ noteId }, i) => {
+        scores.set(noteId, (scores.get(noteId) || 0) + 1 / (60 + i));
+      });
+
+      const rankedIds = [...scores.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, limit)
+        .map(([id]) => id);
+
+      const noteMap = new Map();
+      ftsResults.forEach((n) => noteMap.set(n.id, n));
+      for (const id of rankedIds) {
+        if (!noteMap.has(id)) {
+          const note = this.databaseManager.getNote(id);
+          if (note && !note.deleted_at) noteMap.set(id, note);
+        }
+      }
+
+      return rankedIds.map((id) => noteMap.get(id)).filter(Boolean);
+    } catch (error) {
+      debugLogger.error("Semantic search failed, falling back to FTS5", { error: error.message });
+      return this.databaseManager.searchNotes(query, limit);
+    }
   }
 
   deleteNoteInternal(id) {

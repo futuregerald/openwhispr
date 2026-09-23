@@ -10,6 +10,7 @@ import { useSettingsStore } from "../stores/settingsStore";
 import { useSystemAudioPermission } from "../hooks/useSystemAudioPermission";
 import { canManageSystemAudioInApp } from "../utils/systemAudioAccess";
 import CliIntegrationCard from "./CliIntegrationCard";
+import McpIntegrationCard from "./McpIntegrationCard";
 import googleCalendarIcon from "../assets/icons/google-calendar.svg";
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -201,6 +202,11 @@ export default function IntegrationsView() {
       <div>
         <SectionLabel>{t("integrations.sections.cli")}</SectionLabel>
         <CliIntegrationCard />
+      </div>
+
+      <div>
+        <SectionLabel>{t("integrations.sections.mcp")}</SectionLabel>
+        <McpIntegrationCard />
       </div>
 
       {!hasAccounts && (
