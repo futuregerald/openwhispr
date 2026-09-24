@@ -39,6 +39,72 @@ function isAcceptableNoteValue(field, value) {
   return true;
 }
 
+// transcript_segment_index.mixed_units is deliberately NOT consulted here. It reports that a
+// transcript's RAW timestamps mixed epoch and relative values, but deriveTimestamps has
+// already normalised them: an epoch timestamp with no origin yields offset_ms NULL, and with
+// an origin both kinds yield ms-from-origin. So `offset_ms IS NOT NULL` already guarantees one
+// unit, and gating on the flag instead discarded 28 of 154 measurable hours on a real library
+// while changing the result for none of them.
+//
+// A transcript records only a start offset per segment, never an end, so there is no segment
+// length to sum. The gap to the next segment is the only available proxy for "the recording
+// was still running here", and it has to be capped: a transcript appended across days
+// otherwise reports the whole wall-clock gap as recording time, which is why a plain
+// max(offset) - min(offset) is wrong and this is not.
+const SEGMENT_GAP_CAP_MS = 60_000;
+
+// An external-content FTS5 table cannot be checked with count(*) -- that proxies to the
+// content table and reports a full count for an empty index. Its %_docsize shadow table is
+// keyed by the document rowid, so an anti-join against it is the only exact measure of what
+// is actually indexed, and it is what both the repair and the reported status use.
+//
+// Comparing counts instead would let one orphan docsize row offset one genuinely missing
+// document: the totals match, the repair never fires, and that row stays unsearchable while
+// the status claims the index is ready.
+const FTS_REPAIR = {
+  notes: {
+    table: "notes_fts",
+    rebuild: "INSERT INTO notes_fts(notes_fts) VALUES('rebuild')",
+    countTotal: "SELECT count(*) AS c FROM notes",
+    countMissing:
+      "SELECT count(*) AS c FROM notes WHERE id NOT IN (SELECT id FROM notes_fts_docsize)",
+    insertMissing: `
+      INSERT INTO notes_fts(rowid, title, content, enhanced_content)
+      SELECT id, COALESCE(title, ''), COALESCE(content, ''), COALESCE(enhanced_content, '')
+      FROM notes
+      WHERE id NOT IN (SELECT id FROM notes_fts_docsize)
+    `,
+  },
+  // content_rowid is the implicit rowid here, not an INTEGER PRIMARY KEY, so the anti-join
+  // keys on s.rowid rather than an id column.
+  transcriptSegments: {
+    table: "transcript_segments_fts",
+    rebuild: "INSERT INTO transcript_segments_fts(transcript_segments_fts) VALUES('rebuild')",
+    countTotal: "SELECT count(*) AS c FROM transcript_segments",
+    countMissing:
+      "SELECT count(*) AS c FROM transcript_segments s WHERE s.rowid NOT IN (SELECT id FROM transcript_segments_fts_docsize)",
+    insertMissing: `
+      INSERT INTO transcript_segments_fts(rowid, text, speaker_name)
+      SELECT s.rowid, s.text, s.speaker_name
+      FROM transcript_segments s
+      WHERE s.rowid NOT IN (SELECT id FROM transcript_segments_fts_docsize)
+    `,
+  },
+  transcriptions: {
+    table: "transcriptions_fts",
+    rebuild: "INSERT INTO transcriptions_fts(transcriptions_fts) VALUES('rebuild')",
+    countTotal: "SELECT count(*) AS c FROM transcriptions",
+    countMissing:
+      "SELECT count(*) AS c FROM transcriptions WHERE id NOT IN (SELECT id FROM transcriptions_fts_docsize)",
+    insertMissing: `
+      INSERT INTO transcriptions_fts(rowid, text, raw_text)
+      SELECT id, COALESCE(text, ''), COALESCE(raw_text, '')
+      FROM transcriptions
+      WHERE id NOT IN (SELECT id FROM transcriptions_fts_docsize)
+    `,
+  },
+};
+
 class DatabaseManager {
   constructor() {
     this.db = null;
@@ -199,15 +265,22 @@ class DatabaseManager {
         END
       `);
 
-      this.db
-        .prepare(
-          `
-        INSERT OR IGNORE INTO notes_fts(rowid, title, content, enhanced_content)
-        SELECT id, COALESCE(title, ''), COALESCE(content, ''), COALESCE(enhanced_content, '')
-        FROM notes
-      `
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS schema_meta (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
-        .run();
+      `);
+
+      this._repairFtsIndex(FTS_REPAIR.notes);
+
+      // Until this release the backfill above was an unconditional INSERT OR IGNORE. On an
+      // external-content table that conflicts on %_docsize.id, so it kept one docsize row per
+      // note while appending a fresh copy of every posting on each launch. The anti-join
+      // therefore reports nothing missing on an existing install, and the inflated term
+      // frequencies skew bm25 enough to reorder results. One rebuild clears them.
+      this._runOnce("notes_fts_rebuilt", () => this.db.exec(FTS_REPAIR.notes.rebuild));
 
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS folders (
@@ -667,7 +740,9 @@ class DatabaseManager {
 
       // Add meeting_type_id to notes
       try {
-        this.db.exec("ALTER TABLE notes ADD COLUMN meeting_type_id INTEGER REFERENCES meeting_types(id)");
+        this.db.exec(
+          "ALTER TABLE notes ADD COLUMN meeting_type_id INTEGER REFERENCES meeting_types(id)"
+        );
       } catch (err) {
         if (!err.message.includes("duplicate column")) throw err;
       }
@@ -714,6 +789,9 @@ class DatabaseManager {
         "CREATE INDEX IF NOT EXISTS idx_transcript_segments_speaker ON transcript_segments(speaker_name)"
       );
 
+      this.db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_transcript_segments_note_offset ON transcript_segments(note_id, seq, offset_ms)"
+      );
       this.db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS transcript_segments_fts USING fts5(
           text,
@@ -748,6 +826,8 @@ class DatabaseManager {
           VALUES ('delete', old.rowid, old.text, old.speaker_name);
         END
       `);
+
+      this._repairFtsIndex(FTS_REPAIR.transcriptSegments);
 
       this.db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS transcriptions_fts USING fts5(
@@ -784,10 +864,7 @@ class DatabaseManager {
         END
       `);
 
-      if (this.db.pragma("user_version", { simple: true }) < 2) {
-        this.db.exec("INSERT INTO transcriptions_fts(transcriptions_fts) VALUES('rebuild')");
-        this.db.pragma("user_version = 2");
-      }
+      this._repairFtsIndex(FTS_REPAIR.transcriptions);
 
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS transcript_segment_index (
@@ -851,7 +928,10 @@ class DatabaseManager {
 
     for (const table of tables) {
       const existing = new Set(
-        this.db.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name)
+        this.db
+          .prepare(`PRAGMA table_info(${table})`)
+          .all()
+          .map((column) => column.name)
       );
       for (const column of ["cloud_id", "sync_status"]) {
         if (!existing.has(column)) continue;
@@ -897,7 +977,10 @@ class DatabaseManager {
 
     for (const table of tables) {
       const columns = new Set(
-        this.db.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name)
+        this.db
+          .prepare(`PRAGMA table_info(${table})`)
+          .all()
+          .map((column) => column.name)
       );
       if (!columns.has("deleted_at")) continue;
       try {
@@ -1158,12 +1241,6 @@ class DatabaseManager {
     }
   }
 
-
-
-
-
-
-
   getSnippets() {
     try {
       if (!this.db) {
@@ -1251,13 +1328,6 @@ class DatabaseManager {
       throw error;
     }
   }
-
-
-
-
-
-
-
 
   saveNote(
     title,
@@ -1440,9 +1510,7 @@ class DatabaseManager {
     if (!this._transcriptIndexIsUsable()) return 0;
 
     const candidates = this.db
-      .prepare(
-        "SELECT id FROM notes WHERE deleted_at IS NULL AND id > ? ORDER BY id ASC LIMIT ?"
-      )
+      .prepare("SELECT id FROM notes WHERE deleted_at IS NULL AND id > ? ORDER BY id ASC LIMIT ?")
       .all(this._transcriptIndexCursor, batchSize);
 
     if (candidates.length === 0 && this._transcriptIndexCursor !== 0) {
@@ -1470,12 +1538,8 @@ class DatabaseManager {
 
   getSearchIndexStatus() {
     if (!this.db) throw new Error("Database not initialized");
-    const indexed = this.db
-      .prepare("SELECT COUNT(*) AS c FROM transcript_segment_index")
-      .get().c;
-    const totalSegments = this.db
-      .prepare("SELECT COUNT(*) AS c FROM transcript_segments")
-      .get().c;
+    const indexed = this.db.prepare("SELECT COUNT(*) AS c FROM transcript_segment_index").get().c;
+    const totalSegments = this.db.prepare("SELECT COUNT(*) AS c FROM transcript_segments").get().c;
     const pending = this.db
       .prepare(
         `SELECT COUNT(*) AS c FROM notes
@@ -1490,8 +1554,68 @@ class DatabaseManager {
         pending_notes: pending,
         total_segments: totalSegments,
       },
-      transcriptions_fts: { ready: true },
+      transcriptions_fts: this._ftsIndexStatus(FTS_REPAIR.transcriptions),
+      notes_fts: this._ftsIndexStatus(FTS_REPAIR.notes),
+      transcript_segments_fts: this._ftsIndexStatus(FTS_REPAIR.transcriptSegments),
     };
+  }
+
+  _ftsIndexStatus(repair) {
+    try {
+      const total = this.db.prepare(repair.countTotal).get().c;
+      const missing = this.db.prepare(repair.countMissing).get().c;
+      return { ready: missing === 0, missing, total };
+    } catch (error) {
+      debugLogger.error("Could not read a search index's state", {
+        table: repair.table,
+        error: error.message,
+      });
+      return { ready: false, missing: null, total: null };
+    }
+  }
+
+  _runOnce(key, work) {
+    try {
+      const done = this.db.prepare("SELECT 1 AS x FROM schema_meta WHERE key = ?").get(key);
+      if (done) return false;
+      work();
+      this.db
+        .prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, 'done')")
+        .run(key);
+      debugLogger.info("Ran a one-time database repair", { key });
+      return true;
+    } catch (error) {
+      debugLogger.error("A one-time database repair failed", { key, error: error.message });
+      return false;
+    }
+  }
+
+  _repairFtsIndex(repair) {
+    try {
+      const missing = this.db.prepare(repair.countMissing).get().c;
+      if (missing === 0) return 0;
+
+      const total = this.db.prepare(repair.countTotal).get().c;
+      if (missing === total && total > 0) {
+        this.db.exec(repair.rebuild);
+      } else {
+        this.db.prepare(repair.insertMissing).run();
+      }
+      debugLogger.info("Repaired a search index that was missing documents", {
+        table: repair.table,
+        missing,
+        total,
+      });
+      return missing;
+    } catch (error) {
+      // A corrupt index must degrade search, not stop the app booting: this runs inside
+      // initDatabase, whose throw propagates to the DatabaseManager constructor.
+      debugLogger.error("Could not repair a search index", {
+        table: repair.table,
+        error: error.message,
+      });
+      return 0;
+    }
   }
 
   listNoteTranscripts() {
@@ -1511,15 +1635,16 @@ class DatabaseManager {
   updateNoteTranscriptKeepingUpdatedAt(id, transcript, origin = null) {
     try {
       if (!this.db) throw new Error("Database not initialized");
-      const info = origin != null
-        ? this.db
-            .prepare(
-              `UPDATE notes
+      const info =
+        origin != null
+          ? this.db
+              .prepare(
+                `UPDATE notes
                  SET transcript = ?, transcript_origin_ms = ?, transcript_origin_source = ?
                WHERE id = ?`
-            )
-            .run(transcript, origin.ms, origin.source, id)
-        : this.db.prepare("UPDATE notes SET transcript = ? WHERE id = ?").run(transcript, id);
+              )
+              .run(transcript, origin.ms, origin.source, id)
+          : this.db.prepare("UPDATE notes SET transcript = ? WHERE id = ?").run(transcript, id);
       if (info.changes === 0) return { success: false };
       this._markTranscriptDirty(id);
       return { success: true, note: this.db.prepare("SELECT * FROM notes WHERE id = ?").get(id) };
@@ -2220,7 +2345,13 @@ class DatabaseManager {
   toNoteSearchSummary(note) {
     const enhanced = (note.enhanced_content || "").trim();
     const plain = (note.content || "").trim();
-    const bodyKind = enhanced ? "enhanced" : plain ? "plain" : note.transcript ? "transcript" : "empty";
+    const bodyKind = enhanced
+      ? "enhanced"
+      : plain
+        ? "plain"
+        : note.transcript
+          ? "transcript"
+          : "empty";
     const source = enhanced || plain || "";
 
     return {
@@ -2242,13 +2373,7 @@ class DatabaseManager {
   getNoteSummaries(options = {}) {
     if (!this.db) throw new Error("Database not initialized");
 
-    const {
-      noteType = null,
-      folderId = null,
-      since = null,
-      until = null,
-      limit = 20,
-    } = options;
+    const { noteType = null, folderId = null, since = null, until = null, limit = 20 } = options;
 
     const { from, to } = resolveDateRange(since, until);
     const cappedLimit = Math.max(1, Math.min(Number(limit) || 20, MAX_NOTE_SUMMARY_LIMIT));
@@ -2408,14 +2533,13 @@ class DatabaseManager {
       const offset = Math.max(0, Number(transcriptOffset) || 0);
       const limit = Math.max(1, Math.min(Number(transcriptLimit) || 200, MAX_TRANSCRIPT_PAGE));
 
-      const indexed = this.db
-        .prepare("SELECT COUNT(*) AS c FROM transcript_segment_index WHERE note_id = ?")
-        .get(id).c > 0;
+      const indexed =
+        this.db
+          .prepare("SELECT COUNT(*) AS c FROM transcript_segment_index WHERE note_id = ?")
+          .get(id).c > 0;
 
       const all = segmentRowsForNote(this.db, id);
-      const segments = all
-        .slice(offset, offset + limit)
-        .map(({ note_id: _noteId, ...row }) => row);
+      const segments = all.slice(offset, offset + limit).map(({ note_id: _noteId, ...row }) => row);
 
       detail.transcript = {
         segments,
@@ -2458,9 +2582,7 @@ class DatabaseManager {
   getMeetingTypeSummaries() {
     if (!this.db) throw new Error("Database not initialized");
     return this.db
-      .prepare(
-        "SELECT id, name, is_builtin FROM meeting_types ORDER BY is_builtin DESC, name ASC"
-      )
+      .prepare("SELECT id, name, is_builtin FROM meeting_types ORDER BY is_builtin DESC, name ASC")
       .all();
   }
 
@@ -2547,27 +2669,45 @@ class DatabaseManager {
       throw error;
     }
 
-    const where = ["deleted_at IS NULL"];
+    const where = ["n.deleted_at IS NULL"];
     const params = [];
     if (from) {
-      where.push("datetime(created_at) >= datetime(?)");
+      where.push("datetime(n.created_at) >= datetime(?)");
       params.push(from.sql);
     }
     if (to) {
-      where.push("datetime(created_at) < datetime(?)");
+      where.push("datetime(n.created_at) < datetime(?)");
       params.push(to.sql);
     }
 
     const buckets = this.db
       .prepare(
-        `SELECT strftime('${bucket}', created_at) AS bucket,
+        // MATERIALIZED despite the single reference: inlining re-evaluates the correlated
+        // per-note subquery once per *column* that reads it, and the aggregate reads
+        // duration_seconds twice. Measured on 20k notes / 2M segments: 992ms inlined
+        // against 500ms materialised, both with the covering index.
+        `WITH note_duration AS MATERIALIZED (
+           SELECT strftime('${bucket}', n.created_at) AS bucket,
+                  n.note_type AS note_type,
+                  COALESCE(
+                    n.audio_duration_seconds,
+                    (SELECT ROUND(SUM(MIN(d.gap_ms, ${SEGMENT_GAP_CAP_MS})) / 1000.0)
+                       FROM (SELECT s.offset_ms - LAG(s.offset_ms) OVER (ORDER BY s.seq) AS gap_ms
+                               FROM transcript_segments s
+                              WHERE s.note_id = n.id AND s.offset_ms IS NOT NULL) d
+                      WHERE d.gap_ms IS NOT NULL AND d.gap_ms >= 0)
+                  ) AS duration_seconds
+             FROM notes n
+            WHERE ${where.join(" AND ")}
+         )
+         SELECT bucket,
                 COUNT(*) AS notes,
                 SUM(CASE WHEN note_type = 'meeting' THEN 1 ELSE 0 END) AS meetings,
-                SUM(COALESCE(audio_duration_seconds, 0)) AS total_duration_seconds
-         FROM notes
-         WHERE ${where.join(" AND ")}
-         GROUP BY bucket
-         ORDER BY bucket ASC`
+                SUM(duration_seconds) AS total_duration_seconds,
+                SUM(CASE WHEN duration_seconds IS NULL THEN 0 ELSE 1 END) AS notes_with_duration
+           FROM note_duration
+          GROUP BY bucket
+          ORDER BY bucket ASC`
       )
       .all(...params);
 
@@ -2894,7 +3034,6 @@ class DatabaseManager {
     }
   }
 
-
   cleanup() {
     try {
       if (this.db) {
@@ -3003,7 +3142,6 @@ class DatabaseManager {
       throw error;
     }
   }
-
 
   _normalizeEmail(email) {
     const trimmed = (email || "").trim().toLowerCase();
@@ -3265,33 +3403,6 @@ class DatabaseManager {
     }
   }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
   getNotesWithUnmappedSpeakers() {
     try {
       if (!this.db) throw new Error("Database not initialized");
@@ -3380,7 +3491,11 @@ class DatabaseManager {
 
   autoMapMeetingType(eventTitle) {
     if (!eventTitle || !this.db) return null;
-    const types = this.db.prepare("SELECT * FROM meeting_types WHERE keyword_rules IS NOT NULL AND keyword_rules != '[]'").all();
+    const types = this.db
+      .prepare(
+        "SELECT * FROM meeting_types WHERE keyword_rules IS NOT NULL AND keyword_rules != '[]'"
+      )
+      .all();
     const lowerTitle = eventTitle.toLowerCase();
     for (const type of types) {
       try {
@@ -3388,7 +3503,9 @@ class DatabaseManager {
         if (keywords.some((kw) => lowerTitle.includes(kw.toLowerCase()))) {
           return type.id;
         }
-      } catch { continue; }
+      } catch {
+        continue;
+      }
     }
     return null;
   }

@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.26.0] - 2026-09-23
+
+### Fixed
+
+- Searching what you dictated works again. One-off dictations recorded before this release
+  were missing from the search index, so asking an agent about them came back empty as though
+  you had never said it. The index now repairs itself on launch whenever it notices anything
+  missing, rather than relying on a one-time upgrade step that could be skipped.
+- The indexing status no longer claims to be ready when it is not. It now reports how many
+  items are actually indexed, so an agent can tell "nothing matched" from "search is not
+  ready yet" instead of confidently telling you the former.
+- Meeting time in your stats is no longer always zero. Length is now worked out from the
+  transcript itself, so it covers meetings you already have rather than only new ones. Long
+  pauses and recordings continued on another day no longer inflate it. A meeting with no usable
+  timings is reported as unmeasured rather than counted as zero, and each period says how many
+  of its notes could be measured, so a total is never mistaken for the whole picture.
+- Exported transcripts list their participants. The **Participants** line in Markdown and
+  plain-text exports was always blank, because it read a field the app never writes. People
+  with no name recorded now show the name they are known by elsewhere, or the first part of
+  their email address.
+- An agent connected to an older copy of OpenWhispr is now told to update it. Previously it
+  got a confusing "Invalid note id" or "not found" back, which reads as a broken feature
+  rather than a version mismatch.
+
+### Changed
+
+- Notes are no longer re-indexed from scratch on every launch. Each launch used to append a
+  second copy of every note to the search index, which skewed how results were ranked — badly
+  enough to change their order. Existing libraries are repaired once, automatically, on the
+  first launch after updating.
+
 ## [1.25.0] - 2026-09-22
 
 ### Added
@@ -148,46 +179,56 @@ rolling over into the following year.
 ## [1.21.0] - 2026-09-09
 
 ### Added
+
 - **You can now hear a speaker before deciding who they are.** Each speaker in the panel has a play button that plays a few seconds of them talking, so naming and merging no longer means guessing from the text alone. It picks a passage where they actually hold the floor rather than their first line, because first lines are often a single word -- one meeting here opens a speaker with "Monday." and another with "Or something like that."
 
 ### Fixed
+
 - **Renaming a speaker from the panel now works on speakers you have already named.** It quietly did nothing in exactly the case you would want it: once a name is confirmed those lines are protected from being relabelled automatically, and the panel was being turned away by that same protection. It reported how many lines it had skipped and changed none of them. Renaming or merging from the panel is now treated as your decision and applied, while automatic relabelling still leaves your names alone. The name is also remembered for future meetings, which only the transcript view did before.
 - **Merging speakers after renaming one no longer undoes the merge.** The two actions were saved by different halves of the app, so a merge could be written and then overwritten by the next rename. Both now go the same way.
 
 ## [1.20.1] - 2026-09-09
 
 ### Fixed
+
 - **The speaker panel was opening off-screen.** Clicking "N speakers detected" did toggle the panel open, but it was laid out directly underneath a transcript pane that already filled the whole height, so it sat below the visible area and what little showed was covered by the chat box. It looked like the button did nothing. The panel is now pinned in place just under the button and stays put while the transcript scrolls behind it, and the speaker list scrolls on its own when a meeting has more speakers than fit.
 
 ## [1.20.0] - 2026-09-09
 
 ### Added
+
 - **Meetings now remember when their recording actually began.** A transcript stores each line as a number of seconds, but nothing recorded what second zero was, so a line could not be turned back into a wall-clock time or into a position in the saved audio. Meetings now record that starting point as they finish. Nothing about your transcripts is changed by this -- it only keeps something that was previously thrown away.
 
 ### Fixed
+
 - **Meetings that an earlier repair had re-based get their real times back.** That repair shifted every timestamp to start from the first thing said and did not keep what it had subtracted, so the wall-clock times were lost. Where the backup that repair took is still present, the starting point is recovered from it and recorded. Meetings it cannot verify against that backup are left alone rather than given a guessed time.
 - **Re-transcribing a meeting no longer leaves it claiming the wrong starting point.** Re-transcribing replaces the whole transcript, and its new times are measured from the audio file rather than from the recording, so the stored starting point no longer applied. It is now marked as no longer known, instead of being left to be read as though it were still true.
 
 ## [1.19.0] - 2026-09-09
 
 ### Added
+
 - **You can now merge several speakers at once.** Merging was limited to two at a time, so folding a call that came back with more speakers than were present meant repeating it once per speaker. Tick as many as you like and merge in one step, with a Select all option. The panel now says which name it is keeping -- previously the order you ticked them decided that, and nothing told you.
 
 ### Fixed
+
 - **Merging or renaming a speaker no longer overwrites a name you had locked.** Both quietly replaced every matching line regardless, so a person you had deliberately identified could be absorbed into another speaker and lost. Locked lines are now left alone and the app tells you how many it skipped.
 - **"% talk time" was not talk time.** It counted lines, not seconds, because the field it divided by is never actually saved with a meeting -- so someone who said "yeah" twenty times outranked someone who spoke for ten minutes. Replayed against the old code, a speaker with three forty-second turns scored 13% against 87% for twenty single words. It is now measured from the time between what each person said, capped at thirty seconds per line so that a long silence after someone stops talking is not counted as them still talking. Expect these percentages to look different. They are a better measure than counting lines, but where two people genuinely talk a similar amount the order between them can still shift by a point or two.
 
 ## [1.18.6] - 2026-09-09
 
 ### Fixed
+
 - **A meeting whose audio failed to compress no longer loses that audio.** The step that converts a finished recording to its compressed form deleted the raw recording even when the conversion had failed -- so if ffmpeg was missing or the disk was full, the meeting's audio was gone, the only trace was a message you would never see, and every later attempt to reprocess that meeting reported that it had started when nothing could. The raw recording is now kept and filed with the meeting's other audio, and the failure is recorded properly. Files kept this way are now also seen by the routine that ages old audio out, so they cannot accumulate.
 
 ### Added
+
 - **Detection for meetings that were welded together.** Recording repeatedly into the same note could append several separate meetings into one, and one note here holds thirteen sessions spanning five days. The app can now tell which notes that happened to. Splitting them is a separate step and is not automatic -- it creates and deletes notes, so it asks first.
 
 ## [1.18.5] - 2026-09-09
 
 ### Fixed
+
 - **Meetings recorded before the previous fix are repaired automatically, once, on the next launch.** Anything you said that was left with nobody's name against it is now attributed to you. How much that amounts to depends entirely on your own history -- the repair counts it on your machine and tells you how many notes it touched. This matters because the notes are written from the transcript, and a line with no owner is read as somebody else's -- which is why a meeting summary could credit one person with what another actually said.
 - The repair takes a **verified backup of the database first** -- it writes the copy, reopens it, and checks it matches before changing anything. The full path of that copy is written to the app's log and kept in the repair summary, so it can actually be found again; the three most recent backups are kept and older ones are removed. It runs one meeting at a time through the existing background queue, so quitting part-way is safe and it resumes on the next launch rather than starting over. Running it twice changes nothing.
 - **Your notes list is not reordered by the repair.** Repaired meetings keep their original "last edited" time, so old meetings do not jump above what you worked on yesterday.
@@ -196,6 +237,7 @@ rolling over into the following year.
 ## [1.18.4] - 2026-09-09
 
 ### Fixed
+
 - **Your own speech was being dropped from the record of who said what.** When a meeting ends, the app checks each thing you said against what the other side said at roughly the same moment, so your microphone picking up your laptop speakers does not get written down twice. That check was comparing against a window a thousand times too wide -- it looked at the entire meeting instead of the six seconds either side -- so ordinary sentences of yours matched something said an hour earlier and were treated as an echo. On a recent call this silently disowned 108 of 589 things the user said, including whole sentences like "It was Andy, wasn't it?". Those lines stayed in the transcript with nobody's name on them, and the notes are written from that transcript, which is why they could credit one person with what another actually said.
 - **Lines that are set aside as echo are now marked rather than deleted**, so they still get attributed and still carry a comparable timestamp. Deleting them was what allowed them to reappear later with no owner and a timestamp in a different unit from every line around them.
 - **Speech recorded while speaker identification was switched off, when it found nothing, or when it failed outright is now attributed to you as well.** Three separate paths skipped that step entirely, which is why some meetings came back with every one of your lines unowned. A name you have set yourself is kept.
@@ -204,6 +246,7 @@ rolling over into the following year.
 ## [1.18.3] - 2026-09-08
 
 ### Fixed
+
 - **Working out who spoke could finish successfully and then be thrown away.** The result was computed by the app itself but saved only by the meeting note's on-screen editor, so it was lost whenever that editor was not in exactly the right state to receive it — if the window had closed, if you had switched to another note, or if the app had already cleared the recording it belonged to. Three of the last fourteen meetings lost their speakers this way, silently, with the transcript kept and every line left unattributed. Notes written from those meetings attribute what people said by guesswork, which is why they read as though one person did something another person did. The app now saves the result itself, the moment it has it, so none of those conditions can lose it.
 - **A meeting that ended while you were looking at another part of the app could lose its transcript entirely.** Both places that saved a meeting transcript lived inside the notes screen, so if the recording stopped while you were in Chat or Settings, neither ran. The transcript is now saved regardless of what is on screen — including when speaker identification is turned off, and when it fails.
 - **Speaker voice profiles were not being saved for meetings**, so attaching an email address to a speaker no longer applied that name to the rest of their meetings, and a one-to-one call was no longer labelled automatically from the calendar invitation. Found by review of this release's own changes, before it shipped.
@@ -211,19 +254,23 @@ rolling over into the following year.
 ## [1.18.2] - 2026-09-08
 
 ### Fixed
+
 - **One meeting's speakers could be written into a different note.** Working out who spoke takes several seconds after a recording stops, and the result was delivered to whichever note happened to be open when it arrived — not the note it was computed for. Clicking away to another note inside that window merged the finished meeting's entire transcript into the note you had just opened, which is how one note ended up holding two meetings. The result now carries the note it belongs to and is refused by any other.
 - **Speaker identification left no trace in the log unless debug logging was on**, so a meeting that lost its speakers looked exactly like a meeting that never tried. Starting and finishing speaker identification, reconciling the names assigned during the call, and whether the result reached the note are now recorded on every install.
 
 ## [1.18.1] - 2026-09-06
 
 ### Added
+
 - **Any meeting can now be re-run from the step that actually failed.** The `⋯` menu on a meeting in the notes list offers to retry just the part that did not work — usually the notes themselves, using the transcript the app already has. Until now the only repair was "Reprocess all meetings", which re-transcribed every meeting from scratch and overwrote the notes that had worked.
 
 ### Changed
+
 - **Work waiting to be processed now survives quitting the app.** Meetings queued for processing were held only in memory, so quitting lost them with nothing recorded and nothing to retry — which is why meetings could end up with a transcript and no notes and never recover. The queue is now written down and picked up again at the next launch, one meeting at a time. A meeting that fails repeatedly stops being retried rather than being attempted forever.
 - **The app no longer runs two speaker-identification passes at once.** Re-processing a saved recording while a meeting was ending could start two of them together, which is what made the machine unresponsive. They now take turns.
 
 ### Fixed
+
 - **Live speaker labels invented people.** A two-person call could come back as five or six speakers, and the worst recorded case put 22 different labels on a 94-minute call between two people. Two separate faults were behind it. The voice-activity detector, which decides where one person's turn starts and ends, is a model that has to be given its own memory of the previous fraction of a second — and it never was, because of a name mismatch that silently did nothing. It was running blind, and the two sensitivity settings around it had been quietly tuned to compensate for a signal that could never reach its own normal range. Separately, the app decided who was speaking from the first 1.6 seconds of a turn and then refused to reconsider — even though it goes on to compute a far better read of the voice from the whole turn, which it was throwing away. It now uses that better read, and when it changes its mind, the label already shown is corrected rather than left behind.
 - Measured over 13.7 hours of real calls containing 46 people: distinct speakers reported fell by roughly a third, and on the five calls compared directly against the previous version the labels shown fell from 115 to 79. Speech the app finds at all went **up** slightly rather than down, and the stretches it discards as too short to identify fell by a sixth. Meetings also finish processing far faster, because the app no longer compares each voice against hundreds of invented speakers.
 - **Some of that reduction is the app now merging too eagerly rather than only correcting mistakes.** On one of the five calls checked, three people who used to come back with several turns each now come back with fewer — so a quiet participant can end up folded into someone else. This is a real trade against the previous behaviour and is called out here rather than left for someone to discover; the earlier claim that nothing was given up to get the count down was not supported by the evidence. Finding where those speakers go is the next piece of work.
@@ -236,12 +283,14 @@ rolling over into the following year.
 ## [1.17.1] - 2026-09-04
 
 ### Fixed
+
 - **The local model was being given a smaller context than the machine can actually hold.** On macOS the app measures free memory in a way that reads about half what the system itself reports, so on a busy machine it was setting aside far less for the conversation than it could afford. Rather than change that measurement — reading it too generously is what made the machine unresponsive in August — the app now scales what it reserves against the size of the model it is already loading, still capped so it can never take more than its share of the machine. On the machine this was reported from, the context doubles from 16,384 to 32,768.
 - The startup log now records the memory the measurement deliberately left out, so a future decision about that measurement can be made from real data rather than a guess.
 
 ## [1.17.0] - 2026-09-03
 
 ### Fixed
+
 - **Generating notes with a local model failed every time on some machines.** Every meeting stopped with "Prompt is too long for this model", and the queue behind it failed the same way. The app was working out how much memory a model's context needs by assuming every layer of the model grows with the length of the conversation. Newer models — Gemma among them — keep most of their layers at a fixed size no matter how long the conversation gets, so the app was overstating the cost by more than six times and then giving the model a context far too small to hold a single meeting. It now reads the model's own description of how it works. On the machine this was reported from, the model went from a 2,048-token context to 16,384 — from refusing a two-minute meeting to comfortably handling an hour.
 - **The app no longer refuses a model the little memory it needs while handing it gigabytes.** When a model was larger than the memory reported free, the amount set aside for the conversation collapsed to a fixed minimum too small to be useful — while the app went ahead and loaded the multi-gigabyte model anyway. What it sets aside now scales with the model it has already committed to loading, and is still capped so a large model on a small machine cannot take more than its share.
 - **The app now asks the model server how much context it actually got** rather than trusting its own estimate. Notes were being refused against a guess, so an estimate that read high rejected meetings the model would have handled.
@@ -252,7 +301,8 @@ rolling over into the following year.
 ## [1.16.1] - 2026-08-12
 
 ### Fixed
-- **Generating notes with a local model could still make the machine unresponsive.** 1.15.0 stopped the model reserving more memory than the machine *has*, but it worked that out from the machine's total memory — not from what was actually free. On a 24 GB machine with 17 GB already in use by other apps, it still set aside 3.5 GB for the model on top of the 5.4 GB the model itself needs, which is more than was left. The app now measures memory that is genuinely available and sizes the model to fit it.
+
+- **Generating notes with a local model could still make the machine unresponsive.** 1.15.0 stopped the model reserving more memory than the machine _has_, but it worked that out from the machine's total memory — not from what was actually free. On a 24 GB machine with 17 GB already in use by other apps, it still set aside 3.5 GB for the model on top of the 5.4 GB the model itself needs, which is more than was left. The app now measures memory that is genuinely available and sizes the model to fit it.
 - **A long note that cannot be processed now says so immediately** instead of working through it for hours and failing at the end. When the available memory is too small for a transcript of that length, the app can tell in a moment, and it now says which of the two problems it is — not enough memory, or a note that is too long — rather than a generic message.
 - **Note generation stops itself if it starts dragging.** If passes begin taking far longer than the ones before them — the sign that the machine is struggling — the run stops rather than continuing and making things worse. There is also an overall time limit.
 - **A stuck pass is no longer retried three times.** A request that has already run out of time, or a model that was killed while loading, is retried once rather than three more times, which previously meant tens of minutes of the same problem. The window before a stuck pass gives up is back to 5 minutes, from the 15 introduced in 1.16.0.
@@ -262,25 +312,30 @@ rolling over into the following year.
 ## [1.16.0] - 2026-08-12
 
 ### Added
+
 - **Long calls are now processed in passes instead of being refused.** A meeting too long to fit a local model's context used to stop with "this call is too long". The app now works through it: it reads the transcript in sections, pulling out decisions, action items with their owners and deadlines, figures, open questions and direct quotes close to word-for-word, then writes your notes once from everything it gathered. Nothing is cut off the end of the call. A long call takes several minutes and shows "pass 3 of 12" while it works, and you can cancel it — cancelling now genuinely stops it rather than just hiding it. This applies to local models only; cloud models were never limited this way and are unchanged.
 - **If a section genuinely cannot be processed, the notes say so.** It is marked in place and you get a warning when the run finishes, rather than the app quietly handing back notes with a hole in them.
 
 ### Fixed
+
 - **Dictation no longer fails while something else is using the local model.** Dictation, the dictation agent and the chat agent used to fail outright with "Already processing a request" whenever the local model was busy — and with note generation now taking several minutes, that would have made dictation unusable for the duration. Work is queued instead, and anything you are waiting on goes first: dictation waits for the pass in flight rather than for the whole job.
 - **The chat agent and note generation can no longer stop each other's model.** Opening the chat agent with a different local model while notes were being generated could restart the model server underneath the running job, and the two would then take turns interrupting each other.
 - **A failure while the model server is starting is retried instead of being treated as bad audio.** If the server is killed for memory while starting, that section of the call is retried rather than being permanently marked as unreadable.
 
 ### Fixed
+
 - **Generating notes with a local model could make the whole machine unresponsive.** The local model server was never told how much context to allocate, so it reserved as much as the model was trained for — on the bundled Gemma that is 131,072 tokens, about 13 GB of memory set aside before any work starts, next to the 5 GB the model itself needs. On a 24 GB machine that is enough to push everything else into swap and stall the desktop. The app now works out a context the machine can actually hold from the model's own properties and the memory available, which on that same machine means about 3 GB instead of 13.
 - **A note too long for the local model now says so.** Previously an over-long transcript was accepted and processed for as long as it took, with no indication that anything was wrong — it simply looked like the app had hung. It now stops immediately and tells you the call is too long for the local model, suggesting a cloud model instead. Handling long calls properly, by working through them in passes rather than cutting them short, is coming next.
 
 ### Changed
+
 - **Logs are kept for 30 days** instead of the last ten files, so a problem reported days after it happened can still be investigated. A file-count limit remains as a backstop.
 - **Expensive operations are now recorded in the log by default** — the model server starting (with the context and memory it reserved), and each inference with its size and how long it took. A request that takes over a minute is flagged. Previously none of this reached the log unless debug logging was on, which is why the failure above left no trace.
 
 ## [1.14.0] - 2026-08-11
 
 ### Fixed
+
 - **Meeting detection stopped working after a meeting, and stayed off until you restarted the app.** Ending a meeting recording left the app believing a meeting was still in progress, and while it believes that it ignores every detection — so you were never prompted about the next call. The only thing that cleared it was the "Back to notes" button, which is not shown at all in a wide window. Ending the recording now ends the meeting, and a 15-minute check clears the flag if anything else goes wrong.
 - **The microphone listener and the call detector are now restarted when they die.** Either one dying used to disable detection permanently, with nothing to indicate it had happened. Both are restarted with a growing delay, and the call detector's view of your camera and microphone is reset when it restarts — stale state would otherwise have swallowed the start of your next call as well.
 - **On macOS, losing the listener silently turned detection off rather than degrading it.** The fallback checked a hardware value that does not exist on any current Mac, so it could only ever answer "no microphone in use". It no longer pretends to work: detection reports itself as unavailable and keeps trying to bring the listener back.
@@ -288,19 +343,23 @@ rolling over into the following year.
 - A meeting prompt you never answered, and a "we already asked about this" flag that had no way to expire, could each block later detections for as long as the app ran. Both now expire.
 
 ### Added
+
 - **Settings → Notifications shows whether meeting detection is actually working** — Healthy, Degraded, Unavailable or Off — with the reason and a button to open the log folder. If detection cannot run at all, the app now says so once on the main screen instead of failing quietly.
 
 ### Internal
+
 - Warnings and errors are now written to the log file on every install, not only when debug logging is switched on. This is why the above could go unnoticed for so long: nothing was ever recorded. Log files are rotated and capped, and a message that repeats is counted rather than written thousands of times.
 
 ## [1.13.2] - 2026-08-05
 
 ### Internal
+
 - The dependency lockfile could be corrupted silently by an out-of-date npm. Versions below 11.11.0 quietly drop the fields that tell npm which Linux build of a native dependency to install; the damaged lockfile still installs without complaint, so nothing caught it. The project now refuses to install on an npm that does this, and a CI check rebuilds the lockfile on every pull request and fails if it does not match. No effect on the app itself.
 
 ## [1.13.1] - 2026-08-05
 
 ### Fixed
+
 - **A meeting could finish with no notes and no explanation.** If the app was quit while a meeting was still being re-transcribed — which takes minutes with the large model — the post-call pipeline stopped dead partway through. The meeting type and the notes were never generated, and the note was left showing "Generating title" as though it were still working. The pipeline now finishes the remaining steps and reports its real outcome.
 - **"Reprocess all meetings" no longer burns an AI request per meeting to produce nothing.** Meetings you had already titled yourself were still sent for a new title, which was then correctly discarded — so a library of 300 meetings cost 300 requests on your own API key for no result. Titles you own are now recognised before the request is made, and the title step reports "skipped" instead of claiming it completed.
 - Notes you titled yourself are still never renamed by reprocessing, including when the title cannot be read at that moment.
@@ -310,6 +369,7 @@ rolling over into the following year.
 1.12.1 was built but never released; its fixes are included here.
 
 ### Fixed
+
 - **Meeting transcripts were being destroyed after every call.** The automatic post-call step that re-transcribes a meeting with the larger, more accurate model replaced the speaker-by-speaker transcript with one unbroken block of text. Speaker names vanished, the transcript could no longer be browsed or filtered by speaker, and — because the note generator relies on those speakers — the generated notes lost their structure. This is why notes came out rough. Re-transcription now rebuilds the transcript with its speakers and names intact, and when it cannot do that safely it keeps the transcript you already have and says so on the note rather than overwriting it. Recordings with both your microphone and the meeting audio are kept as-is for now: replacing them from one side alone would discard everything you said.
 - **A meeting whose speaker detection failed got no notes at all** — no title, no meeting type, no summary. It is now processed like any other meeting, just without speaker labels.
 - **Live diarization invented speakers.** A 3-person call could report 10 or more, with labels like "Speaker 27". Once one person had two voice clusters, both matched their own voice closely, which the matcher read as an ambiguous tie and resolved by creating yet another speaker — so every duplicate made the next match worse. Two voice clusters that are near-identical to each other are now recognised as the same person and combined, and a voice that clearly matches someone already in the call joins them instead of starting a new speaker. People you have named, or who match a saved voice profile, are never merged into someone else. Post-call diarization was not affected.
@@ -318,57 +378,69 @@ rolling over into the following year.
 - Pipeline failures showed only which step failed, never why. The reason is now shown, with the full message on hover.
 
 ### Internal
+
 - Packaging now rebuilds native modules for Electron and verifies the result before building. A build whose `better-sqlite3` binding targets the wrong runtime is aborted with the fix, rather than producing an app that crashes on launch.
 
 ## [1.12.0] - 2026-08-04
 
 ### Changed
+
 - **Deleting a note or conversation now removes it outright.** Deletes used to be soft — the row stayed behind, hidden, for the cloud sync loop to clean up. With the cloud gone nothing drained them, so deleted notes accumulated forever and their text stayed in the search index. Deleting now cascades to speaker mappings, speaker embeddings, attached agent conversations and their messages, and removes the search-index entry.
 - On first launch after upgrading, a one-time purge drains notes and conversations that were soft-deleted before this release. These rows were already hidden from the app; the purge removes them from the database.
 
 ### Removed
+
 - The `cloud_id` and `sync_status` columns from all 6 tables that carried them, plus 43 unreachable sync methods left behind by the cloud removal.
 - 11 modules with no remaining importer.
 
 ### Fixed
+
 - Cancelled and oversized URL audio downloads no longer leave their partial temp file on disk. The cleanup unlinked the file before the write stream had finished opening it, so the file was recreated immediately afterwards with nothing left to remove it.
 - Deleting a folder no longer leaves agent conversations pointing at notes that no longer exist.
 - The clear button on the meeting hotkey setting showed a raw translation key instead of its label.
 
 ### Internal
+
 - The database tests now fail loudly when the `better-sqlite3` native binding is unusable, instead of silently skipping. They had been skipping in CI since the workflow's `npm ci --ignore-scripts` never built the binding, so they had never actually run there.
 
 ## [1.11.0] - 2026-07-31
 
 ### Added
+
 - **Reprocess old meeting recordings:** run the post-call pipeline (re-transcribe, title, classify, notes) against meeting notes recorded before the pipeline existed, individually or in bulk.
 - **Agent web search on a Brave BYOK key:** the chat agent can search the web when a Brave Search API key is present. Configured in Settings > AI Models > Chat Intelligence; gated on key presence, not on any account. Key is encrypted at rest via `safeStorage` like every other BYOK secret.
 
 ### Removed
+
 - **OpenWhispr-cloud, end to end.** The fork no longer has any hosted backend. Removed: hosted reasoning and hosted transcription providers; the cloud sync service layer and its 45 IPC channels; accounts, sign-in, email verification and the `openwhispr://` deep-link stack; workspaces, teams and invitations; billing, plan limits, usage metering and referrals; note sharing.
 - 390 now-dead i18n keys across all 10 locales, plus orphaned modules left behind by the above.
 
 ### Changed
+
 - The meeting streaming-provider catalog now comes from the bundled model registry instead of a hosted config endpoint.
 - Onboarding runs start to finish with no sign-in prompt.
 
 ### Note
+
 BYOK and self-hosted paths are unaffected. Streaming transcription for Corti, Tinfoil and OpenAI-realtime is BYOK, not hosted, and still works; Google Calendar uses a loopback OAuth server and is untouched.
 
 ## [1.10.2] - 2026-07-29
 
 ### Fixed
+
 - Removed the artificial speaker-count cap — live and post-call diarization now detect speakers freely instead of force-merging them into a fixed number.
 
 ## [1.10.1] - 2026-07-29
 
 ### Fixed
+
 - Post-call pipeline now generates titles and notes again. The `noteFormatting` scope's fallback chain was not being resolved, so the title and notes steps ran without a model.
 - System-audio diarization no longer over-counts speakers: the local user is on the mic track, so the remote speaker count is derived separately.
 
 ## [1.10.0] - 2026-07-29
 
 ### Added
+
 - **Post-call pipeline:** after a meeting ends, four steps run in order — re-transcribe (large Whisper model), generate a title, classify the meeting type, and generate notes. Includes a global progress indicator with live elapsed time and an opt-out setting.
 - **Meeting types:** 7 built-in types, each with its own notes template, plus an editor for custom types and a picker on meeting notes.
 - **Automatic meeting-type detection** from transcript content via LLM classification (temperature 0, first 2000 chars) with a keyword-heuristic fallback. Skipped when the type is already set by calendar auto-map or by the user; classification failures are non-fatal.
@@ -377,23 +449,28 @@ BYOK and self-hosted paths are unaffected. Streaming transcription for Corti, Ti
 - **Automatic Parakeet model download** on first launch, with a progress banner, cancel, an onboarding gate, and a queue that drains pending transcriptions once the model is ready.
 
 ### Changed
+
 - **Meeting note templates overhauled** to a debrief format: TL;DR, Meeting Overview (attendees + tone), Topics by importance, Decisions & Open Items, Action Items, and Key Takeaways with sentiment and subtext.
 - Color scheme updated to the Silver / Pacific Cyan / Blue Slate / Dark Khaki / Iron Grey palette.
 
 ### Fixed
+
 - Re-transcription is skipped gracefully when the large Whisper model has not been downloaded yet, instead of failing the pipeline.
 
 ## [1.9.0] - 2026-07-20
 
 ### Added
+
 - **Meeting audio saving:** After a call ends, mic and system audio are encoded to separate Opus files (~32 kbps mono) in `userData/audio/`. Gated on Settings > Privacy > "Save audio recordings" (`dataRetentionEnabled`). Paths stored in `notes.mic_audio_path` / `notes.system_audio_path`.
 - **High-quality re-transcription:** "Re-transcribe (high quality)" button on meeting notes runs a post-call whisper.cpp large-v3 pass (Metal-accelerated) + diarization re-run, replacing the live transcript. Requires ~3 GB large-v3 model download.
 - System audio RMS level diagnostic logging (`meeting-gain` debug tag).
 
 ### Fixed
+
 - Auto-start recording no longer silently fails when macOS Automation permission is pending or denied. The URL check now distinguishes "timeout/error" from "no meeting found" — device-in-use signal is trusted when the check can't run.
 
 ### Removed
+
 - Dead MCP integration settings card (cloud feature, non-functional in fork).
 
 ## [1.8.0] - 2026-07-15
@@ -401,18 +478,22 @@ BYOK and self-hosted paths are unaffected. Streaming transcription for Corti, Ti
 Fork release (futuregerald/openwhispr) — a fully local, private meeting transcriber. Real N-speaker diarization, on-device by default, with nothing sent off-device unless you opt in.
 
 ### Added
+
 - **FluidAudio (Apple Neural Engine) speaker-diarization backend** — auto-selected on macOS, with the cross-platform sherpa-onnx engine as fallback; bundled into packaged builds (no manual setup).
 
 ### Changed
+
 - **Default local transcription engine is now NVIDIA Parakeet TDT 0.6B** (faster, smaller, higher English/European accuracy); Whisper remains available in Settings.
 - **Local-only onboarding** — removed the signup/account step and the "how are you using the app" survey; first run goes straight to on-device setup.
 - **Speech-to-Text, note recording, and audio upload offer only Local and Self-hosted** — removed OpenWhispr-cloud and the hosted BYOK providers (OpenAI/Groq/xAI/Mistral/Corti/Tinfoil).
 
 ### Removed
+
 - **Account, Plans & Billing, and Workspace** settings sections, and the **Pro upsell** banners.
 - **Telemetry / phone-home by default** — the Better Auth session ping to auth.openwhispr.com, the automatic startup update check, and a Google Fonts fetch are disabled. (OpenWhispr has no analytics SDK.)
 
 ### Build
+
 - Unsigned macOS builds (no upstream Apple Developer ID); recipients clear the Gatekeeper quarantine flag once. See `docs/FORK-SETUP.md`.
 
 ## [1.7.5] - 2026-07-10

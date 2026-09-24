@@ -465,9 +465,7 @@ declare global {
         noteId: number,
         fromStep: string
       ) => Promise<{ success: boolean; error?: string; queued?: boolean }>;
-      getNoteRetrySteps?: (
-        noteIds: number[]
-      ) => Promise<{
+      getNoteRetrySteps?: (noteIds: number[]) => Promise<{
         success: boolean;
         steps?: Record<number, string | null>;
         error?: string;
@@ -1008,7 +1006,9 @@ declare global {
           pending_notes: number;
           total_segments: number;
         };
-        transcriptions_fts: { ready: boolean };
+        transcriptions_fts: { ready: boolean; missing: number | null; total: number | null };
+        notes_fts: { ready: boolean; missing: number | null; total: number | null };
+        transcript_segments_fts: { ready: boolean; missing: number | null; total: number | null };
       }>;
 
       // Hotkey management

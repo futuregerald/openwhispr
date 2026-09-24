@@ -55,6 +55,11 @@ function formatSrtTimestamp(seconds) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")},${String(ms).padStart(3, "0")}`;
 }
 
+function localPartOf(email) {
+  if (!email) return null;
+  return String(email).split("@")[0] || null;
+}
+
 function extractMetadata(note) {
   const title = note.title || "Untitled";
   const noteDate = new Date(note.created_at);
@@ -66,7 +71,9 @@ function extractMetadata(note) {
   let participants = [];
   try {
     const parsed = JSON.parse(note.participants || "[]");
-    participants = parsed.map((p) => p.name).filter(Boolean);
+    participants = parsed
+      .map((p) => p?.displayName || p?.name || localPartOf(p?.email))
+      .filter(Boolean);
   } catch {}
 
   return { title, dateStr, participants };

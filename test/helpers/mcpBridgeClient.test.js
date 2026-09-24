@@ -9,7 +9,29 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-mcp-client-"));
 const bridgeFile = path.join(tmpDir, "cli-bridge.json");
 process.env.OPENWHISPR_MCP_BRIDGE_FILE = bridgeFile;
 
+// The reset hook below is inert outside a test environment, so this must be set before the
+// module is required, as the database tests in this suite already do.
+process.env.NODE_ENV = "test";
+
 const bridgeClient = require("../../mcp/bridgeClient.js");
+
+// Most tests here are about transport -- retries, timeouts, payload parsing -- and assert on
+// exact request counts, so the handshake probe would corrupt what they measure. They opt out
+// of it; the handshake tests below opt back in by deleting this. Doing it per test rather
+// than relying on an earlier test having warmed the cache keeps the file order-independent.
+test.beforeEach(() => {
+  bridgeClient._resetVersionCacheForTests();
+  process.env.OPENWHISPR_MCP_SKIP_VERSION_CHECK = "1";
+});
+
+test.afterEach(() => {
+  delete process.env.OPENWHISPR_MCP_SKIP_VERSION_CHECK;
+});
+
+function withHandshake() {
+  delete process.env.OPENWHISPR_MCP_SKIP_VERSION_CHECK;
+  bridgeClient._resetVersionCacheForTests();
+}
 
 function writeBridgeFile(port, token) {
   fs.writeFileSync(bridgeFile, JSON.stringify({ version: 1, port, token }));
@@ -52,6 +74,164 @@ test("the server file loads with no dependency outside node: builtins", () => {
       specifier.startsWith("node:"),
       `${specifier} would make the MCP server depend on the app bundle it cannot resolve from Resources/mcp/`
     );
+  }
+});
+
+// Driving the packaged 1.25.0 MCP server against a 1.24.0 bridge told the agent
+// "Invalid note id" for list_notes, because the old bridge's param("GET","/v1/notes/","","id")
+// route swallows /v1/notes/list and parses "list" as an id. /v1/health has always returned
+// version 1, so only an additive capability field can distinguish them.
+function healthAwareHandler(mcpValue, onOther) {
+  return (req, res) => {
+    if (req.url === "/v1/health") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      const body = { ok: true, version: 1 };
+      if (mcpValue !== undefined) body.mcp = mcpValue;
+      res.end(JSON.stringify({ data: body }));
+      return;
+    }
+    onOther(req, res);
+  };
+}
+
+test("a bridge without the mcp capability is reported as too old, not as a route error", async () => {
+  withHandshake();
+  await withServer(
+    healthAwareHandler(undefined, (req, res) => {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "Invalid note id" } }));
+    }),
+    async ({ port }) => {
+      writeBridgeFile(port, "tok");
+      const result = await bridgeClient.requestJson("GET", "/v1/notes/list");
+      assert.equal(result.ok, false);
+      assert.match(result.error, /update OpenWhispr/i);
+      assert.doesNotMatch(result.error, /Invalid note id/);
+    }
+  );
+});
+
+test("a bridge that advertises the capability is used normally", async () => {
+  withHandshake();
+  await withServer(healthAwareHandler(2, okHandler), async ({ port, seen }) => {
+    writeBridgeFile(port, "tok");
+    const first = await bridgeClient.requestJson("GET", "/v1/notes/list");
+    assert.equal(first.ok, true);
+
+    const second = await bridgeClient.requestJson("GET", "/v1/notes/list");
+    assert.equal(second.ok, true);
+
+    assert.equal(
+      seen.filter((entry) => entry.url === "/v1/health").length,
+      1,
+      "a successful handshake is cached for the process, not re-probed per call"
+    );
+  });
+});
+
+test("concurrent first calls share one handshake probe", async () => {
+  withHandshake();
+  await withServer(healthAwareHandler(2, okHandler), async ({ port, seen }) => {
+    writeBridgeFile(port, "tok");
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => bridgeClient.requestJson("GET", "/v1/notes/list"))
+    );
+    assert.ok(results.every((r) => r.ok));
+    assert.equal(
+      seen.filter((entry) => entry.url === "/v1/health").length,
+      1,
+      "five cold-cache tools must not each probe /v1/health"
+    );
+  });
+});
+
+// The MCP server process is long-lived -- one per Claude Code session, outliving app
+// restarts. Caching an unreachable bridge would leave every tool broken for the session
+// even after the app started, which is worse than the bug the handshake replaces.
+// Both of these must run against ONE server. The cache is keyed `${port}:${token}` and
+// withServer binds a fresh ephemeral port per call, so two withServer phases would never share
+// a key -- the test would pass even if a negative result were cached, which is exactly the
+// invariant it exists to pin.
+test("an unreachable bridge is never cached, so a later attempt recovers", async () => {
+  withHandshake();
+  let healthCalls = 0;
+  await withServer(
+    (req, res) => {
+      if (req.url === "/v1/health") {
+        healthCalls += 1;
+        if (healthCalls === 1) {
+          res.writeHead(503, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: { message: "starting up" } }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ data: { ok: true, version: 1, mcp: 2 } }));
+        return;
+      }
+      okHandler(req, res);
+    },
+    async ({ port }) => {
+      writeBridgeFile(port, "tok");
+
+      const cold = await bridgeClient.requestJson("GET", "/v1/notes/list");
+      assert.equal(cold.ok, false, "the probe itself failed");
+
+      const warm = await bridgeClient.requestJson("GET", "/v1/notes/list");
+      assert.equal(warm.ok, true, "a failed probe must not be cached");
+      assert.equal(healthCalls, 2, "the second call has to re-probe, not reuse the failure");
+    }
+  );
+});
+
+test("a version mismatch is never cached, so upgrading mid-session recovers", async () => {
+  withHandshake();
+  let healthCalls = 0;
+  await withServer(
+    (req, res) => {
+      if (req.url === "/v1/health") {
+        healthCalls += 1;
+        const body = { ok: true, version: 1 };
+        if (healthCalls > 1) body.mcp = 2;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ data: body }));
+        return;
+      }
+      okHandler(req, res);
+    },
+    async ({ port }) => {
+      writeBridgeFile(port, "tok");
+
+      const stale = await bridgeClient.requestJson("GET", "/v1/notes/list");
+      assert.equal(stale.ok, false);
+      assert.match(stale.error, /update OpenWhispr/i);
+
+      const upgraded = await bridgeClient.requestJson("GET", "/v1/notes/list");
+      assert.equal(upgraded.ok, true, "a mismatch must not be cached");
+      assert.equal(healthCalls, 2, "the second call has to re-probe");
+    }
+  );
+});
+
+// In the shipped configuration the server and bridge always ship together, so the check can
+// essentially never fire for a user. The one place it does fire is the repo tree driven
+// against an installed release -- the loop that found these defects.
+test("the check can be skipped for the development loop", async () => {
+  withHandshake();
+  process.env.OPENWHISPR_MCP_SKIP_VERSION_CHECK = "1";
+  try {
+    await withServer(healthAwareHandler(undefined, okHandler), async ({ port, seen }) => {
+      writeBridgeFile(port, "tok");
+      const result = await bridgeClient.requestJson("GET", "/v1/notes/list");
+      assert.equal(result.ok, true);
+      assert.equal(
+        seen.filter((entry) => entry.url === "/v1/health").length,
+        0,
+        "the probe should not even be issued when the check is skipped"
+      );
+    });
+  } finally {
+    delete process.env.OPENWHISPR_MCP_SKIP_VERSION_CHECK;
+    bridgeClient._resetVersionCacheForTests();
   }
 });
 

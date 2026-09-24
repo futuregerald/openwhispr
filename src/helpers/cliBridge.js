@@ -299,7 +299,12 @@ class CliBridge {
     };
 
     return [
-      exact("GET", "/v1/health", () => ({ data: { ok: true, version: 1 } })),
+      exact("GET", "/v1/health", () => ({
+        // `version` is frozen at 1 for the out-of-repo CLI, which may assert on it.
+        // `mcp` advertises the MCP route surface so the MCP server can tell an app that
+        // has those routes from one that answers /v1/notes/list as a note id lookup.
+        data: { ok: true, version: 1, mcp: 2 },
+      })),
       exact("GET", "/v1/notes/list", ({ query }) => {
         const noteType = query.get("note_type") || null;
         const limit = query.get("limit") ? Number(query.get("limit")) : 100;
@@ -311,13 +316,21 @@ class CliBridge {
         const q = requireQuery(query);
         const limit = numberParam(query, "limit", 20);
         const notes = db.searchNotes(q, limit);
-        return { data: notes.map((note) => db.toNoteSearchSummary(note)), has_more: false, next_cursor: null };
+        return {
+          data: notes.map((note) => db.toNoteSearchSummary(note)),
+          has_more: false,
+          next_cursor: null,
+        };
       }),
       exact("GET", "/v1/notes/semantic-search", async ({ query }) => {
         const q = requireQuery(query);
         const limit = numberParam(query, "limit", 10);
         const notes = await ipc.semanticSearchNotes(q, limit);
-        return { data: notes.map((note) => db.toNoteSearchSummary(note)), has_more: false, next_cursor: null };
+        return {
+          data: notes.map((note) => db.toNoteSearchSummary(note)),
+          has_more: false,
+          next_cursor: null,
+        };
       }),
       exact("GET", "/v1/notes/summaries", ({ query }) => {
         const result = db.getNoteSummaries({
