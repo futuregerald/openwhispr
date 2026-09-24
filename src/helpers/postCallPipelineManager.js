@@ -6,7 +6,22 @@ const { i18nMain, SUPPORTED_UI_LANGUAGES } = require("./i18nMain");
 const { MainProcessInference } = require("./mainProcessInference");
 const { runNoteAction } = require("./noteActionRunner");
 const { resolveSpeaker, buildSpeakerMappings } = require("./transcriptFormatter");
-const { CHARS_PER_TOKEN, MIN_CONTEXT, PROMPT_SHARE } = require("./llamaContext");
+const {
+  CHARS_PER_TOKEN,
+  MIN_CONTEXT,
+  PROMPT_SHARE,
+  estimatePromptTokens,
+} = require("./llamaContext");
+const {
+  ANALYSIS_LABELS,
+  PROBES,
+  SECTIONS,
+  buildSectionPrompt,
+  renderDebriefTranscript,
+  resolveRecorderLabel,
+  topicsInstruction,
+} = require("./meetingDebriefPrompts");
+const { runMeetingDebrief } = require("./meetingDebriefRunner");
 
 const STEP_ORDER = ["retranscribe", "classify", "title", "notes"];
 
@@ -136,6 +151,47 @@ const LEGACY_DIGEST_CHARS = 2000;
 const DIGEST_BUDGET_MARGIN = 0.85;
 const MAX_ROSTER_NAMES = 8;
 
+const DEBRIEF_TOPICS_SECTION = "topics";
+
+// Only cancellation. Anything else has to leave the user with notes, so it falls
+// through to the chunked path, which asks for a quarter of the prompt size and
+// often succeeds where the debrief could not. An earlier version also propagated
+// the exhausted-retry and spent-deadline codes on the theory that they mean "the
+// machine is broken" -- but llama-server reports a deterministic 400 as
+// LLAMA_BAD_STATUS, which is classified transient, so a prompt the token
+// estimator under-counted (any non-Latin script) burned four attempts and then
+// denied the user the path that would have worked.
+const DEBRIEF_PROPAGATED_ERROR_CODES = new Set(["LOCAL_INFERENCE_ABORTED"]);
+
+// One budget for the notes step as a whole, so attempting the debrief first can
+// never add to the worst case the chunked path already had on its own.
+const NOTES_TOTAL_BUDGET_MS = 30 * 60 * 1000;
+const NOTES_MIN_FALLBACK_BUDGET_MS = 60 * 1000;
+
+// `maxTokens` counts real model tokens; `estimatePromptTokens` divides characters
+// by 3.6. Measured over 39 real probe answers, this model emits up to 4.67
+// characters per generated token, so budgeting a 400-token probe at 400 * 3.6
+// under-reserved by about 1,190 tokens across ten of them -- enough that a band
+// of transcripts passed this check and then had every section refused, after
+// paying for eleven passes. 5.0 leaves headroom above the measured worst case.
+const CHARS_PER_GENERATED_TOKEN = 5.0;
+const DEBRIEF_WORST_CASE_ANALYSIS = "x".repeat(
+  Math.ceil(
+    PROBES.reduce((tokens, probe) => tokens + probe.maxTokens, 0) * CHARS_PER_GENERATED_TOKEN +
+      ANALYSIS_LABELS.reduce((chars, [label]) => chars + label.length + 2, 0)
+  )
+);
+
+function longestDebriefSectionInstruction(meetingTypeTemplate) {
+  return SECTIONS.map((section) =>
+    section.name === DEBRIEF_TOPICS_SECTION
+      ? topicsInstruction(meetingTypeTemplate)
+      : section.instruction
+  ).reduce((longest, instruction) => (instruction.length > longest.length ? instruction : longest));
+}
+
+const debriefSubStageFor = (phase) => (phase === "writing" ? "writing" : "analyzing");
+
 class PostCallPipelineManager {
   constructor({
     broadcast,
@@ -187,7 +243,11 @@ class PostCallPipelineManager {
           this._broadcastNoteUpdate(noteId);
         }
       } catch (err) {
-        debugLogger.warn("Pipeline: classify step failed (non-fatal)", { noteId, error: err.message }, "meeting");
+        debugLogger.warn(
+          "Pipeline: classify step failed (non-fatal)",
+          { noteId, error: err.message },
+          "meeting"
+        );
         this._emitStatus(noteId, "classify", "error", err.message);
       }
     }
@@ -552,8 +612,11 @@ class PostCallPipelineManager {
     // Skip if meeting_type_id is already set (calendar auto-map or user selection)
     const note = this._db.getNote(noteId);
     if (note?.meeting_type_id) {
-      debugLogger.info("Pipeline: classify skipped — meeting_type_id already set",
-        { noteId, meetingTypeId: note.meeting_type_id }, "meeting");
+      debugLogger.info(
+        "Pipeline: classify skipped — meeting_type_id already set",
+        { noteId, meetingTypeId: note.meeting_type_id },
+        "meeting"
+      );
       return null;
     }
 
@@ -585,15 +648,24 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
         const match = result.trim().match(/^\d+$/);
         const matchedId = match ? parseInt(match[0], 10) : NaN;
         if (!isNaN(matchedId) && types.some((t) => t.id === matchedId)) {
-          debugLogger.info("Pipeline: LLM classified meeting type",
-            { noteId, meetingTypeId: matchedId }, "meeting");
+          debugLogger.info(
+            "Pipeline: LLM classified meeting type",
+            { noteId, meetingTypeId: matchedId },
+            "meeting"
+          );
           return matchedId;
         }
-        debugLogger.info("Pipeline: LLM returned no match or invalid id",
-          { noteId, raw: result.trim().slice(0, 50) }, "meeting");
+        debugLogger.info(
+          "Pipeline: LLM returned no match or invalid id",
+          { noteId, raw: result.trim().slice(0, 50) },
+          "meeting"
+        );
       } catch (llmErr) {
-        debugLogger.warn("Pipeline: LLM classification failed, falling back to keywords",
-          { noteId, error: llmErr.message }, "meeting");
+        debugLogger.warn(
+          "Pipeline: LLM classification failed, falling back to keywords",
+          { noteId, error: llmErr.message },
+          "meeting"
+        );
       }
     }
 
@@ -603,12 +675,20 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
       if (!type.keyword_rules) continue;
       try {
         const keywords = JSON.parse(type.keyword_rules);
-        if (Array.isArray(keywords) && keywords.some((kw) => lowerText.includes(kw.toLowerCase()))) {
-          debugLogger.info("Pipeline: keyword-matched meeting type",
-            { noteId, meetingTypeId: type.id, typeName: type.name }, "meeting");
+        if (
+          Array.isArray(keywords) &&
+          keywords.some((kw) => lowerText.includes(kw.toLowerCase()))
+        ) {
+          debugLogger.info(
+            "Pipeline: keyword-matched meeting type",
+            { noteId, meetingTypeId: type.id, typeName: type.name },
+            "meeting"
+          );
           return type.id;
         }
-      } catch { continue; }
+      } catch {
+        continue;
+      }
     }
 
     debugLogger.info("Pipeline: no meeting type matched", { noteId }, "meeting");
@@ -620,14 +700,11 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
     if (!config) return null;
 
     const note = this._db.getNote(noteId);
+    const meetingType = note?.meeting_type_id
+      ? this._db.getMeetingType(note.meeting_type_id)
+      : null;
     let systemPrompt = GENERIC_NOTES_PROMPT;
-
-    if (note?.meeting_type_id) {
-      const meetingType = this._db.getMeetingType(note.meeting_type_id);
-      if (meetingType?.template) {
-        systemPrompt = buildTypedNotesPrompt(meetingType);
-      }
-    }
+    if (meetingType?.template) systemPrompt = buildTypedNotesPrompt(meetingType);
 
     const text = this._flattenTranscript(noteId, transcript);
 
@@ -638,7 +715,29 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
       MainProcessInference.resolveProvider(config.provider, config.model) === "local";
 
     if (servedLocally && this._resolveModelContext) {
-      return this._generateNotesInPasses({ noteId, config, systemPrompt, transcript, text });
+      const startedAt = Date.now();
+      const debrief = await this._tryDebrief({
+        noteId,
+        config,
+        transcript,
+        meetingTypeTemplate: meetingType?.template || null,
+      });
+      if (debrief != null) return debrief;
+      // Whatever the debrief attempt spent comes out of the chunked path's budget,
+      // so trying the better notes first can never make the worst case worse than
+      // it was before this existed.
+      const remainingMs = Math.max(
+        NOTES_MIN_FALLBACK_BUDGET_MS,
+        NOTES_TOTAL_BUDGET_MS - (Date.now() - startedAt)
+      );
+      return this._generateNotesInPasses({
+        noteId,
+        config,
+        systemPrompt,
+        transcript,
+        text,
+        deadlineMs: remainingMs,
+      });
     }
 
     // A cloud model has context to spare, so it takes one call — but it no longer
@@ -647,12 +746,115 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
     return this._inference.processText(text, { ...config, systemPrompt });
   }
 
+  async _tryDebrief({ noteId, config, transcript, meetingTypeTemplate }) {
+    const segments = this._transcriptSegments(noteId, transcript);
+    if (segments.length === 0) {
+      debugLogger.notice(
+        "Pipeline: debrief skipped, the transcript has no speaker segments",
+        { noteId },
+        "meeting"
+      );
+      return null;
+    }
+
+    const recorderLabel = resolveRecorderLabel(segments);
+    if (!recorderLabel) {
+      debugLogger.notice(
+        "Pipeline: debrief skipped, nobody in the transcript is the recorder",
+        { noteId, segments: segments.length },
+        "meeting"
+      );
+      return null;
+    }
+
+    if (segments.every((segment) => segment.timestamp === 0)) {
+      debugLogger.notice(
+        "Pipeline: debrief skipped, the transcript carries no timings to cite",
+        { noteId, segments: segments.length },
+        "meeting"
+      );
+      return null;
+    }
+
+    const { contextSize, isGpuBackend } = await this._resolveModelContext(config.model);
+
+    // The debrief sends a prompt of up to contextSize * PROMPT_SHARE nineteen
+    // times. On CPU a prefill that size takes minutes and overruns llama-server's
+    // per-request timeout, which is classified slow, exhausts its two attempts and
+    // ends the step in an error -- where the chunked path, which divides its chunk
+    // budget by four for exactly this reason (transcriptPassChunker's
+    // CPU_CHUNK_DIVISOR), still produces notes.
+    if (!isGpuBackend) {
+      debugLogger.notice(
+        "Pipeline: debrief skipped, a CPU backend cannot afford nineteen full-context prefills",
+        { noteId, contextSize },
+        "meeting"
+      );
+      return null;
+    }
+
+    const budgetTokens = Math.floor((contextSize || MIN_CONTEXT) * PROMPT_SHARE);
+    const largestPromptTokens = estimatePromptTokens(
+      buildSectionPrompt(
+        renderDebriefTranscript(segments),
+        DEBRIEF_WORST_CASE_ANALYSIS,
+        longestDebriefSectionInstruction(meetingTypeTemplate),
+        recorderLabel
+      )
+    );
+    if (largestPromptTokens > budgetTokens) {
+      debugLogger.notice(
+        "Pipeline: debrief skipped, its largest prompt does not fit the context",
+        { noteId, largestPromptTokens, budgetTokens, contextSize },
+        "meeting"
+      );
+      return null;
+    }
+
+    let reportedSubStage = null;
+    try {
+      const result = await runMeetingDebrief({
+        infer: (prompt, options) => this._inference.processText(prompt, { ...config, ...options }),
+        segments,
+        meetingTypeTemplate,
+        onProgress: ({ phase }) => {
+          const subStage = debriefSubStageFor(phase);
+          if (subStage === reportedSubStage) return;
+          reportedSubStage = subStage;
+          this._emitSubStage(noteId, "notes", subStage);
+        },
+      });
+
+      debugLogger.notice(
+        "Pipeline: notes generated as a meeting debrief",
+        {
+          noteId,
+          kind: result.kind,
+          calls: result.calls,
+          skipped: result.skipped,
+          failedProbes: result.failedProbes,
+          contextSize,
+        },
+        "meeting"
+      );
+      return result.text;
+    } catch (err) {
+      if (DEBRIEF_PROPAGATED_ERROR_CODES.has(err?.code)) throw err;
+      debugLogger.warn(
+        "Pipeline: debrief did not apply, falling back to the chunked path",
+        { noteId, code: err?.code || null, error: err.message },
+        "meeting"
+      );
+      return null;
+    }
+  }
+
   /**
    * Extracts from each chunk of the transcript, then writes the notes once from
    * everything extracted. A meeting longer than the local model's context is the
    * normal case, not an error.
    */
-  async _generateNotesInPasses({ noteId, config, systemPrompt, transcript, text }) {
+  async _generateNotesInPasses({ noteId, config, systemPrompt, transcript, text, deadlineMs }) {
     const { contextSize, isGpuBackend } = await this._resolveModelContext(config.model);
     const segments = this._transcriptSegments(noteId, transcript);
 
@@ -663,8 +865,8 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
       noteContent: segments.length > 0 ? "" : text,
       contextSize,
       isGpuBackend,
-      infer: (prompt, options) =>
-        this._inference.processText(prompt, { ...config, ...options }),
+      ...(deadlineMs == null ? {} : { deadlineMs }),
+      infer: (prompt, options) => this._inference.processText(prompt, { ...config, ...options }),
     });
 
     debugLogger.notice(
@@ -697,6 +899,12 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
         .map((s) => ({
           label: resolveSpeaker(s, speakerMappings),
           text: String(s.text ?? ""),
+          // The debrief renderer cites [mm:ss] and merges turns on a 30s gap.
+          // Without these three fields every line is [00:00] and the whole
+          // transcript merges into one turn per speaker.
+          timestamp: Number(s.timestamp) || 0,
+          speaker: s.speaker,
+          source: s.source,
         }))
         .filter((s) => s.text.trim());
     } catch {
@@ -716,7 +924,11 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
     const provider = process.env.NOTE_FORMATTING_PROVIDER;
     const model = process.env.NOTE_FORMATTING_MODEL;
     if (!provider || !model) {
-      debugLogger.warn("Pipeline: no noteFormatting provider/model configured, skipping AI step", {}, "meeting");
+      debugLogger.warn(
+        "Pipeline: no noteFormatting provider/model configured, skipping AI step",
+        {},
+        "meeting"
+      );
       return null;
     }
     return { provider, model, temperature: 0.3 };
@@ -747,7 +959,10 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
 
   _emitSubStage(noteId, step, subStage) {
     this._broadcast("post-call-pipeline-status", {
-      noteId, step, status: "running", subStage,
+      noteId,
+      step,
+      status: "running",
+      subStage,
     });
   }
 
@@ -764,4 +979,5 @@ module.exports = {
   STEP_ORDER,
   isPipelineStep,
   localizedTitlePlaceholders,
+  DEBRIEF_PROPAGATED_ERROR_CODES,
 };

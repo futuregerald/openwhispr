@@ -992,6 +992,19 @@
           "descriptionKey": "models.descriptions.local.gemma_gemma_4_26b_a4b_it_q4_k_m"
         },
         {
+          "id": "gemma-4-e4b-it-qat-q4_0",
+          "name": "Gemma 4 E4B (QAT)",
+          "size": "4.8GB",
+          "sizeBytes": 5154941280,
+          "description": "Quantisation-aware trained — best local meeting notes measured",
+          "fileName": "gemma-4-E4B_q4_0-it.gguf",
+          "quantization": "q4_0",
+          "contextLength": 131072,
+          "hfRepo": "google/gemma-4-E4B-it-qat-q4_0-gguf",
+          "recommended": true,
+          "descriptionKey": "models.descriptions.local.gemma_gemma_4_e4b_it_qat_q4_0"
+        },
+        {
           "id": "gemma-4-e4b-it-q4_k_m",
           "name": "Gemma 4 E4B",
           "size": "5.4GB",

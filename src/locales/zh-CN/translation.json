@@ -1719,6 +1719,7 @@
         "gemma_gemma_3_4b_it_q4_k_m": "谷歌开放权重模型，速度与质量的绝佳平衡",
         "gemma_gemma_4_31b_it_q4_k_m": "Google 最大的 Gemma 4，最佳质量",
         "gemma_gemma_4_26b_a4b_it_q4_k_m": "Google MoE Gemma 4，4B 活跃参数，速度快",
+        "gemma_gemma_4_e4b_it_qat_q4_0": "量化感知训练，会议笔记实测最佳",
         "gemma_gemma_4_e4b_it_q4_k_m": "Google 最新多模态模型，强大推理能力",
         "gemma_gemma_4_e2b_it_q4_k_m": "Google 紧凑型 Gemma 4，快速高效",
         "gemma_gemma_3_12b_it_q4_k_m": "Google 中型模型，强推理能力",
@@ -2531,7 +2532,9 @@
     "substages": {
       "converting": "Converting audio",
       "transcribing": "Transcribing (large model)",
-      "diarizing": "Re-diarizing speakers"
+      "diarizing": "Re-diarizing speakers",
+      "analyzing": "正在阅读转录内容",
+      "writing": "正在撰写笔记"
     },
     "errorWithReason": "失败：{{step}} — {{reason}}",
     "preserved": {

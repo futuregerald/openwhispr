@@ -1761,6 +1761,7 @@
         "gemma_gemma_3_4b_it_q4_k_m": "Google's open-weight model, great balance of speed and quality",
         "gemma_gemma_4_31b_it_q4_k_m": "Google's largest Gemma 4, best quality",
         "gemma_gemma_4_26b_a4b_it_q4_k_m": "Google's MoE Gemma 4, fast with 4B active params",
+        "gemma_gemma_4_e4b_it_qat_q4_0": "Quantisation-aware trained, best measured for meeting notes",
         "gemma_gemma_4_e4b_it_q4_k_m": "Google's latest multimodal, strong reasoning",
         "gemma_gemma_4_e2b_it_q4_k_m": "Google's compact Gemma 4, fast and efficient",
         "gemma_gemma_3_12b_it_q4_k_m": "Google's mid-range model, strong reasoning",
@@ -2531,7 +2532,9 @@
     "substages": {
       "converting": "Converting audio",
       "transcribing": "Transcribing (large model)",
-      "diarizing": "Re-diarizing speakers"
+      "diarizing": "Re-diarizing speakers",
+      "analyzing": "Reading the transcript",
+      "writing": "Writing the notes"
     },
     "errorWithReason": "Failed: {{step}} — {{reason}}",
     "preserved": {

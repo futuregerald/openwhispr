@@ -169,19 +169,13 @@ class LlamaServerManager {
     });
     this.contextSize = resolved.contextSize;
 
-    const baseArgs = [
-      "--model",
+    const argOptions = {
       modelPath,
-      "--host",
-      "127.0.0.1",
-      "--port",
-      String(this.port),
-      "--threads",
-      String(options.threads || 4),
-      "--ctx-size",
-      String(resolved.contextSize),
-      "--jinja",
-    ];
+      port: this.port,
+      threads: options.threads || 4,
+      contextSize: resolved.contextSize,
+      platform: process.platform,
+    };
 
     debugLogger.notice(
       "Starting llama-server",
@@ -213,16 +207,10 @@ class LlamaServerManager {
     );
 
     if (process.platform === "darwin") {
-      const args = [...baseArgs, "--n-gpu-layers", "99"];
-      await this._startWithBinary(
-        binaryPaths.default,
-        args,
-        this._buildEnv(binaryPaths.default),
-        STARTUP_TIMEOUT_MS
-      );
+      await this._startWithTunedFlagsFallback(binaryPaths.default, argOptions);
       this.activeBackend = "metal";
     } else {
-      await this._startWithGpuFallback(binaryPaths, baseArgs, options);
+      await this._startWithGpuFallback(binaryPaths, argOptions);
     }
 
     this.startHealthCheck();
@@ -234,9 +222,43 @@ class LlamaServerManager {
     });
   }
 
-  async _startWithGpuFallback(binaryPaths, baseArgs, options) {
-    const gpuArgs = [...baseArgs, "--n-gpu-layers", "99"];
-    const cpuArgs = baseArgs;
+  /**
+   * macOS has no second binary to fall back to, so a rejected flag would take out
+   * every local inference in the app — dictation cleanup and the chat agent
+   * included, not just the feature the flags exist for. Flash attention and a
+   * quantised KV cache are not satisfiable for every model on every Metal build,
+   * and llama.cpp's own default for `-fa` is `auto` for that reason, so a start
+   * failure retries once with them dropped.
+   */
+  async _startWithTunedFlagsFallback(binaryPath, argOptions) {
+    try {
+      await this._startWithBinary(
+        binaryPath,
+        buildServerArgs({ ...argOptions, gpu: true }),
+        this._buildEnv(binaryPath),
+        STARTUP_TIMEOUT_MS
+      );
+      return;
+    } catch (error) {
+      debugLogger.warn(
+        "llama-server rejected the tuned cache flags, retrying without them",
+        { error: error.message, code: error.code || null },
+        "llama"
+      );
+      await this._killCurrentProcess();
+      this.port = await this.findAvailablePort();
+    }
+
+    await this._startWithBinary(
+      binaryPath,
+      buildServerArgs({ ...argOptions, port: this.port, gpu: true, tunedCache: false }),
+      this._buildEnv(binaryPath),
+      STARTUP_TIMEOUT_MS
+    );
+  }
+
+  async _startWithGpuFallback(binaryPaths, argOptions) {
+    const gpuArgs = buildServerArgs({ ...argOptions, gpu: true });
 
     if (binaryPaths.vulkan) {
       try {
@@ -259,9 +281,13 @@ class LlamaServerManager {
     if (!binaryPaths.cpu) throw new Error("No CPU llama-server binary available");
 
     debugLogger.debug("Starting with CPU backend");
+    // Built here, not alongside gpuArgs: a failed Vulkan attempt reassigns
+    // this.port, and args captured before that carry the old one while the health
+    // check polls the new one. It only ever worked because the just-freed port was
+    // handed straight back.
     await this._startWithBinary(
       binaryPaths.cpu,
-      cpuArgs,
+      buildServerArgs({ ...argOptions, port: this.port, gpu: false }),
       this._buildEnv(binaryPaths.cpu),
       STARTUP_TIMEOUT_MS
     );
@@ -390,7 +416,10 @@ class LlamaServerManager {
         if (Date.now() - startTime >= timeoutMs) {
           settle(() =>
             reject(
-              llamaError(`llama-server failed to start within ${timeoutMs}ms`, "LLAMA_START_TIMEOUT")
+              llamaError(
+                `llama-server failed to start within ${timeoutMs}ms`,
+                "LLAMA_START_TIMEOUT"
+              )
             )
           );
           return;
@@ -578,6 +607,10 @@ class LlamaServerManager {
       temperature: options.temperature ?? 0.7,
       max_tokens: options.max_tokens ?? 512,
       stream: false,
+      // llama.cpp's default today. Stated because the multi-pass pipelines are
+      // only affordable while it holds: without the reused prefill every call
+      // re-reads the whole transcript, ~11s each.
+      cache_prompt: true,
     };
 
     // Without this, Qwen chat templates leave `message.content` empty and
@@ -632,11 +665,14 @@ class LlamaServerManager {
               // A local inference is the most expensive thing this app does; how
               // long it took and how big the prompt was is the first question
               // asked when someone reports that it "hung".
+              const timings = response.timings || {};
               const meta = {
                 elapsedMs,
                 promptChars: body.length,
                 outputChars: text.length,
                 contextSize: this.contextSize,
+                cachedPromptTokens: timings.cache_n ?? null,
+                promptTokens: timings.prompt_n ?? null,
               };
               if (elapsedMs >= SLOW_INFERENCE_MS) {
                 debugLogger.warn("Local inference was slow", meta, "llama");
@@ -728,6 +764,38 @@ class LlamaServerManager {
   }
 }
 
+function buildServerArgs({
+  modelPath,
+  port,
+  threads,
+  contextSize,
+  platform,
+  gpu,
+  tunedCache = true,
+}) {
+  const args = [
+    "--model",
+    modelPath,
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(port),
+    "--threads",
+    String(threads),
+    "--ctx-size",
+    String(contextSize),
+    "--jinja",
+  ];
+
+  if (gpu) args.push("--n-gpu-layers", "99");
+
+  if (platform === "darwin" && tunedCache) {
+    args.push("-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0");
+  }
+
+  return args;
+}
+
 /**
  * The context out of a llama-server /props body, or null when the answer is not
  * a usable one. Anything but a positive whole number means the estimate stands.
@@ -742,6 +810,7 @@ function parseServerContextSize(body) {
 }
 
 module.exports = LlamaServerManager;
+module.exports.buildServerArgs = buildServerArgs;
 module.exports.parseServerContextSize = parseServerContextSize;
 module.exports.DEFAULT_REQUEST_TIMEOUT_MS = DEFAULT_REQUEST_TIMEOUT_MS;
 module.exports.BATCH_REQUEST_TIMEOUT_MS = BATCH_REQUEST_TIMEOUT_MS;

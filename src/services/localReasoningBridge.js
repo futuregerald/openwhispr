@@ -46,7 +46,10 @@ class LocalReasoningService {
     try {
       const inferenceConfig = {
         maxTokens: config.maxTokens || this.calculateMaxTokens(text.length),
-        temperature: config.temperature || 0.7,
+        // `||` sent 0.7 for every caller that asked for 0, so the meeting-type
+        // classifier and the debrief's meeting-kind question were both sampling
+        // when they had asked not to.
+        temperature: config.temperature ?? 0.7,
         topK: config.topK || 40,
         topP: config.topP || 0.9,
         repeatPenalty: config.repeatPenalty || 1.1,
@@ -59,7 +62,14 @@ class LocalReasoningService {
 
       debugLogger.logReasoning("LOCAL_BRIDGE_INFERENCE", {
         modelId,
-        config: inferenceConfig,
+        // Redacted the way modelManagerBridge already redacts the same field. The
+        // meeting debrief's system prompt names the person who recorded the
+        // meeting, taken from their speaker mapping, and debug logs persist to
+        // disk for 30 days.
+        config: {
+          ...inferenceConfig,
+          systemPrompt: inferenceConfig.systemPrompt ? "[set]" : "[not set]",
+        },
       });
 
       const result = await modelManager.runInference(modelId, text, inferenceConfig);

@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.0] - 2026-09-24
+
+### Changed
+
+- Meeting notes written by a local model are much better. Instead of asking the model for the
+  whole write-up in one go, OpenWhispr now works through the transcript one question at a time —
+  why the meeting was happening, what each person committed to, what was said carefully, which
+  questions never got asked, what could go wrong next — and only then writes the notes, section by
+  section. Scored against a reference debrief of a real 35-minute conversation, the new notes hit
+  9 to 11 of 11 checks where the old single-pass notes hit 5 or 6. Notes now also cite timestamps
+  you can scan back to, and include a candid read of the conversation rather than only a summary
+  of it.
+
+  It takes longer — roughly two minutes instead of thirty seconds for a 35-minute meeting — so
+  the progress indicator now tells you whether it is still reading the transcript or already
+  writing. Nothing is sent off your machine either way.
+
+  The previous style of notes is still used where the new one cannot work, and you always get
+  notes one way or the other: for very long meetings, for transcripts with no speaker turns or
+  no timings, for recordings you are not part of, and on machines with no graphics acceleration,
+  where nineteen passes would take too long. If you have set up a meeting type with its own
+  template, your template still shapes the Topics section, now surrounded by the new ones.
+
+### Added
+
+- **Gemma 4 E4B (QAT)** in the local model list, and it is the one to pick for meeting notes. It
+  is Google's quantisation-aware-trained build: slightly smaller than the existing Gemma 4 E4B,
+  a little faster, and measurably better on notes.
+
+### Fixed
+
+- Local models no longer ignore a request for completely predictable output. Anything asking for
+  zero randomness — the step that works out what kind of meeting you recorded, for instance — was
+  silently being given a normal amount of randomness instead, so it could answer differently on
+  identical input.
+- Timestamps in meeting notes point at the right moment. Transcripts are not always stored in the
+  order things were said, and a sentence spoken early could be presented as part of a passage
+  minutes later, so a timestamp you clicked took you to the wrong place.
+- Debug logs no longer record the name of the person who recorded a meeting. Turning on debug
+  logging wrote it to disk, where logs are kept for 30 days.
+
 ## [1.26.0] - 2026-09-23
 
 ### Fixed

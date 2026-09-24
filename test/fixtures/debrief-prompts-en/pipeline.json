@@ -1,0 +1,193 @@
+{
+  "passes": {
+    "kind": {
+      "prompt": "prompts/mp/kind-app.md",
+      "temperature": 0,
+      "max_tokens": 8
+    },
+    "p_why_now": {
+      "prompt": "prompts/mp/probe-app.md",
+      "instruction": "Why is this meeting happening now? Read what each person says about their own situation and how things were described to them. Quote any mention of someone leaving, joining, stepping away, a new role, a deadline or a reorg.",
+      "temperature": 0.1,
+      "max_tokens": 400
+    },
+    "p_unasked": {
+      "prompt": "prompts/mp/probe-app.md",
+      "instruction": "Did the person who recorded this meeting (\"You\") announce, preview or say they were going to ask a question that they then never actually asked? Look for phrases like \"I was going to ask\", \"the next question\", \"just to give you a preview\". Quote the question exactly and confirm whether it was ever asked later. Then: were any questions answered vaguely or dodged?",
+      "temperature": 0.1,
+      "max_tokens": 400
+    },
+    "p_outcomes": {
+      "prompt": "prompts/mp/probe-app.md",
+      "instruction": "List each story or example someone told about their past work. For each, did they state a concrete business result: adoption, revenue, customer impact, time saved, whether it shipped on time, or whether their call turned out right? Describing the process or the decision is NOT a result. Mark each: business result stated / business result not stated.",
+      "temperature": 0.1,
+      "max_tokens": 400
+    },
+    "p_disagree": {
+      "prompt": "prompts/mp/probe-app.md",
+      "instruction": "For any disagreement described or happening in the meeting: who argued for what, and how was it settled (evidence, compromise, bringing in a boss)?",
+      "temperature": 0.1,
+      "max_tokens": 400
+    },
+    "p_candor": {
+      "prompt": "prompts/mp/probe-app.md",
+      "instruction": "What did the person who recorded this meeting (\"You\") say that was candid, sensitive, or that they might want to reconsider sharing with this person? Also: did they say two things that do not fit together? Quote exactly.",
+      "temperature": 0.1,
+      "max_tokens": 400
+    },
+    "p_style": {
+      "prompt": "prompts/mp/probe-app.md",
+      "instruction": "How did the other person communicate: focused or long and rambling answers? Any hedging, deflecting or careful wording? What do their own questions reveal about their priorities? Quote exactly.",
+      "temperature": 0.1,
+      "max_tokens": 400
+    },
+    "p_commit": {
+      "prompt": "prompts/mp/probe-app.md",
+      "instruction": "List every commitment anyone made, including small ones like \"I'll email you my questions\". Who, what, when, their exact words, and how firm it sounded.",
+      "temperature": 0.1,
+      "max_tokens": 400
+    },
+    "p_missing": {
+      "prompt": "prompts/mp/probe-app.md",
+      "instruction": "What important topic should have come up but did not? What could go wrong in the next few weeks because of what was said or not said?",
+      "temperature": 0.1,
+      "max_tokens": 400
+    },
+    "p_overview": {
+      "prompt": "prompts/mp/probe-app.md",
+      "instruction": "What was this meeting really for and did it achieve it? Who drove it? What is the single most important takeaway for the person who recorded this meeting? What is the most generous and the most cynical reading? Anything notable not covered by the usual questions?",
+      "temperature": 0.1,
+      "max_tokens": 400
+    },
+    "p_verdict": {
+      "prompt": "prompts/mp/probe-app.md",
+      "instruction": "This was an interview or evaluation. Give the strongest evidence for the person being evaluated, the strongest evidence against, and a one-line lean (for example \"Lean hire\") with what would change it.",
+      "when": {
+        "step": "kind",
+        "contains": [
+          "interview",
+          "evaluation"
+        ]
+      },
+      "temperature": 0.1,
+      "max_tokens": 400
+    },
+    "analyze": {
+      "compose": [
+        [
+          "WHY NOW",
+          "p_why_now"
+        ],
+        [
+          "UNASKED",
+          "p_unasked"
+        ],
+        [
+          "OUTCOMES",
+          "p_outcomes"
+        ],
+        [
+          "DISAGREEMENTS",
+          "p_disagree"
+        ],
+        [
+          "CANDOR",
+          "p_candor"
+        ],
+        [
+          "STYLE",
+          "p_style"
+        ],
+        [
+          "COMMITMENTS",
+          "p_commit"
+        ],
+        [
+          "MISSING & RISKS",
+          "p_missing"
+        ],
+        [
+          "OVERVIEW",
+          "p_overview"
+        ],
+        [
+          "VERDICT",
+          "p_verdict"
+        ]
+      ]
+    },
+    "tldr": {
+      "prompt": "prompts/mp/section-app.md",
+      "instruction": "3-5 bullets for someone who reads nothing else. Bold topic first, then what happened and why it matters to you. Draw on TAKEAWAY, UNASKED, VERDICT, RISKS and WHY NOW. Put anything time-sensitive last, marked **[Urgent]**.",
+      "heading": "## TL;DR",
+      "temperature": 0.3,
+      "max_tokens": 500
+    },
+    "context": {
+      "prompt": "prompts/mp/section-app.md",
+      "instruction": "One short paragraph: the kind of meeting, who was there and their roles, why it is happening now (WHY NOW), the tone, and whether it achieved its purpose (PURPOSE).",
+      "heading": "## Meeting Context",
+      "temperature": 0.3,
+      "max_tokens": 300
+    },
+    "topics": {
+      "prompt": "prompts/mp/section-app.md",
+      "instruction": "One ### subsection per distinct topic, most important first. For each: what was said, with names and [mm:ss] timestamps; decisions made (or None); what is still open; then a line starting **My read:** with your honest interpretation, including anything missing such as an outcome that was never stated (OUTCOMES).",
+      "heading": "## Topics",
+      "temperature": 0.3,
+      "max_tokens": 1800
+    },
+    "assessment": {
+      "prompt": "prompts/mp/section-app.md",
+      "instruction": "**Strengths:** bullets about the person being evaluated, each with evidence and [mm:ss].\n**Concerns:** bullets about the person being evaluated, each with evidence and [mm:ss]. Consider OUTCOMES, how disagreements were settled (DISAGREEMENTS), and how focused the answers were (STYLE).\nThen one line starting **Lean:** with your lean and what would change it (VERDICT).",
+      "heading": "## Assessment",
+      "temperature": 0.3,
+      "max_tokens": 700,
+      "when": {
+        "step": "kind",
+        "contains": [
+          "interview",
+          "evaluation"
+        ]
+      }
+    },
+    "dynamics": {
+      "prompt": "prompts/mp/section-app.md",
+      "instruction": "Bullets. Use DRIVER, PRIORITIES, STYLE, CANDOR and READINGS: who drove, what each person's questions reveal, hedges or careful wording (quoted exactly), and anything you said that was candid, sensitive or inconsistent and that you may want to reconsider sharing (quoted exactly).",
+      "heading": "## Dynamics & Subtext",
+      "temperature": 0.3,
+      "max_tokens": 700
+    },
+    "commitments": {
+      "prompt": "prompts/mp/section-app.md",
+      "instruction": "Checkboxes from COMMITMENTS and the transcript, including small ones like sending questions later. Format: - [ ] **Name:** action \u2014 deadline if stated \u2014 confidence High/Medium/Low with a few words of why. If there were none, write: None made.",
+      "heading": "## Commitments",
+      "temperature": 0.3,
+      "max_tokens": 400
+    },
+    "gaps": {
+      "prompt": "prompts/mp/section-app.md",
+      "instruction": "Bullets with evidence. Include EVERY question in UNASKED that was announced but never asked, the topics in MISSING, the missing outcomes in OUTCOMES, anything in OTHER worth flagging, and what could go wrong (RISKS).",
+      "heading": "## Gaps & Risks",
+      "temperature": 0.3,
+      "max_tokens": 700
+    },
+    "recommendations": {
+      "prompt": "prompts/mp/section-app.md",
+      "instruction": "At most 3 numbered, concrete next steps for you, each with a timeframe (today, this week, before the next conversation). Base them on the most important gaps and risks.",
+      "heading": "## Recommendations",
+      "temperature": 0.3,
+      "max_tokens": 500
+    }
+  },
+  "assemble": [
+    "tldr",
+    "context",
+    "topics",
+    "assessment",
+    "dynamics",
+    "commitments",
+    "gaps",
+    "recommendations"
+  ]
+}
