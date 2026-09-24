@@ -169,19 +169,13 @@ class LlamaServerManager {
     });
     this.contextSize = resolved.contextSize;
 
-    const baseArgs = [
-      "--model",
+    const argOptions = {
       modelPath,
-      "--host",
-      "127.0.0.1",
-      "--port",
-      String(this.port),
-      "--threads",
-      String(options.threads || 4),
-      "--ctx-size",
-      String(resolved.contextSize),
-      "--jinja",
-    ];
+      port: this.port,
+      threads: options.threads || 4,
+      contextSize: resolved.contextSize,
+      platform: process.platform,
+    };
 
     debugLogger.notice(
       "Starting llama-server",
@@ -213,16 +207,15 @@ class LlamaServerManager {
     );
 
     if (process.platform === "darwin") {
-      const args = [...baseArgs, "--n-gpu-layers", "99"];
       await this._startWithBinary(
         binaryPaths.default,
-        args,
+        buildServerArgs({ ...argOptions, gpu: true }),
         this._buildEnv(binaryPaths.default),
         STARTUP_TIMEOUT_MS
       );
       this.activeBackend = "metal";
     } else {
-      await this._startWithGpuFallback(binaryPaths, baseArgs, options);
+      await this._startWithGpuFallback(binaryPaths, argOptions);
     }
 
     this.startHealthCheck();
@@ -234,9 +227,9 @@ class LlamaServerManager {
     });
   }
 
-  async _startWithGpuFallback(binaryPaths, baseArgs, options) {
-    const gpuArgs = [...baseArgs, "--n-gpu-layers", "99"];
-    const cpuArgs = baseArgs;
+  async _startWithGpuFallback(binaryPaths, argOptions) {
+    const gpuArgs = buildServerArgs({ ...argOptions, gpu: true });
+    const cpuArgs = buildServerArgs({ ...argOptions, gpu: false });
 
     if (binaryPaths.vulkan) {
       try {
@@ -390,7 +383,10 @@ class LlamaServerManager {
         if (Date.now() - startTime >= timeoutMs) {
           settle(() =>
             reject(
-              llamaError(`llama-server failed to start within ${timeoutMs}ms`, "LLAMA_START_TIMEOUT")
+              llamaError(
+                `llama-server failed to start within ${timeoutMs}ms`,
+                "LLAMA_START_TIMEOUT"
+              )
             )
           );
           return;
@@ -578,6 +574,10 @@ class LlamaServerManager {
       temperature: options.temperature ?? 0.7,
       max_tokens: options.max_tokens ?? 512,
       stream: false,
+      // llama.cpp's default today. Stated because the multi-pass pipelines are
+      // only affordable while it holds: without the reused prefill every call
+      // re-reads the whole transcript, ~11s each.
+      cache_prompt: true,
     };
 
     // Without this, Qwen chat templates leave `message.content` empty and
@@ -632,11 +632,14 @@ class LlamaServerManager {
               // A local inference is the most expensive thing this app does; how
               // long it took and how big the prompt was is the first question
               // asked when someone reports that it "hung".
+              const timings = response.timings || {};
               const meta = {
                 elapsedMs,
                 promptChars: body.length,
                 outputChars: text.length,
                 contextSize: this.contextSize,
+                cachedPromptTokens: timings.cache_n ?? null,
+                promptTokens: timings.prompt_n ?? null,
               };
               if (elapsedMs >= SLOW_INFERENCE_MS) {
                 debugLogger.warn("Local inference was slow", meta, "llama");
@@ -728,6 +731,28 @@ class LlamaServerManager {
   }
 }
 
+function buildServerArgs({ modelPath, port, threads, contextSize, platform, gpu }) {
+  const args = [
+    "--model",
+    modelPath,
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(port),
+    "--threads",
+    String(threads),
+    "--ctx-size",
+    String(contextSize),
+    "--jinja",
+  ];
+
+  if (gpu) args.push("--n-gpu-layers", "99");
+
+  if (platform === "darwin") args.push("-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0");
+
+  return args;
+}
+
 /**
  * The context out of a llama-server /props body, or null when the answer is not
  * a usable one. Anything but a positive whole number means the estimate stands.
@@ -742,6 +767,7 @@ function parseServerContextSize(body) {
 }
 
 module.exports = LlamaServerManager;
+module.exports.buildServerArgs = buildServerArgs;
 module.exports.parseServerContextSize = parseServerContextSize;
 module.exports.DEFAULT_REQUEST_TIMEOUT_MS = DEFAULT_REQUEST_TIMEOUT_MS;
 module.exports.BATCH_REQUEST_TIMEOUT_MS = BATCH_REQUEST_TIMEOUT_MS;
