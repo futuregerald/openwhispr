@@ -779,12 +779,12 @@ const { t } = useTranslation();
    - If Qdrant fails to start, search still works via FTS5 keyword fallback
    - Semantic search is only available through the AI agent's `search_notes` tool, not the manual search UI
 
-8. **`better-sqlite3` ABI mismatch (database tests fail to load)**:
-   - `npm run build` / `pack` / `dev:main` / `postinstall` all run `electron-builder install-app-deps`, which rebuilds `better-sqlite3` for **Electron's** ABI. `node --test` then cannot load it.
-   - Run the tests again with: `npm rebuild better-sqlite3`
-   - Run the Electron app again with: `npx electron-builder install-app-deps`
-   - The two are mutually exclusive; expect to flip back and forth between testing and running the app.
-   - `test/support/sqlite.js` makes this a loud failure. It used to call `t.skip()`, which let a broken binding masquerade as a passing suite and hid a genuinely failing assertion for days — never reintroduce a skip there.
+8. **`better-sqlite3` ABI mismatch — now self-healing, no manual step**:
+   - One compiled `.node` file serves exactly one `NODE_MODULE_VERSION`, and this checkout has two runtimes competing for it: Electron (145 for Electron 41) and the system node that runs `node --test` (141 on Node 25). They remain mutually exclusive; what changed is that each side now claims the binding itself.
+   - `npm run build` / `pack` / `dev:main` / `postinstall` rebuild for **Electron's** ABI, via `scripts/rebuild-native-for-electron.js`.
+   - `npm test` rebuilds for **node's** ABI, via the `pretest` hook and `scripts/ensure-node-abi.js`. It reads the ABI out of the binary rather than requiring the module — requiring a mismatched binding is the crash it exists to prevent — so the common case is a ~0.2s probe that prints nothing. It only rebuilds on a genuine mismatch.
+   - So alternating between `npm test` and running the app needs no commands. You only run one by hand when driving `node --test` directly, bypassing npm: `npm rebuild better-sqlite3`, or `npm run rebuild:native` to go back.
+   - `test/support/sqlite.js` still makes a broken binding a loud failure. It used to call `t.skip()`, which let a broken binding masquerade as a passing suite and hid a genuinely failing assertion for days — never reintroduce a skip there.
 
 ### Platform-Specific Notes
 
