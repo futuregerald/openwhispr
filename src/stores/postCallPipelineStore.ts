@@ -3,6 +3,8 @@ import { create } from "zustand";
 export type PipelineStep = "retranscribe" | "title" | "classify" | "notes" | "pipeline";
 export type PipelineStepStatus = "pending" | "running" | "complete" | "skipped" | "error";
 export type RetranscribeSubStage = "converting" | "transcribing" | "diarizing";
+export type DebriefSubStage = "analyzing" | "writing";
+export type PipelineSubStage = RetranscribeSubStage | DebriefSubStage;
 
 export interface TranscriptDiff {
   totalSegments: number;
@@ -14,7 +16,7 @@ export interface PipelineNoteState {
   noteId: number;
   currentStep: PipelineStep;
   currentStatus: PipelineStepStatus;
-  subStage: RetranscribeSubStage | null;
+  subStage: PipelineSubStage | null;
   error: string | null;
   startedAt: number;
   steps: Partial<Record<PipelineStep, PipelineStepStatus>>;
@@ -34,7 +36,7 @@ export function handlePipelineStatus(payload: {
   noteId: number;
   step: PipelineStep;
   status: PipelineStepStatus;
-  subStage?: RetranscribeSubStage;
+  subStage?: PipelineSubStage;
   error?: string;
   diff?: TranscriptDiff;
   preserved?: boolean;

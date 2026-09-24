@@ -149,7 +149,13 @@ async function runMeetingDebrief({
   }
 
   if (written.length === 0) {
-    throw runnerError("Every section of the meeting debrief failed", "LOCAL_MULTIPASS_FAILED", {
+    // Deliberately not LOCAL_MULTIPASS_FAILED, which the caller propagates. This
+    // line is only reachable when every section failed GENUINELY -- a broken
+    // server exhausts its retries inside runPass and throws from the first
+    // section, never arriving here. A genuine failure is the caller's signal to
+    // fall back, so the user still gets notes from the chunked path instead of an
+    // error and nothing.
+    throw runnerError("Every section of the meeting debrief failed", "LOCAL_DEBRIEF_UNUSABLE", {
       skipped,
     });
   }

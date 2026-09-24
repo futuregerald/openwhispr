@@ -1634,3 +1634,346 @@ test("every step the retry menu can ask for re-runs the right set", async () => 
     }
   }
 });
+
+// ── Local meeting debrief (1.25.0) ──────────────────────────────────────────
+//
+// A local model now writes the notes as a 19-pass debrief rather than one
+// chunked extraction, but only when the transcript can carry it: speaker
+// segments, real timings, a recorder to address, and a context big enough for
+// the largest section prompt. Each of those failing has to land back on the
+// chunked path; four error codes must NOT, because re-running the same work a
+// second way on a broken machine only doubles the damage.
+
+const DEBRIEF_SEGMENTS = [
+  { speaker: "you", source: "mic", timestamp: 0, text: "Thanks for making the time today." },
+  { speaker: "speaker_0", source: "system", timestamp: 12, text: "Happy to be here." },
+  { speaker: "you", source: "mic", timestamp: 95, text: "I was going to ask about the rollout." },
+  { speaker: "speaker_0", source: "system", timestamp: 140, text: "We shipped it in March." },
+];
+
+const UNTIMED_DEBRIEF_SEGMENTS = DEBRIEF_SEGMENTS.map((s) => ({ ...s, timestamp: 0 }));
+
+const RECORDERLESS_DEBRIEF_SEGMENTS = DEBRIEF_SEGMENTS.map((s, i) => ({
+  ...s,
+  speaker: `speaker_${i % 2}`,
+  source: "system",
+}));
+
+// Long enough that the worst-case section prompt overruns an 8192 context
+// (4458 tokens of template and budgeted analysis before a word of transcript)
+// while still fitting a 32768 one.
+const WORDY_DEBRIEF_SEGMENTS = Array.from({ length: 40 }, (_, i) => ({
+  speaker: i % 2 === 0 ? "you" : "speaker_0",
+  source: i % 2 === 0 ? "mic" : "system",
+  timestamp: i * 40,
+  text: `Turn ${i}: we went through the rollout plan and what is still outstanding.`,
+}));
+
+function debriefMocks(segments, overrides = {}) {
+  const mocks = createMocks();
+  const transcript = typeof segments === "string" ? segments : JSON.stringify(segments);
+  mocks.writes = [];
+  mocks.databaseManager.getNote = (id) => ({
+    id,
+    transcript,
+    title: "Real Title",
+    system_audio_path: null,
+    mic_audio_path: null,
+    meeting_type_id: overrides.meetingTypeId ?? null,
+    audio_duration_seconds: 600,
+  });
+  mocks.databaseManager.getSpeakerMappings = () => [];
+  mocks.databaseManager.updateNote = (id, updates) => {
+    mocks.writes.push(updates);
+    return { success: true };
+  };
+  if (overrides.meetingType) mocks.databaseManager.getMeetingType = () => overrides.meetingType;
+  return mocks;
+}
+
+const isKindPrompt = (prompt) => prompt.includes("In one word, what kind of meeting was this?");
+const isSectionPrompt = (prompt) => prompt.includes("END OF ANALYSIS NOTES.");
+const isChunkedPrompt = (call) => call.opts.systemPrompt.includes("meeting notes assistant");
+
+function debriefInference(mocks, options = {}) {
+  const { kind = "interview", section = "- We shipped it in March [02:20].", onCall } = options;
+  const calls = [];
+  mocks.inference.processText = async (text, opts) => {
+    calls.push({ text, opts });
+    onCall?.(text, opts);
+    if (isKindPrompt(text)) return kind;
+    if (isSectionPrompt(text)) return section;
+    if (text.includes("END OF TRANSCRIPT.")) return "- Something was said at [00:12].";
+    return "## Summary\nchunked notes";
+  };
+  return calls;
+}
+
+async function runDebriefNotes(mocks, extra = {}) {
+  const { provider = "local", model = "gemma-4-e4b", ...managerExtra } = extra;
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  process.env.NOTE_FORMATTING_PROVIDER = provider;
+  process.env.NOTE_FORMATTING_MODEL = model;
+  try {
+    const manager = buildManager(PostCallPipelineManager, mocks, {
+      resolveModelContext: async () => ({ contextSize: 32768, isGpuBackend: true }),
+      ...managerExtra,
+    });
+    await manager.runSingleStep(1, "notes");
+    return manager;
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+}
+
+const enhancedWrites = (mocks) => mocks.writes.filter((w) => w.enhanced_content !== undefined);
+
+test("a local model with timed speaker turns gets the whole debrief", async () => {
+  const mocks = debriefMocks(DEBRIEF_SEGMENTS);
+  const calls = debriefInference(mocks);
+
+  await runDebriefNotes(mocks);
+
+  assert.ok(calls.length >= 18, `expected the debrief's 19 passes, got ${calls.length}`);
+
+  // The stamps are the point of this assertion. A projection that drops
+  // `timestamp` renders every line as [00:00], and the renderer's 30s merge rule
+  // then folds the whole transcript into one line per speaker -- output that the
+  // earlier form of this check (prompt contains "[00:0") passed happily.
+  const prompt = calls[0].text;
+  const stamps = new Set(prompt.match(/\[\d\d:\d\d\]/g));
+  assert.ok(
+    stamps.size >= 2,
+    `the transcript reached the model with ${stamps.size} distinct stamp(s)`
+  );
+  assert.match(prompt, /\[0[1-9]:|\[[1-9]\d:/);
+
+  assert.equal(enhancedWrites(mocks).length, 1);
+  assert.match(enhancedWrites(mocks)[0].enhanced_content, /^## TL;DR/);
+});
+
+test("a transcript with no timings falls back to the chunked path", async () => {
+  const mocks = debriefMocks(UNTIMED_DEBRIEF_SEGMENTS);
+  const calls = debriefInference(mocks);
+
+  await runDebriefNotes(mocks);
+
+  assert.ok(
+    !calls.some((c) => isKindPrompt(c.text)),
+    "the debrief ran on a transcript with nothing to cite"
+  );
+  assert.ok(calls.some(isChunkedPrompt), "the chunked path never ran either");
+  assert.equal(enhancedWrites(mocks).length, 1);
+});
+
+test("a transcript with no recorder in it falls back to the chunked path", async () => {
+  const mocks = debriefMocks(RECORDERLESS_DEBRIEF_SEGMENTS);
+  const calls = debriefInference(mocks);
+
+  await runDebriefNotes(mocks);
+
+  assert.ok(
+    !calls.some((c) => isKindPrompt(c.text)),
+    "a debrief addressed to 'you' ran with nobody to address"
+  );
+  assert.ok(calls.some(isChunkedPrompt));
+});
+
+test("a local model with a plain-text transcript makes exactly the call it made before", async () => {
+  const plain = "We agreed to ship the rollout in March and Jay will send the plan.";
+  const mocks = debriefMocks(plain);
+  const calls = debriefInference(mocks);
+
+  await runDebriefNotes(mocks);
+
+  assert.equal(calls.length, 1, `plain text must stay one pass, got ${calls.length}`);
+  assert.equal(calls[0].text, plain);
+  assert.ok(isChunkedPrompt(calls[0]));
+  assert.equal(enhancedWrites(mocks)[0].enhanced_content, "## Summary\nchunked notes");
+});
+
+test("the debrief is skipped when its largest prompt would not fit the context", async () => {
+  const tooSmall = debriefMocks(WORDY_DEBRIEF_SEGMENTS);
+  const tooSmallCalls = debriefInference(tooSmall);
+  await runDebriefNotes(tooSmall, {
+    resolveModelContext: async () => ({ contextSize: 8192, isGpuBackend: true }),
+  });
+  assert.ok(
+    !tooSmallCalls.some((c) => isKindPrompt(c.text)),
+    "a section prompt over the budget was sent anyway"
+  );
+  assert.ok(tooSmallCalls.some(isChunkedPrompt));
+
+  // Same transcript, bigger context: the guard is about the budget and not about
+  // anything in the data, which is the only way it can be trusted.
+  const roomy = debriefMocks(WORDY_DEBRIEF_SEGMENTS);
+  const roomyCalls = debriefInference(roomy);
+  await runDebriefNotes(roomy);
+  assert.ok(roomyCalls.some((c) => isKindPrompt(c.text)));
+});
+
+test("a cloud model still gets exactly one call", async () => {
+  const mocks = debriefMocks(DEBRIEF_SEGMENTS);
+  const calls = debriefInference(mocks);
+  let resolvedContext = false;
+
+  await runDebriefNotes(mocks, {
+    provider: "openai",
+    model: "gpt-5.5",
+    resolveModelContext: async () => {
+      resolvedContext = true;
+      return { contextSize: 32768, isGpuBackend: true };
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(resolvedContext, false);
+  assert.ok(calls[0].text.includes("You: Thanks for making the time today."));
+  assert.ok(isChunkedPrompt(calls[0]));
+});
+
+test("a debrief the runner itself refuses falls back and still writes the note", async () => {
+  // Fillers are stripped by the debrief renderer but not by _transcriptSegments,
+  // so a filler-only transcript passes every precondition here and is then
+  // rejected inside the runner with LOCAL_CONTEXT_EXCEEDED.
+  const fillersOnly = [{ speaker: "you", source: "mic", timestamp: 30, text: "um uh hmm" }];
+  const mocks = debriefMocks(fillersOnly);
+  const calls = debriefInference(mocks);
+
+  const manager = await runDebriefNotes(mocks);
+
+  const {
+    renderDebriefTranscript,
+    resolveRecorderLabel,
+  } = require("../../src/helpers/meetingDebriefPrompts.js");
+  const segments = manager._transcriptSegments(1, JSON.stringify(fillersOnly));
+  assert.equal(
+    segments.length,
+    1,
+    "the precondition on empty segments is what fired, not the runner"
+  );
+  assert.equal(resolveRecorderLabel(segments), "You");
+  assert.equal(
+    renderDebriefTranscript(segments),
+    "",
+    "the runner had something to render after all"
+  );
+
+  assert.ok(!calls.some((c) => isKindPrompt(c.text)));
+  assert.ok(calls.some(isChunkedPrompt));
+  assert.equal(enhancedWrites(mocks).length, 1);
+});
+
+test("an aborted debrief is not retried down the chunked path", async () => {
+  const mocks = debriefMocks(DEBRIEF_SEGMENTS);
+  const calls = debriefInference(mocks, {
+    onCall: (text) => {
+      if (!isKindPrompt(text)) return;
+      const err = new Error("Cancelled");
+      err.code = "LOCAL_INFERENCE_ABORTED";
+      throw err;
+    },
+  });
+
+  await runDebriefNotes(mocks);
+
+  assert.ok(!calls.some(isChunkedPrompt), "a cancelled run started the chunked path instead");
+  assert.equal(enhancedWrites(mocks).length, 0);
+  assert.ok(
+    mocks.events.some((e) => e.step === "notes" && e.status === "error"),
+    "the cancelled step recorded no error"
+  );
+});
+
+// Every section coming back unusable is NOT a broken machine -- a broken server
+// exhausts its retries inside the first section and propagates from there. So the
+// user must still end up with notes, written by the chunked path, rather than an
+// error and an unchanged note.
+test("a debrief whose every section came back empty falls back and still writes the note", async () => {
+  const mocks = debriefMocks(DEBRIEF_SEGMENTS);
+  const calls = debriefInference(mocks, { section: "NONE" });
+
+  await runDebriefNotes(mocks);
+
+  assert.ok(
+    calls.some((c) => isKindPrompt(c.text)),
+    "the debrief never ran"
+  );
+  assert.ok(calls.some(isChunkedPrompt), "an unusable debrief did not fall back");
+  assert.equal(enhancedWrites(mocks).length, 1, "the user was left with no notes");
+  assert.ok(!mocks.events.some((e) => e.step === "notes" && e.status === "error"));
+});
+
+test("a debrief that ran out of time is not retried down the chunked path", async () => {
+  // Every reading of the clock jumps 11 minutes, so the runner's own 10-minute
+  // deadline fires on its first check whatever else asked the time.
+  const mocks = debriefMocks(DEBRIEF_SEGMENTS);
+  const calls = debriefInference(mocks);
+  const realNow = Date.now;
+  let reading = 0;
+  Date.now = () => realNow() + reading++ * 11 * 60 * 1000;
+
+  try {
+    await runDebriefNotes(mocks);
+  } finally {
+    Date.now = realNow;
+  }
+
+  assert.equal(calls.length, 0, "a run already past its deadline still called the model");
+  assert.ok(!calls.some(isChunkedPrompt));
+  assert.equal(enhancedWrites(mocks).length, 0);
+  assert.ok(mocks.events.some((e) => e.step === "notes" && e.status === "error"));
+});
+
+// Not an end-to-end case: it asserts the classification only. LOCAL_INFERENCE_ABORTED
+// and LOCAL_MULTIPASS_TIMEOUT above prove the propagate branch actually works; these
+// two codes have no reachable path through the debrief runner to drive it with.
+// LOCAL_MULTIPASS_FAILED is only raised by runPass exhausting its retries, which
+// needs 14s of real backoff, and LOCAL_MULTIPASS_DEGRADED is never raised at all --
+// the runner deliberately does not call throwIfDegrading, because across 16 healthy
+// runs the worst pass-versus-median ratio was 3.76 against the guard's threshold of 4.
+// The classification still has to be right for the day either changes.
+test("a broken or degrading machine is classified as propagate, never as fall back", async () => {
+  const {
+    DEBRIEF_PROPAGATED_ERROR_CODES,
+  } = require("../../src/helpers/postCallPipelineManager.js");
+  assert.deepEqual([...DEBRIEF_PROPAGATED_ERROR_CODES].sort(), [
+    "LOCAL_INFERENCE_ABORTED",
+    "LOCAL_MULTIPASS_DEGRADED",
+    "LOCAL_MULTIPASS_FAILED",
+    "LOCAL_MULTIPASS_TIMEOUT",
+  ]);
+  assert.ok(!DEBRIEF_PROPAGATED_ERROR_CODES.has("LOCAL_CONTEXT_EXCEEDED"));
+});
+
+test("the debrief reports reading the transcript before writing the notes", async () => {
+  const mocks = debriefMocks(DEBRIEF_SEGMENTS);
+  debriefInference(mocks);
+
+  await runDebriefNotes(mocks);
+
+  const subStages = mocks.events
+    .filter((e) => e.channel === "post-call-pipeline-status" && e.step === "notes" && e.subStage)
+    .map((e) => e.subStage);
+  assert.deepEqual(subStages, ["analyzing", "writing"]);
+});
+
+test("widening the segment projection left the title digest byte-identical", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = debriefMocks(DEBRIEF_SEGMENTS);
+  const manager = buildManager(PostCallPipelineManager, mocks);
+  const transcript = JSON.stringify(DEBRIEF_SEGMENTS);
+
+  assert.equal(
+    manager._transcriptDigest(1, transcript, 400),
+    "Participants: You, Speaker 1\n\nYou: Thanks for making the time today.\n" +
+      "Speaker 1: Happy to be here.\nYou: I was going to ask about the rollout.\n" +
+      "Speaker 1: We shipped it in March."
+  );
+  assert.equal(
+    manager._transcriptDigest(1, transcript, 120),
+    "Participants: You, Speaker 1\n\n[BEGINNING]\nYou: Thanks for mak\n\n" +
+      "[MIDDLE]\nYou: I was going to\n\n[END]\nSpeaker 1: We shipp"
+  );
+});

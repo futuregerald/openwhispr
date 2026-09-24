@@ -227,7 +227,11 @@ test("an echoed heading is stripped instead of being written twice", async () =>
   assert.equal(result.text.match(/Meeting Context/g).length, 1);
 });
 
-test("every section failing rejects rather than writing an empty note", async () => {
+// The code matters as much as the rejection. Every section failing is only
+// reachable when each one failed GENUINELY, so the caller must be told to fall
+// back to the chunked path rather than surface an error: LOCAL_MULTIPASS_FAILED
+// is in the caller's propagate set and would leave the user with no notes at all.
+test("every section failing rejects with a code the caller falls back on", async () => {
   const h = harness({
     reply: (prompt) => {
       if (isSectionPrompt(prompt)) throw coded("empty", "EMPTY_RESPONSE");
@@ -237,7 +241,7 @@ test("every section failing rejects rather than writing an empty note", async ()
 
   await assert.rejects(
     () => runMeetingDebrief(h.options),
-    (err) => err.code === "LOCAL_MULTIPASS_FAILED"
+    (err) => err.code === "LOCAL_DEBRIEF_UNUSABLE"
   );
 });
 

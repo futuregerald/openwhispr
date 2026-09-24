@@ -6,7 +6,21 @@ const { i18nMain, SUPPORTED_UI_LANGUAGES } = require("./i18nMain");
 const { MainProcessInference } = require("./mainProcessInference");
 const { runNoteAction } = require("./noteActionRunner");
 const { resolveSpeaker, buildSpeakerMappings } = require("./transcriptFormatter");
-const { CHARS_PER_TOKEN, MIN_CONTEXT, PROMPT_SHARE } = require("./llamaContext");
+const {
+  CHARS_PER_TOKEN,
+  MIN_CONTEXT,
+  PROMPT_SHARE,
+  estimatePromptTokens,
+} = require("./llamaContext");
+const {
+  PROBES,
+  SECTIONS,
+  buildSectionPrompt,
+  renderDebriefTranscript,
+  resolveRecorderLabel,
+  topicsInstruction,
+} = require("./meetingDebriefPrompts");
+const { runMeetingDebrief } = require("./meetingDebriefRunner");
 
 const STEP_ORDER = ["retranscribe", "classify", "title", "notes"];
 
@@ -135,6 +149,29 @@ const CLOUD_DIGEST_CHARS = 6000;
 const LEGACY_DIGEST_CHARS = 2000;
 const DIGEST_BUDGET_MARGIN = 0.85;
 const MAX_ROSTER_NAMES = 8;
+
+const DEBRIEF_TOPICS_SECTION = "topics";
+
+const DEBRIEF_PROPAGATED_ERROR_CODES = new Set([
+  "LOCAL_INFERENCE_ABORTED",
+  "LOCAL_MULTIPASS_FAILED",
+  "LOCAL_MULTIPASS_TIMEOUT",
+  "LOCAL_MULTIPASS_DEGRADED",
+]);
+
+const DEBRIEF_WORST_CASE_ANALYSIS = "x".repeat(
+  Math.ceil(PROBES.reduce((tokens, probe) => tokens + probe.maxTokens, 0) * CHARS_PER_TOKEN)
+);
+
+function longestDebriefSectionInstruction(meetingTypeTemplate) {
+  return SECTIONS.map((section) =>
+    section.name === DEBRIEF_TOPICS_SECTION
+      ? topicsInstruction(meetingTypeTemplate)
+      : section.instruction
+  ).reduce((longest, instruction) => (instruction.length > longest.length ? instruction : longest));
+}
+
+const debriefSubStageFor = (phase) => (phase === "writing" ? "writing" : "analyzing");
 
 class PostCallPipelineManager {
   constructor({
@@ -620,14 +657,11 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
     if (!config) return null;
 
     const note = this._db.getNote(noteId);
+    const meetingType = note?.meeting_type_id
+      ? this._db.getMeetingType(note.meeting_type_id)
+      : null;
     let systemPrompt = GENERIC_NOTES_PROMPT;
-
-    if (note?.meeting_type_id) {
-      const meetingType = this._db.getMeetingType(note.meeting_type_id);
-      if (meetingType?.template) {
-        systemPrompt = buildTypedNotesPrompt(meetingType);
-      }
-    }
+    if (meetingType?.template) systemPrompt = buildTypedNotesPrompt(meetingType);
 
     const text = this._flattenTranscript(noteId, transcript);
 
@@ -638,6 +672,13 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
       MainProcessInference.resolveProvider(config.provider, config.model) === "local";
 
     if (servedLocally && this._resolveModelContext) {
+      const debrief = await this._tryDebrief({
+        noteId,
+        config,
+        transcript,
+        meetingTypeTemplate: meetingType?.template || null,
+      });
+      if (debrief != null) return debrief;
       return this._generateNotesInPasses({ noteId, config, systemPrompt, transcript, text });
     }
 
@@ -645,6 +686,93 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
     // takes only the first 8000 characters, which quietly ended every note at
     // about the 25-minute mark.
     return this._inference.processText(text, { ...config, systemPrompt });
+  }
+
+  async _tryDebrief({ noteId, config, transcript, meetingTypeTemplate }) {
+    const segments = this._transcriptSegments(noteId, transcript);
+    if (segments.length === 0) {
+      debugLogger.notice(
+        "Pipeline: debrief skipped, the transcript has no speaker segments",
+        { noteId },
+        "meeting"
+      );
+      return null;
+    }
+
+    const recorderLabel = resolveRecorderLabel(segments);
+    if (!recorderLabel) {
+      debugLogger.notice(
+        "Pipeline: debrief skipped, nobody in the transcript is the recorder",
+        { noteId, segments: segments.length },
+        "meeting"
+      );
+      return null;
+    }
+
+    if (segments.every((segment) => segment.timestamp === 0)) {
+      debugLogger.notice(
+        "Pipeline: debrief skipped, the transcript carries no timings to cite",
+        { noteId, segments: segments.length },
+        "meeting"
+      );
+      return null;
+    }
+
+    const { contextSize } = await this._resolveModelContext(config.model);
+    const budgetTokens = Math.floor((contextSize || MIN_CONTEXT) * PROMPT_SHARE);
+    const largestPromptTokens = estimatePromptTokens(
+      buildSectionPrompt(
+        renderDebriefTranscript(segments),
+        DEBRIEF_WORST_CASE_ANALYSIS,
+        longestDebriefSectionInstruction(meetingTypeTemplate),
+        recorderLabel
+      )
+    );
+    if (largestPromptTokens > budgetTokens) {
+      debugLogger.notice(
+        "Pipeline: debrief skipped, its largest prompt does not fit the context",
+        { noteId, largestPromptTokens, budgetTokens, contextSize },
+        "meeting"
+      );
+      return null;
+    }
+
+    let reportedSubStage = null;
+    try {
+      const result = await runMeetingDebrief({
+        infer: (prompt, options) => this._inference.processText(prompt, { ...config, ...options }),
+        segments,
+        meetingTypeTemplate,
+        onProgress: ({ phase }) => {
+          const subStage = debriefSubStageFor(phase);
+          if (subStage === reportedSubStage) return;
+          reportedSubStage = subStage;
+          this._emitSubStage(noteId, "notes", subStage);
+        },
+      });
+
+      debugLogger.notice(
+        "Pipeline: notes generated as a meeting debrief",
+        {
+          noteId,
+          kind: result.kind,
+          calls: result.calls,
+          skipped: result.skipped,
+          failedProbes: result.failedProbes,
+          contextSize,
+        },
+        "meeting"
+      );
+      return result.text;
+    } catch (err) {
+      if (DEBRIEF_PROPAGATED_ERROR_CODES.has(err?.code)) throw err;
+      debugLogger.warn(
+        "Pipeline: debrief did not apply, falling back to the chunked path",
+        { noteId, code: err?.code || null, error: err.message },
+        "meeting"
+      );
+      return null;
+    }
   }
 
   /**
@@ -697,6 +825,12 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
         .map((s) => ({
           label: resolveSpeaker(s, speakerMappings),
           text: String(s.text ?? ""),
+          // The debrief renderer cites [mm:ss] and merges turns on a 30s gap.
+          // Without these three fields every line is [00:00] and the whole
+          // transcript merges into one turn per speaker.
+          timestamp: Number(s.timestamp) || 0,
+          speaker: s.speaker,
+          source: s.source,
         }))
         .filter((s) => s.text.trim());
     } catch {
@@ -764,4 +898,5 @@ module.exports = {
   STEP_ORDER,
   isPipelineStep,
   localizedTitlePlaceholders,
+  DEBRIEF_PROPAGATED_ERROR_CODES,
 };

@@ -20,6 +20,8 @@ const SUBSTAGE_LABELS: Record<string, string> = {
   converting: "pipeline.substages.converting",
   transcribing: "pipeline.substages.transcribing",
   diarizing: "pipeline.substages.diarizing",
+  analyzing: "pipeline.substages.analyzing",
+  writing: "pipeline.substages.writing",
 };
 
 export default function PostCallPipelineIndicator({
