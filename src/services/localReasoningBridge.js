@@ -46,7 +46,10 @@ class LocalReasoningService {
     try {
       const inferenceConfig = {
         maxTokens: config.maxTokens || this.calculateMaxTokens(text.length),
-        temperature: config.temperature || 0.7,
+        // `||` sent 0.7 for every caller that asked for 0, so the meeting-type
+        // classifier and the debrief's meeting-kind question were both sampling
+        // when they had asked not to.
+        temperature: config.temperature ?? 0.7,
         topK: config.topK || 40,
         topP: config.topP || 0.9,
         repeatPenalty: config.repeatPenalty || 1.1,

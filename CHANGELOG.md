@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.0] - 2026-09-24
+
+### Changed
+
+- Meeting notes written by a local model are much better. Instead of asking the model for the
+  whole write-up in one go, OpenWhispr now works through the transcript one question at a time —
+  why the meeting was happening, what each person committed to, what was said carefully, which
+  questions never got asked, what could go wrong next — and only then writes the notes, section by
+  section. Scored against a reference debrief of a real 35-minute conversation, the new notes hit
+  9 to 11 of 11 checks where the old single-pass notes hit 5 or 6. Notes now also cite timestamps
+  you can scan back to, and include a candid read of the conversation rather than only a summary
+  of it.
+
+  It takes longer — roughly two minutes instead of thirty seconds for a 35-minute meeting — so
+  the progress indicator now tells you whether it is still reading the transcript or already
+  writing. Very long meetings keep the previous approach, which never truncates but is less
+  insightful. Nothing is sent off your machine either way.
+
+### Added
+
+- **Gemma 4 E4B (QAT)** in the local model list, and it is the one to pick for meeting notes. It
+  is Google's quantisation-aware-trained build: slightly smaller than the existing Gemma 4 E4B,
+  a little faster, and measurably better on notes.
+
+### Fixed
+
+- Local models no longer ignore a request for completely predictable output. Anything asking for
+  zero randomness — the step that works out what kind of meeting you recorded, for instance — was
+  silently being given a normal amount of randomness instead, so it could answer differently on
+  identical input.
+- Less memory used while a local model is loaded on macOS, which leaves more room for the rest of
+  your machine during a long transcription.
+
 ## [1.26.0] - 2026-09-23
 
 ### Fixed
