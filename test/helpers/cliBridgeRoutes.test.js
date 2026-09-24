@@ -36,11 +36,17 @@ function fakeIpcHandlers(overrides = {}) {
     getStats: () => ({ group_by: "week", buckets: [] }),
     getSearchIndexStatus: () => ({
       transcript_segments: { indexed_notes: 0, pending_notes: 0, total_segments: 0 },
-      transcriptions_fts: { ready: true },
+      transcriptions_fts: { ready: true, missing: 0, total: 4 },
+      notes_fts: { ready: true, missing: 0, total: 12 },
     }),
     getTranscriptions: () => [],
     getTranscriptionById: () => null,
-    toNoteSearchSummary: (note) => ({ id: note.id, title: note.title, body_kind: "plain", snippet: "" }),
+    toNoteSearchSummary: (note) => ({
+      id: note.id,
+      title: note.title,
+      body_kind: "plain",
+      snippet: "",
+    }),
     toTranscriptionSummary: (row) => ({ id: row.id, snippet: "" }),
     resolvePerson: () => ({ person: null, ambiguous: false, reason: null, candidates: [] }),
     getPersonActivity: () => ({ person: null, spoken: [], mentioned: [], attended: [] }),
@@ -289,7 +295,8 @@ test("the enumeration routes return the shapes the tools expect", async () => {
       getStats: (options) => ({ group_by: options.groupBy, buckets: [] }),
       getSearchIndexStatus: () => ({
         transcript_segments: { indexed_notes: 2, pending_notes: 1, total_segments: 40 },
-        transcriptions_fts: { ready: true },
+        transcriptions_fts: { ready: true, missing: 0, total: 4 },
+        notes_fts: { ready: true, missing: 0, total: 12 },
       }),
     },
   });

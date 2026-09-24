@@ -185,7 +185,8 @@ const TOOLS = [
         folder_id: { type: "integer" },
         since: {
           type: "string",
-          description: "ISO-8601 with an offset or Z, or a bare YYYY-MM-DD read in the user's local time zone.",
+          description:
+            "ISO-8601 with an offset or Z, or a bare YYYY-MM-DD read in the user's local time zone.",
         },
         until: {
           type: "string",
@@ -319,7 +320,10 @@ const TOOLS = [
       properties: { limit: { type: "integer", default: 20, maximum: 50 } },
     },
     run: async (args) =>
-      bridgeResult("GET", `/v1/transcriptions/list${queryString({ limit: clamp(args.limit, 20, 50) })}`),
+      bridgeResult(
+        "GET",
+        `/v1/transcriptions/list${queryString({ limit: clamp(args.limit, 20, 50) })}`
+      ),
   },
   {
     name: "search_transcriptions",
@@ -472,7 +476,7 @@ const TOOLS = [
     tier: READ_TIER,
     untrusted: true,
     description:
-      "Counts only: notes and meetings per time bucket, and optionally segments and words per speaker. Word counts are approximate — they count word separators, so unusual spacing inflates them slightly; use them to compare speakers, not as exact figures. Never returns note text, so it is cheap to call on a wide date range. " +
+      "Counts and durations per time bucket: notes, meetings, total_duration_seconds, notes_with_duration, and optionally segments and words per speaker. Word counts are approximate — they count word separators, so unusual spacing inflates them slightly; use them to compare speakers, not as exact figures. total_duration_seconds comes from a recorded audio length when one exists, and is otherwise derived from gaps between transcript segments, so treat it as an estimate of time spent talking; it is null when no note in the bucket could be measured. Always read notes_with_duration against notes before quoting a total — they differ whenever a note has no transcript or has unreliable timings, and the total covers only the measured ones. Never returns note text, but a wide date range over a large library is not free, so prefer the narrowest range that answers the question. " +
       UNTRUSTED_NOTICE,
     inputSchema: {
       type: "object",
@@ -498,7 +502,7 @@ const TOOLS = [
     name: "get_index_status",
     tier: READ_TIER,
     description:
-      "Report how much of the transcript search index is built. When pending_notes is above zero, transcript searches may be incomplete — say so rather than concluding nothing was found.",
+      "Report how much of each search index is built, so you can tell an empty result from an index that is not ready. When transcript_segments.pending_notes is above zero, transcript searches may be incomplete. When transcriptions_fts.ready is false, search_transcriptions is missing dictations; when notes_fts.ready is false, search_notes is missing notes; when transcript_segments_fts.ready is false, search_transcripts is missing lines. Each reports how many documents are missing out of a total that includes deleted-but-not-yet-purged items, so do not compare that total against list_notes. In any of those cases say the index is still catching up rather than concluding nothing was found.",
     inputSchema: { type: "object", properties: {} },
     run: async () => bridgeResult("GET", "/v1/index/status"),
   },
@@ -546,9 +550,7 @@ const TOOLS = [
       if (!Number.isInteger(args.id)) return { error: "id must be an integer note id." };
 
       const allowed = ["title", "content", "enhanced_content"];
-      const rejected = Object.keys(args).filter(
-        (key) => key !== "id" && !allowed.includes(key)
-      );
+      const rejected = Object.keys(args).filter((key) => key !== "id" && !allowed.includes(key));
       if (rejected.length) {
         return {
           error: `update_note accepts only ${allowed.join(", ")}. Rejected: ${rejected.join(", ")}.`,

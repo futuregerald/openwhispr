@@ -13,6 +13,16 @@ function startFakeBridge(handler) {
   return new Promise((resolve) => {
     const seen = [];
     const server = http.createServer((req, res) => {
+      // A real bridge always serves this, and the client now handshakes on it before the
+      // first tool call. It is deliberately kept out of `seen`: tests here assert on the
+      // route under test (including seen.length === 0 for a refusal that must never reach
+      // the bridge), and transport plumbing would make every one of those read wrong.
+      // The handshake itself is covered in mcpBridgeClient.test.js.
+      if (req.url === "/v1/health") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ data: { ok: true, version: 1, mcp: 2 } }));
+        return;
+      }
       seen.push({ url: req.url, method: req.method });
       handler(req, res);
     });
@@ -383,7 +393,9 @@ test("a result larger than the ceiling is reduced and says so", async () => {
     "the agent must be told how many items were withheld, not silently given a short list"
   );
   assert.ok(
-    parsed.data.slice(0, -1).every((item) => typeof item.preview === "string" && item.preview.length > 0),
+    parsed.data
+      .slice(0, -1)
+      .every((item) => typeof item.preview === "string" && item.preview.length > 0),
     "the items that survive keep their preview; a list of bare ids is no use"
   );
 });
@@ -449,11 +461,7 @@ test("an oversized nested array still returns segments rather than an empty stub
     rendered.includes("a perfectly ordinary sentence"),
     "reducing only top-level arrays left the default get_note transcript page returning no segments at all"
   );
-  assert.equal(
-    parsed.data?.id ?? parsed.id,
-    70,
-    "the agent must still learn which note this was"
-  );
+  assert.equal(parsed.data?.id ?? parsed.id, 70, "the agent must still learn which note this was");
 });
 
 test("the untrusted-content notice travels with the payload, not only the tool description", async () => {
