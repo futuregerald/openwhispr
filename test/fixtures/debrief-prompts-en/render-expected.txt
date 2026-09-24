@@ -1,0 +1,6 @@
+[00:00] You: morning. Let's start. I pushed the branch last night. And CI is green.
+[00:31] Speaker 2: Nice, that was quick. one concern though.
+[01:35] You: Go on then. Actually, let me back up.
+[02:25] You: The rollout is in two stages. Stage two is the risky one.
+[03:20] Speaker 2: The migration is not reversible.
+[62:05] You: Right, let's wrap up there.

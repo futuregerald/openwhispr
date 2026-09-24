@@ -1,0 +1,80 @@
+[
+  {
+    "label": "You",
+    "text": "Um, morning. Let's start.",
+    "timestamp": 0,
+    "speaker": "you"
+  },
+  {
+    "label": "You",
+    "text": "uh I pushed the branch last night.",
+    "timestamp": 12,
+    "speaker": "you"
+  },
+  {
+    "label": "You",
+    "text": "And CI is green.",
+    "timestamp": 29,
+    "speaker": "you"
+  },
+  {
+    "label": "Speaker 2",
+    "text": "Nice, hmm, that was quick.",
+    "timestamp": 31,
+    "speaker": "speaker_1"
+  },
+  {
+    "label": "Speaker 2",
+    "text": "   ",
+    "timestamp": 44,
+    "speaker": "speaker_1"
+  },
+  {
+    "label": "Speaker 2",
+    "text": "Erm, one concern though.",
+    "timestamp": 58,
+    "speaker": "speaker_1"
+  },
+  {
+    "label": "You",
+    "text": "Go on then.",
+    "timestamp": 95,
+    "speaker": "you"
+  },
+  {
+    "label": "You",
+    "text": "Actually, let me back up.",
+    "timestamp": 120,
+    "speaker": "you"
+  },
+  {
+    "label": "You",
+    "text": "The rollout is in two stages.",
+    "timestamp": 145,
+    "speaker": "you"
+  },
+  {
+    "label": "You",
+    "text": "Stage two is the risky one.",
+    "timestamp": 170,
+    "speaker": "you"
+  },
+  {
+    "label": "Speaker 2",
+    "text": "The migration is not reversible.",
+    "timestamp": 200,
+    "speaker": "speaker_1"
+  },
+  {
+    "label": "You",
+    "text": "Right, let's wrap up there.",
+    "timestamp": 3725,
+    "speaker": "you"
+  },
+  {
+    "label": "Speaker 2",
+    "text": "mm-hmm",
+    "timestamp": 3726,
+    "speaker": "speaker_1"
+  }
+]
