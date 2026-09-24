@@ -102,13 +102,23 @@ test("a team meeting runs 17 passes and an interview 19", async () => {
   assert.ok(interview.calls.some((c) => isProbePrompt(c.prompt, "p_verdict")));
 });
 
-test("the kind gate is a substring test, not equality", async () => {
-  // The model answers in a sentence, not the bare word the prompt asked for.
-  const h = harness({ kindAnswer: "This was an interview.\n" });
-  const result = await runMeetingDebrief(h.options);
+// The model answers in a sentence rather than the bare word the prompt asked for,
+// so the gate cannot require equality. It matches on a word boundary rather than a
+// bare substring: an Assessment section hands the reader a hire/no-hire lean about
+// a named person, and "interviewer" is not an evaluation.
+test("the kind gate matches whole words inside a sentence, not bare substrings", async () => {
+  const sentence = await runMeetingDebrief(
+    harness({ kindAnswer: "This was an interview.\n" }).options
+  );
+  assert.ok(sentence.text.includes("## Assessment"));
 
-  assert.equal(h.calls.length, EVALUATION_CALLS);
-  assert.ok(result.text.includes("## Assessment"));
+  const h = harness({ kindAnswer: "one-on-one with the interviewer" });
+  const result = await runMeetingDebrief(h.options);
+  assert.ok(
+    !result.text.includes("## Assessment"),
+    "a 1:1 mentioning an interviewer is not an evaluation, but 'interview' inside 'interviewer' used to gate it in"
+  );
+  assert.equal(h.calls.length, TEAM_CALLS, "the verdict probe should be gated out too");
 });
 
 test("every prompt after the first shares the transcript prefix byte for byte", async () => {

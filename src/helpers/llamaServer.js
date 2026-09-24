@@ -207,12 +207,7 @@ class LlamaServerManager {
     );
 
     if (process.platform === "darwin") {
-      await this._startWithBinary(
-        binaryPaths.default,
-        buildServerArgs({ ...argOptions, gpu: true }),
-        this._buildEnv(binaryPaths.default),
-        STARTUP_TIMEOUT_MS
-      );
+      await this._startWithTunedFlagsFallback(binaryPaths.default, argOptions);
       this.activeBackend = "metal";
     } else {
       await this._startWithGpuFallback(binaryPaths, argOptions);
@@ -227,9 +222,43 @@ class LlamaServerManager {
     });
   }
 
+  /**
+   * macOS has no second binary to fall back to, so a rejected flag would take out
+   * every local inference in the app — dictation cleanup and the chat agent
+   * included, not just the feature the flags exist for. Flash attention and a
+   * quantised KV cache are not satisfiable for every model on every Metal build,
+   * and llama.cpp's own default for `-fa` is `auto` for that reason, so a start
+   * failure retries once with them dropped.
+   */
+  async _startWithTunedFlagsFallback(binaryPath, argOptions) {
+    try {
+      await this._startWithBinary(
+        binaryPath,
+        buildServerArgs({ ...argOptions, gpu: true }),
+        this._buildEnv(binaryPath),
+        STARTUP_TIMEOUT_MS
+      );
+      return;
+    } catch (error) {
+      debugLogger.warn(
+        "llama-server rejected the tuned cache flags, retrying without them",
+        { error: error.message, code: error.code || null },
+        "llama"
+      );
+      await this._killCurrentProcess();
+      this.port = await this.findAvailablePort();
+    }
+
+    await this._startWithBinary(
+      binaryPath,
+      buildServerArgs({ ...argOptions, port: this.port, gpu: true, tunedCache: false }),
+      this._buildEnv(binaryPath),
+      STARTUP_TIMEOUT_MS
+    );
+  }
+
   async _startWithGpuFallback(binaryPaths, argOptions) {
     const gpuArgs = buildServerArgs({ ...argOptions, gpu: true });
-    const cpuArgs = buildServerArgs({ ...argOptions, gpu: false });
 
     if (binaryPaths.vulkan) {
       try {
@@ -252,9 +281,13 @@ class LlamaServerManager {
     if (!binaryPaths.cpu) throw new Error("No CPU llama-server binary available");
 
     debugLogger.debug("Starting with CPU backend");
+    // Built here, not alongside gpuArgs: a failed Vulkan attempt reassigns
+    // this.port, and args captured before that carry the old one while the health
+    // check polls the new one. It only ever worked because the just-freed port was
+    // handed straight back.
     await this._startWithBinary(
       binaryPaths.cpu,
-      cpuArgs,
+      buildServerArgs({ ...argOptions, port: this.port, gpu: false }),
       this._buildEnv(binaryPaths.cpu),
       STARTUP_TIMEOUT_MS
     );
@@ -731,7 +764,15 @@ class LlamaServerManager {
   }
 }
 
-function buildServerArgs({ modelPath, port, threads, contextSize, platform, gpu }) {
+function buildServerArgs({
+  modelPath,
+  port,
+  threads,
+  contextSize,
+  platform,
+  gpu,
+  tunedCache = true,
+}) {
   const args = [
     "--model",
     modelPath,
@@ -748,7 +789,9 @@ function buildServerArgs({ modelPath, port, threads, contextSize, platform, gpu 
 
   if (gpu) args.push("--n-gpu-layers", "99");
 
-  if (platform === "darwin") args.push("-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0");
+  if (platform === "darwin" && tunedCache) {
+    args.push("-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0");
+  }
 
   return args;
 }

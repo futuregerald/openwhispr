@@ -22,8 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   It takes longer — roughly two minutes instead of thirty seconds for a 35-minute meeting — so
   the progress indicator now tells you whether it is still reading the transcript or already
-  writing. Very long meetings keep the previous approach, which never truncates but is less
-  insightful. Nothing is sent off your machine either way.
+  writing. Nothing is sent off your machine either way.
+
+  The previous style of notes is still used where the new one cannot work, and you always get
+  notes one way or the other: for very long meetings, for transcripts with no speaker turns or
+  no timings, for recordings you are not part of, and on machines with no graphics acceleration,
+  where nineteen passes would take too long. If you have set up a meeting type with its own
+  template, your template still shapes the Topics section, now surrounded by the new ones.
 
 ### Added
 
@@ -37,8 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   zero randomness — the step that works out what kind of meeting you recorded, for instance — was
   silently being given a normal amount of randomness instead, so it could answer differently on
   identical input.
-- Less memory used while a local model is loaded on macOS, which leaves more room for the rest of
-  your machine during a long transcription.
+- Timestamps in meeting notes point at the right moment. Transcripts are not always stored in the
+  order things were said, and a sentence spoken early could be presented as part of a passage
+  minutes later, so a timestamp you clicked took you to the wrong place.
+- Debug logs no longer record the name of the person who recorded a meeting. Turning on debug
+  logging wrote it to disk, where logs are kept for 30 days.
 
 ## [1.26.0] - 2026-09-23
 

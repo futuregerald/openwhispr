@@ -62,7 +62,14 @@ class LocalReasoningService {
 
       debugLogger.logReasoning("LOCAL_BRIDGE_INFERENCE", {
         modelId,
-        config: inferenceConfig,
+        // Redacted the way modelManagerBridge already redacts the same field. The
+        // meeting debrief's system prompt names the person who recorded the
+        // meeting, taken from their speaker mapping, and debug logs persist to
+        // disk for 30 days.
+        config: {
+          ...inferenceConfig,
+          systemPrompt: inferenceConfig.systemPrompt ? "[set]" : "[not set]",
+        },
       });
 
       const result = await modelManager.runInference(modelId, text, inferenceConfig);

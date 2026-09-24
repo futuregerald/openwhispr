@@ -51,12 +51,14 @@ test("runs steps in order: retranscribe -> classify -> title -> notes", async ()
   const origExists = fs.existsSync;
   const origReadFile = fs.readFileSync;
   const origUnlink = fs.unlinkSync;
-  fs.existsSync = (p) => (p === "/tmp/test.opus" || p === "/tmp/model.bin") ? true : origExists(p);
+  fs.existsSync = (p) => (p === "/tmp/test.opus" || p === "/tmp/model.bin" ? true : origExists(p));
   fs.readFileSync = (...args) =>
     typeof args[0] === "string" && args[0].includes("ow-retranscribe")
       ? Buffer.from("fake wav")
       : origReadFile(...args);
-  fs.unlinkSync = (p) => { if (!String(p).includes("ow-retranscribe")) origUnlink(p); };
+  fs.unlinkSync = (p) => {
+    if (!String(p).includes("ow-retranscribe")) origUnlink(p);
+  };
 
   // Set env vars for inference config
   process.env.NOTE_FORMATTING_PROVIDER = "openai";
@@ -100,11 +102,13 @@ test("runs steps in order: retranscribe -> classify -> title -> notes", async ()
 test("stops pipeline on error and emits error status", async () => {
   const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
   const mocks = createMocks();
-  mocks.whisperManager.transcribeLocalWhisper = async () => { throw new Error("model crashed"); };
+  mocks.whisperManager.transcribeLocalWhisper = async () => {
+    throw new Error("model crashed");
+  };
   const fs = require("fs");
   const origExists = fs.existsSync;
   const origUnlink = fs.unlinkSync;
-  fs.existsSync = (p) => (p === "/tmp/test.opus" || p === "/tmp/model.bin") ? true : origExists(p);
+  fs.existsSync = (p) => (p === "/tmp/test.opus" || p === "/tmp/model.bin" ? true : origExists(p));
   fs.unlinkSync = () => {};
 
   process.env.NOTE_FORMATTING_PROVIDER = "openai";
@@ -317,7 +321,11 @@ test("classify step skips when meeting_type_id already set", async () => {
     { id: 1, name: "Standup", keyword_rules: '["standup"]' },
     { id: 3, name: "Retro", keyword_rules: '["retro"]' },
   ];
-  mocks.databaseManager.getMeetingType = (id) => ({ id, name: "Retro", template: "Retro template" });
+  mocks.databaseManager.getMeetingType = (id) => ({
+    id,
+    name: "Retro",
+    template: "Retro template",
+  });
   let updateCalled = false;
   const origUpdate = mocks.databaseManager.updateNote;
   mocks.databaseManager.updateNote = (id, updates) => {
@@ -454,7 +462,9 @@ test("classify step errors do not halt the pipeline", async () => {
     meeting_type_id: null,
   });
   // getMeetingTypes throws to simulate a database error
-  mocks.databaseManager.getMeetingTypes = () => { throw new Error("db connection lost"); };
+  mocks.databaseManager.getMeetingTypes = () => {
+    throw new Error("db connection lost");
+  };
 
   process.env.NOTE_FORMATTING_PROVIDER = "openai";
   process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
@@ -770,7 +780,8 @@ function recordingInference(mocks) {
   const calls = [];
   mocks.inference.processText = async (text, opts) => {
     calls.push({ text, opts });
-    if (opts.systemPrompt?.includes("extracting source material")) return "DECISIONS: rollout agreed.";
+    if (opts.systemPrompt?.includes("extracting source material"))
+      return "DECISIONS: rollout agreed.";
     return "## Summary\nTest notes";
   };
   return calls;
@@ -937,12 +948,14 @@ test("retranscribing clears the transcript origin instead of leaving a stale anc
   const origExists = fs.existsSync;
   const origReadFile = fs.readFileSync;
   const origUnlink = fs.unlinkSync;
-  fs.existsSync = (p) => (p === "/tmp/test.opus" || p === "/tmp/model.bin") ? true : origExists(p);
+  fs.existsSync = (p) => (p === "/tmp/test.opus" || p === "/tmp/model.bin" ? true : origExists(p));
   fs.readFileSync = (...args) =>
     typeof args[0] === "string" && args[0].includes("ow-retranscribe")
       ? Buffer.from("fake wav")
       : origReadFile(...args);
-  fs.unlinkSync = (p) => { if (!String(p).includes("ow-retranscribe")) origUnlink(p); };
+  fs.unlinkSync = (p) => {
+    if (!String(p).includes("ow-retranscribe")) origUnlink(p);
+  };
 
   process.env.NOTE_FORMATTING_PROVIDER = "openai";
   process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
@@ -1231,7 +1244,7 @@ test("the title prompt is told who was in the room", async () => {
     assert.match(
       call.text,
       /Participants:/,
-      "the digest carries no participant roster, so the model cannot write \"1:1 with Mike\""
+      'the digest carries no participant roster, so the model cannot write "1:1 with Mike"'
     );
   } finally {
     delete process.env.NOTE_FORMATTING_PROVIDER;
@@ -1729,6 +1742,29 @@ async function runDebriefNotes(mocks, extra = {}) {
 
 const enhancedWrites = (mocks) => mocks.writes.filter((w) => w.enhanced_content !== undefined);
 
+// The debrief sends a prompt of up to contextSize * PROMPT_SHARE nineteen times.
+// On a CPU backend a prefill that size overruns llama-server's per-request timeout,
+// which is classified slow, exhausts its two attempts, and used to end the notes
+// step in an error -- a straight regression, because the chunked path divides its
+// chunk budget by four precisely so CPU machines still get notes.
+test("a CPU backend never attempts the debrief and still gets chunked notes", async () => {
+  const mocks = debriefMocks(DEBRIEF_SEGMENTS);
+  const calls = debriefInference(mocks);
+
+  await runDebriefNotes(mocks, {
+    resolveModelContext: async () => ({ contextSize: 32768, isGpuBackend: false }),
+  });
+
+  assert.equal(
+    calls.filter((c) => isKindPrompt(c.text)).length,
+    0,
+    "a CPU machine was sent a full-context debrief prefill"
+  );
+  assert.ok(calls.some(isChunkedPrompt), "the chunked path was not attempted");
+  assert.equal(enhancedWrites(mocks).length, 1, "a CPU machine was left with no notes");
+  assert.ok(!mocks.events.some((e) => e.step === "notes" && e.status === "error"));
+});
+
 test("a local model with timed speaker turns gets the whole debrief", async () => {
   const mocks = debriefMocks(DEBRIEF_SEGMENTS);
   const calls = debriefInference(mocks);
@@ -1905,7 +1941,11 @@ test("a debrief whose every section came back empty falls back and still writes 
   assert.ok(!mocks.events.some((e) => e.step === "notes" && e.status === "error"));
 });
 
-test("a debrief that ran out of time is not retried down the chunked path", async () => {
+// A spent deadline used to propagate, on the theory that it meant a broken
+// machine. It does not: the chunked path asks for a quarter of the prompt size and
+// routinely succeeds where the debrief could not, so the user must still get notes.
+// Only cancellation propagates now.
+test("a debrief that ran out of time still leaves the user with notes", async () => {
   // Every reading of the clock jumps 11 minutes, so the runner's own 10-minute
   // deadline fires on its first check whatever else asked the time.
   const mocks = debriefMocks(DEBRIEF_SEGMENTS);
@@ -1920,31 +1960,35 @@ test("a debrief that ran out of time is not retried down the chunked path", asyn
     Date.now = realNow;
   }
 
-  assert.equal(calls.length, 0, "a run already past its deadline still called the model");
-  assert.ok(!calls.some(isChunkedPrompt));
-  assert.equal(enhancedWrites(mocks).length, 0);
-  assert.ok(mocks.events.some((e) => e.step === "notes" && e.status === "error"));
+  assert.equal(
+    calls.filter((c) => isKindPrompt(c.text)).length,
+    0,
+    "a run already past its deadline still called the model for the debrief"
+  );
+  assert.ok(calls.some(isChunkedPrompt), "the chunked path was not attempted");
+  assert.equal(enhancedWrites(mocks).length, 1, "the user was left with no notes");
+  assert.ok(!mocks.events.some((e) => e.step === "notes" && e.status === "error"));
 });
 
-// Not an end-to-end case: it asserts the classification only. LOCAL_INFERENCE_ABORTED
-// and LOCAL_MULTIPASS_TIMEOUT above prove the propagate branch actually works; these
-// two codes have no reachable path through the debrief runner to drive it with.
-// LOCAL_MULTIPASS_FAILED is only raised by runPass exhausting its retries, which
-// needs 14s of real backoff, and LOCAL_MULTIPASS_DEGRADED is never raised at all --
-// the runner deliberately does not call throwIfDegrading, because across 16 healthy
-// runs the worst pass-versus-median ratio was 3.76 against the guard's threshold of 4.
-// The classification still has to be right for the day either changes.
-test("a broken or degrading machine is classified as propagate, never as fall back", async () => {
+// Cancellation is the ONLY thing that may deny the user their notes. Every other
+// failure has to reach the chunked path, including the ones that look like a broken
+// machine: llama-server reports a deterministic 400 as LLAMA_BAD_STATUS, which is
+// classified transient, so treating exhausted retries as fatal denied the working
+// path to anyone whose transcript the token estimator under-counted.
+test("cancellation is the only failure that is allowed to deny the user notes", async () => {
   const {
     DEBRIEF_PROPAGATED_ERROR_CODES,
   } = require("../../src/helpers/postCallPipelineManager.js");
-  assert.deepEqual([...DEBRIEF_PROPAGATED_ERROR_CODES].sort(), [
-    "LOCAL_INFERENCE_ABORTED",
-    "LOCAL_MULTIPASS_DEGRADED",
+  assert.deepEqual([...DEBRIEF_PROPAGATED_ERROR_CODES], ["LOCAL_INFERENCE_ABORTED"]);
+  for (const code of [
+    "LOCAL_CONTEXT_EXCEEDED",
+    "LOCAL_DEBRIEF_UNUSABLE",
     "LOCAL_MULTIPASS_FAILED",
     "LOCAL_MULTIPASS_TIMEOUT",
-  ]);
-  assert.ok(!DEBRIEF_PROPAGATED_ERROR_CODES.has("LOCAL_CONTEXT_EXCEEDED"));
+    "LOCAL_MULTIPASS_DEGRADED",
+  ]) {
+    assert.ok(!DEBRIEF_PROPAGATED_ERROR_CODES.has(code), `${code} must fall back, not propagate`);
+  }
 });
 
 test("the debrief reports reading the transcript before writing the notes", async () => {

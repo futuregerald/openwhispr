@@ -34,6 +34,34 @@ const BASE_ARGS = [
 
 const PLATFORMS = ["darwin", "win32", "linux"];
 
+// macOS has no second binary to fall back to, so `_startWithTunedFlagsFallback`
+// retries a failed start with these dropped. Without the escape hatch a model
+// whose Metal flash-attention path is unsupported would take down every local
+// inference in the app, not merely the debrief the flags exist for.
+test("the tuned cache flags can be dropped for a retry", () => {
+  const base = {
+    modelPath: "/m.gguf",
+    port: 8221,
+    threads: 4,
+    contextSize: 32768,
+    platform: "darwin",
+    gpu: true,
+  };
+  const tuned = buildServerArgs(base);
+  const plain = buildServerArgs({ ...base, tunedCache: false });
+
+  for (const flag of ["-fa", "-ctk", "-ctv"]) {
+    assert.ok(tuned.includes(flag), `tuned args must carry ${flag}`);
+    assert.ok(!plain.includes(flag), `the retry must drop ${flag}`);
+  }
+  assert.deepStrictEqual(
+    plain,
+    tuned.slice(0, tuned.length - 6),
+    "dropping the tuned flags must change nothing else"
+  );
+  assert.ok(plain.includes("--n-gpu-layers"), "the retry keeps Metal offload");
+});
+
 test("darwin gets flash attention and a quantised KV cache, as adjacent pairs", () => {
   const args = buildServerArgs({ ...base, platform: "darwin", gpu: true });
 

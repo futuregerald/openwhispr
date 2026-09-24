@@ -43,8 +43,11 @@ const stripEchoedHeading = (text, heading) =>
     ""
   );
 
+// On a word boundary rather than a bare substring, so "interviewer" does not turn
+// on an Assessment section that hands the reader a hire/no-hire lean about a named
+// person for a meeting that was not an evaluation.
 const appliesToKind = (when, kind) =>
-  !when || when.contains.some((word) => kind.toLowerCase().includes(word));
+  !when || when.contains.some((word) => new RegExp(`\\b${word}\\b`, "i").test(String(kind ?? "")));
 
 const composeAnalysis = (answers) =>
   ANALYSIS_LABELS.map(
