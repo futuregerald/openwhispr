@@ -17,8 +17,11 @@ function describeBindingFailure(error) {
     "     `npm run dev:main` and `postinstall` all run `electron-builder install-app-deps`.",
     "  2. The binding was never built at all, e.g. `npm ci --ignore-scripts`.",
     "",
+    "`npm test` repairs both cases on its own via its pretest hook, so seeing this",
+    "means node --test was driven directly, bypassing npm.",
+    "",
     "Fix either case with:            npm rebuild better-sqlite3",
-    "To run the Electron app again:   npx electron-builder install-app-deps",
+    "To run the Electron app again:   npm run rebuild:native",
     "",
     `Original error: ${String(error?.message || error)}`,
   ].join("\n");
