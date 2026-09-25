@@ -569,7 +569,8 @@
         "sessionExpired": "OpenWhispr Cloud 会话不可用。请到「设置」中重新登录。",
         "offline": "你目前离线。云端转录需要互联网连接。",
         "dailyLimitReached": "已达今日转录上限。请明天再试或升级你的套餐。",
-        "providerRateLimited": "你的转录服务商限制了请求频率。请稍候再试。"
+        "providerRateLimited": "你的转录服务商限制了请求频率。请稍候再试。",
+        "insufficientMemory": "内存不足，无法加载此模型。请关闭部分应用，或选择更小的模型。"
       }
     },
     "clipboard": {

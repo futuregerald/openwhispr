@@ -1322,6 +1322,15 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
           fallbackToCleanup: true,
         });
         logger.warn("Reasoning failed", { source, error: error.message }, "notes");
+
+        if (error.code === "LLAMA_INSUFFICIENT_MEMORY") {
+          this.onError?.({
+            title: "Not Enough Memory",
+            description: error.message,
+            code: error.code,
+            messageKey: "hooks.audioRecording.errorDescriptions.insufficientMemory",
+          });
+        }
       }
     }
 

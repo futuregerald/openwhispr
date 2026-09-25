@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.28.0] - 2026-09-25
+
+### Added
+
+- OpenWhispr now checks whether a local model can actually fit in memory before it loads it. If it
+  cannot, you get a message telling you how much the model needs and how much is free, and
+  suggesting you close some apps or pick a smaller model — instead of the machine grinding to a
+  halt while it swaps. The check only runs on macOS, where OpenWhispr can read a reliable figure
+  for how much memory is really reclaimable; on Windows and Linux nothing changes.
+
+### Fixed
+
+- Changing the GPU used for intelligence no longer reports success when the model failed to
+  restart afterwards. Previously the setting appeared to apply while the local model was left
+  stopped, and every later local request quietly failed.
+
 ## [1.27.0] - 2026-09-24
 
 ### Changed
