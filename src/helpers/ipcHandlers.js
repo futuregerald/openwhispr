@@ -1859,6 +1859,7 @@ class IPCHandlers {
             { error: err.message, purpose },
             "gpu"
           );
+          return { success: false, error: err.message, code: err.code };
         }
       }
 
@@ -3398,7 +3399,7 @@ class IPCHandlers {
         this.environmentManager.saveAllKeysToEnvFile().catch(() => {});
         return { success: true, port: modelManager.serverManager.port };
       } catch (error) {
-        return { success: false, error: error.message };
+        return { success: false, error: error.message, code: error.code };
       }
     });
 

@@ -32,6 +32,7 @@ const FATAL_CODES = new Set([
   "LLAMASERVER_NOT_FOUND",
   "MODEL_NOT_FOUND",
   "LOCAL_INFERENCE_ABORTED",
+  "LLAMA_INSUFFICIENT_MEMORY",
 ]);
 
 // Only needed for errors whose code was lost before reaching us.
