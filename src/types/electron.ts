@@ -863,6 +863,7 @@ declare global {
         noteContent: string;
         segments: Array<{ label: string; text: string }>;
         systemPrompt: string;
+        userContext?: string;
         modelId: string;
         disableThinking?: boolean;
       }) => Promise<{

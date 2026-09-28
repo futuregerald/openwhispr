@@ -33,6 +33,12 @@ export function formatUserContextBlock(value, kind) {
   return `\n\n${HEADINGS[kind] || HEADINGS.general}\n\n${text}\n\n${CLOSE}`;
 }
 
+/**
+ * @param {string | null | undefined} value
+ * @param {string} kind
+ * @param {{ budgetTokens?: number, reservedTokens?: number }} [budget]
+ * @returns {string}
+ */
 export function fitUserContextBlock(value, kind, { budgetTokens, reservedTokens = 0 } = {}) {
   const block = formatUserContextBlock(value, kind);
   if (!block) return "";

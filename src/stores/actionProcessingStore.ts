@@ -2,6 +2,7 @@ import { create } from "zustand";
 import reasoningService from "../services/ReasoningService";
 import { getSettings, selectResolvedNoteFormatting } from "./settingsStore";
 import { appendDictionarySuffix } from "../config/prompts";
+import { fitUserContextBlock } from "../helpers/userContextBlock.js";
 import { generateNoteTitle } from "../utils/generateTitle";
 import { buildNoteFormattingOverrides } from "../helpers/noteFormattingOverrides";
 import type { ActionItem } from "../types/electron";
@@ -228,6 +229,7 @@ export function runBackgroundAction(
           noteContent: options.localRunnerNoteContent ?? noteContent,
           segments: options.segments ?? [],
           systemPrompt,
+          userContext: settings.generalContext,
           modelId,
           disableThinking: settings.noteFormattingDisableThinking,
         });
@@ -242,7 +244,11 @@ export function runBackgroundAction(
         partial = result.partial === true;
       } else {
         enhanced = await reasoningService.processText(noteContent, modelId, null, {
-          systemPrompt,
+          systemPrompt:
+            systemPrompt +
+            fitUserContextBlock(settings.generalContext, "general", {
+              budgetTokens: Infinity,
+            }),
           temperature: 0.3,
           disableThinking: settings.noteFormattingDisableThinking,
           ...providerOverrides,

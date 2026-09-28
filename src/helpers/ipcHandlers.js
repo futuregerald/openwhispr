@@ -3430,7 +3430,8 @@ class IPCHandlers {
     // scheduler that keeps them from starving dictation lives in this process,
     // and a run of this length must survive the control panel being closed.
     ipcMain.handle("run-note-action", async (event, payload) => {
-      const { noteId, noteContent, segments, systemPrompt, modelId, disableThinking } = payload;
+      const { noteId, noteContent, segments, systemPrompt, userContext, modelId, disableThinking } =
+        payload;
       const controller = new AbortController();
       this._noteActionRuns = this._noteActionRuns || new Map();
       this._noteActionRuns.set(noteId, controller);
@@ -3447,6 +3448,7 @@ class IPCHandlers {
           noteContent,
           segments,
           systemPrompt,
+          userContext,
           contextSize,
           isGpuBackend,
           signal: controller.signal,
@@ -3469,6 +3471,7 @@ class IPCHandlers {
             partial: result.partial,
             gapCount: result.gapCount,
             foldLevels: result.foldLevels,
+            userContextDropped: result.userContextDropped === true,
             contextSize,
             isGpuBackend,
           },
