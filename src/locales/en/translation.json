@@ -569,7 +569,8 @@
         "sessionExpired": "Your OpenWhispr Cloud session is unavailable. Please sign in again from Settings.",
         "offline": "You're offline. Cloud transcription requires an internet connection.",
         "dailyLimitReached": "You've reached today's transcription limit. Try again tomorrow or upgrade your plan.",
-        "providerRateLimited": "Your transcription provider rate-limited the request. Wait a moment and try again."
+        "providerRateLimited": "Your transcription provider rate-limited the request. Wait a moment and try again.",
+        "insufficientMemory": "Not enough memory to load this model. Close some apps, or pick a smaller model."
       }
     },
     "clipboard": {

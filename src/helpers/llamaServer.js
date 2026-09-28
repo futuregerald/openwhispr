@@ -22,6 +22,44 @@ function llamaError(message, code) {
   error.code = code;
   return error;
 }
+
+function modelFitsMemory({
+  modelFileBytes,
+  availableBytes,
+  fileBackedBytes = 0,
+  purgeableBytes = 0,
+}) {
+  const usableBytes = availableBytes + fileBackedBytes + purgeableBytes;
+  return { fits: modelFileBytes <= usableBytes, usableBytes };
+}
+
+function memoryPreflight({ modelFileBytes, memory }) {
+  if (memory?.source !== "vm_stat" || memory.components == null) return null;
+
+  const { fits, usableBytes } = modelFitsMemory({
+    modelFileBytes,
+    availableBytes: memory.bytes,
+    fileBackedBytes: memory.components.fileBacked,
+    purgeableBytes: memory.components.purgeable,
+  });
+  if (fits) return null;
+
+  return {
+    modelFileBytes,
+    usableBytes,
+    availableBytes: memory.bytes,
+    fileBackedBytes: memory.components.fileBacked,
+    purgeableBytes: memory.components.purgeable,
+  };
+}
+
+function insufficientMemoryError({ modelFileBytes, usableBytes }) {
+  const gib = (n) => `${(n / 1024 ** 3).toFixed(1)} GB`;
+  return llamaError(
+    `Not enough memory to load this model: it needs ${gib(modelFileBytes)} and only ${gib(usableBytes)} is usable right now. Close some apps, or pick a smaller model.`,
+    "LLAMA_INSUFFICIENT_MEMORY"
+  );
+}
 const { killProcess } = require("../utils/process");
 const { isPortAvailable } = require("../utils/serverUtils");
 const { getSafeTempDir } = require("./safeTempDir");
@@ -160,6 +198,25 @@ class LlamaServerManager {
     // Budgeting from total RAM reserved more memory than the machine had and
     // drove the desktop into swap on 2026-08-12. What matters is what is free.
     const available = await availableMemBytes();
+
+    const refusal = memoryPreflight({ modelFileBytes, memory: available });
+    if (refusal) {
+      debugLogger.notice(
+        "Refusing to start llama-server: weights cannot fit",
+        {
+          model: path.basename(modelPath),
+          modelBytes: refusal.modelFileBytes,
+          usableBytes: refusal.usableBytes,
+          availableMemBytes: refusal.availableBytes,
+          fileBackedBytes: refusal.fileBackedBytes,
+          purgeableBytes: refusal.purgeableBytes,
+          memorySource: available.source,
+        },
+        "llama"
+      );
+      throw insufficientMemoryError(refusal);
+    }
+
     const resolved = resolveContextSize({
       gguf,
       totalMemBytes: os.totalmem(),
@@ -814,3 +871,5 @@ module.exports.buildServerArgs = buildServerArgs;
 module.exports.parseServerContextSize = parseServerContextSize;
 module.exports.DEFAULT_REQUEST_TIMEOUT_MS = DEFAULT_REQUEST_TIMEOUT_MS;
 module.exports.BATCH_REQUEST_TIMEOUT_MS = BATCH_REQUEST_TIMEOUT_MS;
+module.exports.modelFitsMemory = modelFitsMemory;
+module.exports.memoryPreflight = memoryPreflight;
