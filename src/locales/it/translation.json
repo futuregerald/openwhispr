@@ -996,6 +996,10 @@
       "workspace": {
         "label": "Espace de travail",
         "description": "Membres, équipes, facturation et clés API"
+      },
+      "context": {
+        "label": "Contesto",
+        "description": "Team, progetti e grafie"
       }
     },
     "title": "Impostazioni"
@@ -1609,6 +1613,23 @@
         "keyCreatedTitle": "Clé API créée",
         "keyCreatedDescription": "Copiez cette clé maintenant — vous ne pourrez plus la voir."
       }
+    },
+    "context": {
+      "title": "Contesto",
+      "description": "Note permanenti sul tuo ambiente, fornite ai modelli che scrivono le tue note e ripuliscono la tua dettatura.",
+      "general": {
+        "label": "Contesto generale",
+        "description": "Il tuo team, i progetti e il vocabolario. Usato per le note delle riunioni, i titoli, il rilevamento del tipo di riunione e l'agente di chat.",
+        "placeholder": "Team: Molly Finn (PM), Mauricio Reis (SWE)… · Progetti: CPT, SkillSync…",
+        "help": "Su un modello locale piccolo può essere omesso perché la trascrizione continui a entrare nel contesto."
+      },
+      "dictation": {
+        "label": "Contesto di dettatura",
+        "description": "Grafie preferite, usate quando la tua dettatura viene ripulita.",
+        "placeholder": "«Mauricio Reis», non «Maurizio Race»",
+        "help": "Questo corregge la grafia nel testo ripulito. Se un nome viene frainteso, aggiungilo al Dizionario personalizzato: è quello che influenza la trascrizione."
+      },
+      "counter": "{{count}} / {{max}}"
     }
   },
   "models": {

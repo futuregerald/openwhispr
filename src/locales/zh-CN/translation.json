@@ -996,6 +996,10 @@
       "workspace": {
         "label": "Espacio de trabajo",
         "description": "Miembros, equipos, facturación y claves API"
+      },
+      "context": {
+        "label": "背景信息",
+        "description": "团队、项目与拼写"
       }
     },
     "title": "设置"
@@ -1609,6 +1613,23 @@
         "keyCreatedTitle": "Clave API creada",
         "keyCreatedDescription": "Copia esta clave ahora — no podrás verla de nuevo."
       }
+    },
+    "context": {
+      "title": "背景信息",
+      "description": "关于你工作环境的常驻说明，会提供给撰写笔记和整理口述的模型。",
+      "general": {
+        "label": "通用背景",
+        "description": "你的团队、项目和术语。用于会议笔记、笔记标题、会议类型识别和聊天助手。",
+        "placeholder": "团队：Molly Finn (PM)、Mauricio Reis (SWE)… · 项目：CPT、SkillSync…",
+        "help": "在较小的本地模型上，为了让转写内容放得下，这部分可能会被跳过。"
+      },
+      "dictation": {
+        "label": "口述背景",
+        "description": "首选拼写，在整理口述文本时使用。",
+        "placeholder": "是“Mauricio Reis”，不是“Maurizio Race”",
+        "help": "这会修正整理后文本中的拼写。如果名字被听错，请加入自定义词典——那才会影响转写本身。"
+      },
+      "counter": "{{count}} / {{max}}"
     }
   },
   "models": {

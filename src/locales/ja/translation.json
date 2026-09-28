@@ -996,6 +996,10 @@
       "workspace": {
         "label": "Espacio de trabajo",
         "description": "Miembros, equipos, facturación y claves API"
+      },
+      "context": {
+        "label": "コンテキスト",
+        "description": "チーム、プロジェクト、表記"
       }
     },
     "title": "設定"
@@ -1609,6 +1613,23 @@
         "keyCreatedTitle": "Clave API creada",
         "keyCreatedDescription": "Copia esta clave ahora — no podrás verla de nuevo."
       }
+    },
+    "context": {
+      "title": "コンテキスト",
+      "description": "あなたの状況についての常設メモです。ノートを書き、ディクテーションを整えるモデルに渡されます。",
+      "general": {
+        "label": "一般コンテキスト",
+        "description": "チーム、プロジェクト、用語。会議ノート、タイトル、会議タイプの判定、チャットエージェントで使われます。",
+        "placeholder": "チーム: Molly Finn (PM), Mauricio Reis (SWE)… · プロジェクト: CPT, SkillSync…",
+        "help": "小さなローカルモデルでは、文字起こしが収まるようにこれが省略されることがあります。"
+      },
+      "dictation": {
+        "label": "ディクテーション コンテキスト",
+        "description": "優先する表記。ディクテーションの整形時に使われます。",
+        "placeholder": "「Maurizio Race」ではなく「Mauricio Reis」",
+        "help": "これは整形後のテキストの表記を直します。名前が聞き取り違いされる場合はカスタム辞書に追加してください。文字起こし自体に効くのはそちらです。"
+      },
+      "counter": "{{count}} / {{max}}"
     }
   },
   "models": {

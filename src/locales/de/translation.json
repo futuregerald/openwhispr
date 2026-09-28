@@ -996,6 +996,10 @@
       "workspace": {
         "label": "Workspace",
         "description": "Mitglieder, Teams, Abrechnung und API-Schlüssel"
+      },
+      "context": {
+        "label": "Kontext",
+        "description": "Team, Projekte und Schreibweisen"
       }
     },
     "title": "Einstellungen"
@@ -1609,6 +1613,23 @@
         "keyCreatedTitle": "API-Schlüssel erstellt",
         "keyCreatedDescription": "Kopieren Sie diesen Schlüssel jetzt — Sie können ihn nicht erneut sehen."
       }
+    },
+    "context": {
+      "title": "Kontext",
+      "description": "Dauerhafte Notizen zu deinem Umfeld, die an die Modelle gehen, die deine Notizen schreiben und dein Diktat bereinigen.",
+      "general": {
+        "label": "Allgemeiner Kontext",
+        "description": "Dein Team, deine Projekte und dein Vokabular. Wird für Besprechungsnotizen, Titel, Besprechungstyp-Erkennung und den Chat-Agenten verwendet.",
+        "placeholder": "Team: Molly Finn (PM), Mauricio Reis (SWE)… · Projekte: CPT, SkillSync…",
+        "help": "Auf einem kleinen lokalen Modell kann dies übersprungen werden, damit das Transkript noch passt."
+      },
+      "dictation": {
+        "label": "Diktat-Kontext",
+        "description": "Bevorzugte Schreibweisen, verwendet beim Bereinigen deines Diktats.",
+        "placeholder": "„Mauricio Reis“, nicht „Maurizio Race“",
+        "help": "Das korrigiert die Schreibweise im bereinigten Text. Wird ein Name falsch gehört, trage ihn ins benutzerdefinierte Wörterbuch ein — das beeinflusst die Transkription selbst."
+      },
+      "counter": "{{count}} / {{max}}"
     }
   },
   "models": {
