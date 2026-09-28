@@ -84,6 +84,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Dictionary functions
   getDictionary: () => ipcRenderer.invoke("db-get-dictionary"),
   setDictionary: (words) => ipcRenderer.invoke("db-set-dictionary", words),
+  getUserContext: () => ipcRenderer.invoke("db-get-user-context"),
+  setUserContext: (patch) => ipcRenderer.invoke("db-set-user-context", patch),
+  resolveModelContext: (modelId) => ipcRenderer.invoke("resolve-model-context", modelId),
   onDictionaryUpdated: (callback) => {
     const listener = (_event, words) => callback?.(words);
     ipcRenderer.on("dictionary-updated", listener);

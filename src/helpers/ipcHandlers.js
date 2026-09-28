@@ -1024,6 +1024,25 @@ class IPCHandlers {
       return this.databaseManager.setDictionary(words);
     });
 
+    ipcMain.handle("db-get-user-context", async () => {
+      return this.databaseManager.getUserContext();
+    });
+
+    ipcMain.handle("db-set-user-context", async (event, patch) => {
+      if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+        throw new Error("patch must be an object");
+      }
+      return this.databaseManager.setUserContext(patch);
+    });
+
+    ipcMain.handle("resolve-model-context", async (event, modelId) => {
+      try {
+        return await require("./modelManagerBridge").default.resolveModelContext(modelId);
+      } catch (error) {
+        return { contextSize: null, isGpuBackend: false, error: error.message };
+      }
+    });
+
     ipcMain.handle("db-get-snippets", async () => {
       return this.databaseManager.getSnippets();
     });
