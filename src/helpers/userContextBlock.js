@@ -10,7 +10,26 @@ const HEADINGS = {
 };
 
 const CLOSE = "END OF USER CONTEXT.";
-const CHARS_PER_TOKEN = 3.6;
+export const CHARS_PER_TOKEN = 3.6;
+export const PROMPT_SHARE = 0.6;
+
+/**
+ * @param {number | null | undefined} contextSize
+ * @returns {number}
+ */
+export function budgetTokensForContext(contextSize) {
+  return Number.isFinite(contextSize) && Number(contextSize) > 0
+    ? Math.floor(Number(contextSize) * PROMPT_SHARE)
+    : NaN;
+}
+
+/**
+ * @param {string | null | undefined} text
+ * @returns {number}
+ */
+export function estimateContextTokens(text) {
+  return Math.ceil(String(text ?? "").length / CHARS_PER_TOKEN);
+}
 
 export const CONTEXT_BLOCK_MARKERS = [/USER CONTEXT \(/gi, /END OF USER CONTEXT\./gi];
 

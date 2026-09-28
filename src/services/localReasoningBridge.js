@@ -56,6 +56,8 @@ class LocalReasoningService {
         contextSize: config.contextSize || 4096,
         threads: config.threads || 4,
         systemPrompt: config.systemPrompt || "",
+        userContext: config.userContext || "",
+        userContextKind: config.userContextKind || "dictation",
         disableThinking: config.disableThinking !== false,
         requestTimeoutMs: config.requestTimeoutMs,
       };
@@ -69,6 +71,7 @@ class LocalReasoningService {
         config: {
           ...inferenceConfig,
           systemPrompt: inferenceConfig.systemPrompt ? "[set]" : "[not set]",
+          userContext: inferenceConfig.userContext ? "[set]" : "[not set]",
         },
       });
 

@@ -42,7 +42,11 @@ const TOOL_INSTRUCTIONS: Record<string, string> = {
     "Use get_calendar_events to check the user's schedule, upcoming meetings, or calendar events.",
 };
 
-export function getAgentSystemPrompt(availableTools?: string[], noteContext?: string): string {
+export function getAgentSystemPrompt(
+  availableTools?: string[],
+  noteContext?: string,
+  userContextBlock?: string
+): string {
   let prompt = resolvePrompt("chatAgent", { agentName: null });
 
   if (availableTools && availableTools.length > 0) {
@@ -51,6 +55,8 @@ export function getAgentSystemPrompt(availableTools?: string[], noteContext?: st
       prompt += "\n\nYou have access to tools. " + toolLines.join(" ");
     }
   }
+
+  if (userContextBlock) prompt += userContextBlock;
 
   if (noteContext) {
     prompt +=

@@ -9,7 +9,12 @@ const {
   fitUserContextBlock,
   chooseStoredContext,
   contextKindForPrompt,
+  budgetTokensForContext,
+  estimateContextTokens,
+  CHARS_PER_TOKEN,
+  PROMPT_SHARE,
 } = require("../../src/helpers/userContextBlock.js");
+const llamaContext = require("../../src/helpers/llamaContext.js");
 
 test("the module is requirable from CommonJS despite being ESM", () => {
   assert.equal(typeof formatUserContextBlock, "function");
@@ -113,4 +118,22 @@ test("only the dictation-facing prompt kinds receive the dictation context", () 
 test("an unknown prompt kind receives nothing", () => {
   assert.equal(contextKindForPrompt("somethingNew"), null);
   assert.equal(contextKindForPrompt(undefined), null);
+});
+
+// This module cannot import llamaContext — it is consumed by the renderer and
+// llamaContext reaches fs through ggufMetadata. The constants are therefore
+// duplicated, and this is what stops them drifting apart.
+test("the token arithmetic matches the one the local gate actually uses", () => {
+  assert.equal(CHARS_PER_TOKEN, llamaContext.CHARS_PER_TOKEN);
+  assert.equal(PROMPT_SHARE, llamaContext.PROMPT_SHARE);
+  assert.equal(budgetTokensForContext(2048), Math.floor(2048 * llamaContext.PROMPT_SHARE));
+  assert.equal(estimateContextTokens("x".repeat(3600)), llamaContext.estimatePromptTokens("x".repeat(3600)));
+});
+
+test("an unknown context size yields an unusable budget, so the block is dropped", () => {
+  assert.ok(Number.isNaN(budgetTokensForContext(null)));
+  assert.equal(fitUserContextBlock("Molly is the PM.", "general", {
+    budgetTokens: budgetTokensForContext(null),
+    reservedTokens: 0,
+  }), "");
 });

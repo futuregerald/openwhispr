@@ -11,7 +11,13 @@ const {
 
 const modelRegistryData = require("../models/modelRegistryData.json");
 const LlamaServerManager = require("./llamaServer");
-const { checkPromptFitsContext, resolveContextSize } = require("./llamaContext");
+const {
+  checkPromptFitsContext,
+  resolveContextSize,
+  estimatePromptTokens,
+  PROMPT_SHARE,
+} = require("./llamaContext");
+const { fitUserContextBlock } = require("./userContextBlock.js");
 const { readGgufMetadata } = require("./ggufMetadata");
 const { availableMemBytes } = require("./systemMemory");
 const os = require("os");
@@ -328,7 +334,11 @@ class ModelManager {
     debugLogger.logReasoning("INFERENCE_START", {
       modelId,
       promptLength: prompt.length,
-      options: { ...options, systemPrompt: options.systemPrompt ? "[set]" : "[not set]" },
+      options: {
+        ...options,
+        systemPrompt: options.systemPrompt ? "[set]" : "[not set]",
+        userContext: options.userContext ? "[set]" : "[not set]",
+      },
     });
 
     // Ensure server is available
@@ -395,8 +405,25 @@ class ModelManager {
     // Refuse a prompt the server cannot hold rather than letting it grind. An
     // over-context prompt used to be accepted and processed for minutes on end.
     const contextSize = this.serverManager.contextSize || 4096;
+    const baseSystemPrompt = options.systemPrompt || "";
+    const contextBlock = fitUserContextBlock(
+      options.userContext,
+      options.userContextKind || "dictation",
+      {
+        budgetTokens: Math.floor(contextSize * PROMPT_SHARE),
+        reservedTokens: estimatePromptTokens(`${baseSystemPrompt}${prompt}`),
+      }
+    );
+    if (options.userContext && !contextBlock) {
+      debugLogger.notice(
+        "User context dropped, it does not fit this model's context",
+        { modelId, contextSize, kind: options.userContextKind || "dictation" },
+        "llama"
+      );
+    }
+    const systemPrompt = baseSystemPrompt + contextBlock;
     const fit = checkPromptFitsContext({
-      text: `${options.systemPrompt || ""}${prompt}`,
+      text: `${systemPrompt}${prompt}`,
       contextSize,
     });
     if (!fit.fits) {
@@ -430,13 +457,13 @@ class ModelManager {
 
     // Build messages for chat completion
     const messages = [
-      { role: "system", content: options.systemPrompt || "" },
+      { role: "system", content: systemPrompt },
       { role: "user", content: prompt },
     ];
 
     debugLogger.logReasoning("INFERENCE_SENDING_REQUEST", {
       messageCount: messages.length,
-      systemPromptLength: (options.systemPrompt || "").length,
+      systemPromptLength: systemPrompt.length,
       userPromptLength: prompt.length,
     });
 
