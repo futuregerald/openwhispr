@@ -36,6 +36,8 @@ const STRUCTURAL_MARKERS = [
   /END OF ANALYSIS NOTES\./gi,
   /ANALYSIS NOTES \(/gi,
   /TRANSCRIPT \(each line is/gi,
+  /USER CONTEXT \(/gi,
+  /END OF USER CONTEXT\./gi,
 ];
 const MARKER_REDACTION = "[marker removed]";
 
@@ -254,8 +256,8 @@ const render = (template, values) =>
 const renderInstruction = (instruction, recorderLabel) =>
   render(instruction, recorderTokens(recorderLabel));
 
-const debriefSystemPrompt = (recorderLabel) =>
-  render(DEBRIEF_SYSTEM_TEMPLATE, recorderTokens(recorderLabel));
+const debriefSystemPrompt = (recorderLabel, userContext = "") =>
+  render(DEBRIEF_SYSTEM_TEMPLATE, recorderTokens(recorderLabel)) + String(userContext ?? "");
 
 function buildKindPrompt(transcript, recorderLabel) {
   return render(KIND_PROMPT_TEMPLATE, {
