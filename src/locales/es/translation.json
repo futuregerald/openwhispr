@@ -1621,7 +1621,7 @@
         "label": "Contexto general",
         "description": "Tu equipo, proyectos y vocabulario. Se usa para notas de reuniones, títulos, detección del tipo de reunión y el agente de chat.",
         "placeholder": "Equipo: Molly Finn (PM), Mauricio Reis (SWE)… · Proyectos: CPT, SkillSync…",
-        "help": "En un modelo local pequeño puede omitirse para que la transcripción siga cabiendo."
+        "help": "Se envía al modelo que tengas configurado, incluido un proveedor en la nube. En un modelo local pequeño puede omitirse para que la transcripción siga cabiendo."
       },
       "dictation": {
         "label": "Contexto de dictado",

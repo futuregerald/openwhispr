@@ -1621,7 +1621,7 @@
         "label": "通用背景",
         "description": "你的团队、项目和术语。用于会议笔记、笔记标题、会议类型识别和聊天助手。",
         "placeholder": "团队：Molly Finn (PM)、Mauricio Reis (SWE)… · 项目：CPT、SkillSync…",
-        "help": "在较小的本地模型上，为了让转写内容放得下，这部分可能会被跳过。"
+        "help": "会发送给你配置的模型，包括云服务商。在较小的本地模型上，为了让转写内容放得下，这部分可能会被跳过。"
       },
       "dictation": {
         "label": "口述背景",

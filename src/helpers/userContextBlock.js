@@ -14,25 +14,25 @@ const CLOSE_PATTERN = /END OF USER CONTEXT\./gi;
 export const CHARS_PER_TOKEN = 3.6;
 export const PROMPT_SHARE = 0.6;
 
-/**
- * @param {number | null | undefined} contextSize
- * @returns {number}
- */
 export function budgetTokensForContext(contextSize) {
   return Number.isFinite(contextSize) && Number(contextSize) > 0
     ? Math.floor(Number(contextSize) * PROMPT_SHARE)
     : NaN;
 }
 
-/**
- * @param {string | null | undefined} text
- * @returns {number}
- */
 export function estimateContextTokens(text) {
   return Math.ceil(String(text ?? "").length / CHARS_PER_TOKEN);
 }
 
 export const CONTEXT_BLOCK_MARKERS = [/USER CONTEXT \(/gi, /END OF USER CONTEXT\./gi];
+export const MARKER_REDACTION = "[marker removed]";
+
+export function neutraliseContextMarkers(text) {
+  return CONTEXT_BLOCK_MARKERS.reduce(
+    (out, marker) => out.replace(marker, MARKER_REDACTION),
+    String(text ?? "")
+  );
+}
 
 const limitFor = (kind) =>
   kind === "dictation" ? DICTATION_CONTEXT_MAX_CHARS : GENERAL_CONTEXT_MAX_CHARS;
@@ -45,7 +45,7 @@ export function normalizeUserContext(value, kind) {
 }
 
 export function formatUserContextBlock(value, kind) {
-  const text = normalizeUserContext(value, kind).replace(CLOSE_PATTERN, "[marker removed]");
+  const text = normalizeUserContext(value, kind).replace(CLOSE_PATTERN, MARKER_REDACTION);
   if (!text) return "";
   return `\n\n${HEADINGS[kind] || HEADINGS.general}\n\n${text}\n\n${CLOSE}`;
 }
@@ -63,16 +63,6 @@ export function fitUserContextBlock(value, kind, { budgetTokens, reservedTokens 
   if (!Number.isFinite(budgetTokens) || !Number.isFinite(reservedTokens)) return "";
   const cost = Math.ceil(block.length / CHARS_PER_TOKEN);
   return reservedTokens + cost <= budgetTokens ? block : "";
-}
-
-export const CONTEXT_KIND_FOR_PROMPT = {
-  cleanup: "dictation",
-  dictationAgent: "dictation",
-  chatAgent: null,
-};
-
-export function contextKindForPrompt(promptKind) {
-  return CONTEXT_KIND_FOR_PROMPT[promptKind] ?? null;
 }
 
 export function chooseStoredContext(dbValue, localValue) {

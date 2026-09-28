@@ -145,11 +145,15 @@ export function useChatStreaming({
       if (isLocalProvider) {
         const resolved = await window.electronAPI?.resolveModelContext?.(settings.chatAgentModel);
         budgetTokens = budgetTokensForContext(resolved?.contextSize);
+      } else if (isLanAgent || isCustomAgent) {
+        budgetTokens = NaN;
       }
       const userContextBlock = fitUserContextBlock(settings.generalContext, "general", {
         budgetTokens,
         reservedTokens:
-          estimateContextTokens(promptWithoutContext) + Math.ceil(historyChars / CHARS_PER_TOKEN),
+          estimateContextTokens(promptWithoutContext) +
+          estimateContextTokens(JSON.stringify(registry?.toAISDKFormat() ?? {})) +
+          Math.ceil(historyChars / CHARS_PER_TOKEN),
       });
       const systemPrompt = getAgentSystemPrompt(
         toolNames,

@@ -18,7 +18,7 @@ const {
   resolveChunkBudget,
   estimateTokens,
 } = require("./transcriptPassChunker");
-const { fitUserContextBlock } = require("./userContextBlock.js");
+const { fitUserContextBlock, neutraliseContextMarkers } = require("./userContextBlock.js");
 const {
   runnerError,
   throwIfDegrading,
@@ -127,8 +127,8 @@ async function runNoteAction({
     Math.min(COMPOSE_MAX_TOKENS, Math.floor(contextSize * 0.3))
   );
 
-  const note = String(noteContent || "").trim();
-  const transcript = renderSegments(segments);
+  const note = neutraliseContextMarkers(String(noteContent || "").trim());
+  const transcript = neutraliseContextMarkers(renderSegments(segments));
   const assembled = [note, transcript ? `## Meeting Transcript\n${transcript}` : ""]
     .filter(Boolean)
     .join("\n\n");

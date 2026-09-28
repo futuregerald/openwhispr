@@ -23,6 +23,7 @@ import { applyThinkingSuppression } from "./ai/thinkingSuppression";
 import { clearTinfoilClientCache } from "./ai/tinfoilClient";
 import { resolveChatRoute } from "../helpers/chatRouting";
 import { fitUserContextBlock } from "../helpers/userContextBlock.js";
+import { budgetTokensForProvider } from "./ai/userContextBudget";
 
 export type AgentStreamChunk =
   | { type: "content"; text: string }
@@ -354,8 +355,6 @@ class ReasoningService extends BaseReasoningService {
       throw new Error(`Unsupported reasoning provider: ${providerId}`);
     }
 
-    // Local inference decides at the chokepoint that knows the model's context
-    // size; every other provider has room to spare, so the block is fitted here.
     const effectiveConfig =
       config.userContext && providerId !== "local"
         ? {
@@ -363,7 +362,7 @@ class ReasoningService extends BaseReasoningService {
             userContextBlock: fitUserContextBlock(
               config.userContext,
               config.userContextKind || "dictation",
-              { budgetTokens: Infinity }
+              { budgetTokens: budgetTokensForProvider(providerId) }
             ),
           }
         : config;

@@ -1621,7 +1621,7 @@
         "label": "Contexte général",
         "description": "Votre équipe, vos projets et votre vocabulaire. Utilisé pour les notes de réunion, les titres, la détection du type de réunion et l'agent de discussion.",
         "placeholder": "Équipe : Molly Finn (PM), Mauricio Reis (SWE)… · Projets : CPT, SkillSync…",
-        "help": "Sur un petit modèle local, ceci peut être ignoré pour que la transcription tienne encore."
+        "help": "Transmis au modèle que vous avez configuré, y compris un fournisseur cloud. Sur un petit modèle local, il peut être ignoré pour que la transcription tienne encore."
       },
       "dictation": {
         "label": "Contexte de dictée",

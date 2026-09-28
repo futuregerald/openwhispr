@@ -1621,7 +1621,7 @@
         "label": "Allgemeiner Kontext",
         "description": "Dein Team, deine Projekte und dein Vokabular. Wird für Besprechungsnotizen, Titel, Besprechungstyp-Erkennung und den Chat-Agenten verwendet.",
         "placeholder": "Team: Molly Finn (PM), Mauricio Reis (SWE)… · Projekte: CPT, SkillSync…",
-        "help": "Auf einem kleinen lokalen Modell kann dies übersprungen werden, damit das Transkript noch passt."
+        "help": "Geht an das Modell, das du konfiguriert hast — auch an einen Cloud-Anbieter. Auf einem kleinen lokalen Modell kann es übersprungen werden, damit das Transkript noch passt."
       },
       "dictation": {
         "label": "Diktat-Kontext",

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { Textarea } from "../ui/textarea";
@@ -32,6 +32,16 @@ function ContextField({
   useEffect(() => {
     setDraft(value);
   }, [value]);
+
+  const pending = useRef({ draft, value, onCommit });
+  pending.current = { draft, value, onCommit };
+  useEffect(
+    () => () => {
+      const { draft: latest, value: committed, onCommit: commit } = pending.current;
+      if (latest !== committed) commit(latest);
+    },
+    []
+  );
 
   return (
     <div className="space-y-2">

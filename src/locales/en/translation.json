@@ -1659,7 +1659,7 @@
         "label": "General context",
         "description": "Your team, projects and vocabulary. Used for meeting notes, note titles, meeting-type detection and the chat agent.",
         "placeholder": "Team: Molly Finn (PM), Mauricio Reis (SWE)… · Projects: CPT, SkillSync…",
-        "help": "On a small local model this may be skipped so the transcript still fits."
+        "help": "Sent to whichever model you have configured, including a cloud provider. On a small local model it may be skipped so the transcript still fits."
       },
       "dictation": {
         "label": "Dictation context",

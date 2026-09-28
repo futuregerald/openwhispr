@@ -1621,7 +1621,7 @@
         "label": "Contesto generale",
         "description": "Il tuo team, i progetti e il vocabolario. Usato per le note delle riunioni, i titoli, il rilevamento del tipo di riunione e l'agente di chat.",
         "placeholder": "Team: Molly Finn (PM), Mauricio Reis (SWE)… · Progetti: CPT, SkillSync…",
-        "help": "Su un modello locale piccolo può essere omesso perché la trascrizione continui a entrare nel contesto."
+        "help": "Inviato al modello che hai configurato, compreso un provider cloud. Su un modello locale piccolo può essere omesso perché la trascrizione continui a entrare nel contesto."
       },
       "dictation": {
         "label": "Contesto di dettatura",

@@ -1615,7 +1615,7 @@
         "label": "Contexto geral",
         "description": "A tua equipa, projetos e vocabulário. Usado em notas de reunião, títulos, deteção do tipo de reunião e no agente de conversa.",
         "placeholder": "Equipa: Molly Finn (PM), Mauricio Reis (SWE)… · Projetos: CPT, SkillSync…",
-        "help": "Num modelo local pequeno isto pode ser ignorado para que a transcrição ainda caiba."
+        "help": "Enviado para o modelo que tiveres configurado, incluindo um fornecedor na nuvem. Num modelo local pequeno pode ser ignorado para que a transcrição ainda caiba."
       },
       "dictation": {
         "label": "Contexto de ditado",

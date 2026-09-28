@@ -20,6 +20,8 @@
  * `node --test` can exercise it without Electron.
  */
 
+const { CONTEXT_BLOCK_MARKERS } = require("./userContextBlock.js");
+
 const TURN_MERGE_GAP_SECONDS = 30;
 const FILLER_PATTERN = /\b(?:uh+(?:-huh)?|um+|erm|hmm+|mm-hmm)\b[,.]?\s*/gi;
 const TOKEN_PATTERN = /\{\{(me_label|me|transcript|instruction|analyze)\}\}/g;
@@ -36,8 +38,7 @@ const STRUCTURAL_MARKERS = [
   /END OF ANALYSIS NOTES\./gi,
   /ANALYSIS NOTES \(/gi,
   /TRANSCRIPT \(each line is/gi,
-  /USER CONTEXT \(/gi,
-  /END OF USER CONTEXT\./gi,
+  ...CONTEXT_BLOCK_MARKERS,
 ];
 const MARKER_REDACTION = "[marker removed]";
 
@@ -256,8 +257,8 @@ const render = (template, values) =>
 const renderInstruction = (instruction, recorderLabel) =>
   render(instruction, recorderTokens(recorderLabel));
 
-const debriefSystemPrompt = (recorderLabel, userContext = "") =>
-  render(DEBRIEF_SYSTEM_TEMPLATE, recorderTokens(recorderLabel)) + String(userContext ?? "");
+const debriefSystemPrompt = (recorderLabel, userContextBlock = "") =>
+  render(DEBRIEF_SYSTEM_TEMPLATE, recorderTokens(recorderLabel)) + String(userContextBlock ?? "");
 
 function buildKindPrompt(transcript, recorderLabel) {
   return render(KIND_PROMPT_TEMPLATE, {

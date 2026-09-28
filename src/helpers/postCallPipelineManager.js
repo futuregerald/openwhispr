@@ -5,7 +5,11 @@ const { retranscribeNoteTranscript } = require("./retranscribeNoteTranscript");
 const { i18nMain, SUPPORTED_UI_LANGUAGES } = require("./i18nMain");
 const { MainProcessInference } = require("./mainProcessInference");
 const { runNoteAction } = require("./noteActionRunner");
-const { formatUserContextBlock, fitUserContextBlock } = require("./userContextBlock.js");
+const {
+  formatUserContextBlock,
+  fitUserContextBlock,
+  neutraliseContextMarkers,
+} = require("./userContextBlock.js");
 const { resolveSpeaker, buildSpeakerMappings } = require("./transcriptFormatter");
 const {
   CHARS_PER_TOKEN,
@@ -553,7 +557,7 @@ class PostCallPipelineManager {
         : this._plainTextLines(this._flattenTranscript(noteId, transcript));
 
     const sampled = this._sampleLines(lines, Math.max(0, budgetChars - rosterLine.length));
-    return `${rosterLine}${sampled}`.slice(0, Math.max(0, budgetChars));
+    return neutraliseContextMarkers(`${rosterLine}${sampled}`).slice(0, Math.max(0, budgetChars));
   }
 
   _participantRoster(segments) {
@@ -734,7 +738,7 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
     if (meetingType?.template) systemPrompt = buildTypedNotesPrompt(meetingType);
     const userContext = this._userContext();
 
-    const text = this._flattenTranscript(noteId, transcript);
+    const text = neutraliseContextMarkers(this._flattenTranscript(noteId, transcript));
 
     // `resolveProvider` and not `config.provider`: Settings has been observed
     // persisting a model family ("gemma") into the provider field, and a local
@@ -838,7 +842,7 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
     );
     const contextBlock = fitUserContextBlock(userContext, "general", {
       budgetTokens,
-      reservedTokens: sectionTokens,
+      reservedTokens: sectionTokens + estimatePromptTokens(debriefSystemPrompt(recorderLabel)),
     });
     const debriefSystem = debriefSystemPrompt(recorderLabel, contextBlock);
     const largestPromptTokens = sectionTokens + estimatePromptTokens(debriefSystem);
@@ -857,7 +861,7 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
         infer: (prompt, options) => this._inference.processText(prompt, { ...config, ...options }),
         segments,
         meetingTypeTemplate,
-        userContext: contextBlock,
+        userContextBlock: contextBlock,
         onProgress: ({ phase }) => {
           const subStage = debriefSubStageFor(phase);
           if (subStage === reportedSubStage) return;

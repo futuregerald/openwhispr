@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const { randomUUID } = require("crypto");
 const debugLogger = require("./debugLogger");
+const { normalizeUserContext } = require("./userContextBlock.js");
 const { buildNoteSearchQuery } = require("./noteSearch");
 const peopleResolver = require("./peopleResolver");
 const { resolveDateRange } = require("./searchDateRange");
@@ -1165,12 +1166,18 @@ class DatabaseManager {
   }
 
   getUserContext() {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
     const rows = this.db.prepare("SELECT key, value FROM user_context").all();
     const stored = new Map(rows.map((row) => [row.key, row.value]));
     return { general: stored.get("general") ?? "", dictation: stored.get("dictation") ?? "" };
   }
 
   setUserContext(patch) {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
     const entries = Object.entries(patch || {});
     for (const [key] of entries) {
       if (key !== "general" && key !== "dictation") {
@@ -1184,7 +1191,7 @@ class DatabaseManager {
     const write = this.db.transaction((rows) => {
       for (const [key, value] of rows) upsert.run(key, value);
     });
-    write(entries.map(([key, value]) => [key, String(value ?? "")]));
+    write(entries.map(([key, value]) => [key, normalizeUserContext(value, key)]));
     return this.getUserContext();
   }
 

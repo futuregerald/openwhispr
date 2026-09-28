@@ -1,4 +1,5 @@
 import { resolvePrompt } from "./prompts/index";
+import { neutraliseContextMarkers } from "../helpers/userContextBlock.js";
 
 export {
   resolvePrompt,
@@ -56,14 +57,14 @@ export function getAgentSystemPrompt(
     }
   }
 
-  if (userContextBlock) prompt += userContextBlock;
-
   if (noteContext) {
     prompt +=
       "\n\nBelow are notes from the user's library that may be relevant. " +
       "Reference them naturally if they help answer the question.\n\n" +
-      noteContext;
+      neutraliseContextMarkers(noteContext);
   }
+
+  if (userContextBlock) prompt += userContextBlock;
 
   return prompt;
 }

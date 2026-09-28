@@ -3,6 +3,7 @@ import reasoningService from "../services/ReasoningService";
 import { getSettings, selectResolvedNoteFormatting } from "./settingsStore";
 import { appendDictionarySuffix } from "../config/prompts";
 import { fitUserContextBlock } from "../helpers/userContextBlock.js";
+import { budgetTokensForSelfHostedMode } from "../services/ai/userContextBudget";
 import { generateNoteTitle } from "../utils/generateTitle";
 import { buildNoteFormattingOverrides } from "../helpers/noteFormattingOverrides";
 import type { ActionItem } from "../types/electron";
@@ -247,7 +248,7 @@ export function runBackgroundAction(
           systemPrompt:
             systemPrompt +
             fitUserContextBlock(settings.generalContext, "general", {
-              budgetTokens: Infinity,
+              budgetTokens: budgetTokensForSelfHostedMode(noteFormatting.mode),
             }),
           temperature: 0.3,
           disableThinking: settings.noteFormattingDisableThinking,

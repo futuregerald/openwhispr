@@ -1621,7 +1621,7 @@
         "label": "通用背景",
         "description": "你的團隊、專案和術語。用於會議筆記、筆記標題、會議類型辨識和聊天助理。",
         "placeholder": "團隊：Molly Finn (PM)、Mauricio Reis (SWE)… · 專案：CPT、SkillSync…",
-        "help": "在較小的本機模型上，為了讓轉錄內容放得下，這部分可能會被略過。"
+        "help": "會傳送給你設定的模型，包括雲端服務商。在較小的本機模型上，為了讓轉錄內容放得下，這部分可能會被略過。"
       },
       "dictation": {
         "label": "口述背景",

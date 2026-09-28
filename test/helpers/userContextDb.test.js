@@ -64,3 +64,19 @@ test("an unknown key is rejected, and nothing is written", () => {
   );
   assert.deepEqual(manager.getUserContext(), { general: "", dictation: "" });
 });
+
+// The 1200/400 caps live in the renderer, so the database is the last place
+// that can stop an oversized value reaching localStorage on the next launch.
+test("the cap is enforced at the database, not only in the renderer", () => {
+  const manager = managerWithContextTable();
+  manager.setUserContext({ general: "g".repeat(50_000), dictation: "d".repeat(50_000) });
+  const stored = manager.getUserContext();
+  assert.equal(stored.general.length, 1200);
+  assert.equal(stored.dictation.length, 400);
+});
+
+test("a null-ish value stores as an empty string rather than throwing", () => {
+  const manager = managerWithContextTable();
+  manager.setUserContext({ general: null });
+  assert.equal(manager.getUserContext().general, "");
+});
