@@ -5,6 +5,10 @@ const { retranscribeNoteTranscript } = require("./retranscribeNoteTranscript");
 const { i18nMain, SUPPORTED_UI_LANGUAGES } = require("./i18nMain");
 const { MainProcessInference } = require("./mainProcessInference");
 const { runNoteAction } = require("./noteActionRunner");
+const {
+  formatUserContextBlock,
+  fitUserContextBlock,
+} = require("./userContextBlock.js");
 const { resolveSpeaker, buildSpeakerMappings } = require("./transcriptFormatter");
 const {
   CHARS_PER_TOKEN,
@@ -17,6 +21,7 @@ const {
   PROBES,
   SECTIONS,
   buildSectionPrompt,
+  debriefSystemPrompt,
   renderDebriefTranscript,
   resolveRecorderLabel,
   topicsInstruction,
@@ -149,6 +154,7 @@ When the meeting is between two people, name the other person — "1:1 with Mike
 const CLOUD_DIGEST_CHARS = 6000;
 const LEGACY_DIGEST_CHARS = 2000;
 const DIGEST_BUDGET_MARGIN = 0.85;
+const MIN_DIGEST_CHARS = 1200;
 const MAX_ROSTER_NAMES = 8;
 
 const DEBRIEF_TOPICS_SECTION = "topics";
@@ -454,8 +460,10 @@ class PostCallPipelineManager {
     const config = this._getInferenceConfig();
     if (!config) return null;
 
-    const systemPrompt = this._buildTitlePrompt(noteId);
-    const budget = await this._digestBudget(config, systemPrompt);
+    const { systemPrompt, budget } = await this._contextAwareBudget(
+      config,
+      this._buildTitlePrompt(noteId)
+    );
 
     let title;
     try {
@@ -495,6 +503,30 @@ class PostCallPipelineManager {
     } catch {
       return null;
     }
+  }
+
+  _userContext() {
+    try {
+      return this._db.getUserContext?.().general || "";
+    } catch {
+      return "";
+    }
+  }
+
+  async _contextAwareBudget(config, basePrompt) {
+    const plainBudget = await this._digestBudget(config, basePrompt);
+    const block = formatUserContextBlock(this._userContext(), "general");
+    if (!block) return { systemPrompt: basePrompt, budget: plainBudget };
+    const withContext = await this._digestBudget(config, basePrompt + block);
+    if (withContext >= MIN_DIGEST_CHARS) {
+      return { systemPrompt: basePrompt + block, budget: withContext };
+    }
+    debugLogger.notice(
+      "Pipeline: user context dropped for this call, it would starve the transcript digest",
+      { contextChars: block.length, withContext, floor: MIN_DIGEST_CHARS },
+      "meeting"
+    );
+    return { systemPrompt: basePrompt, budget: plainBudget };
   }
 
   async _digestBudget(config, systemPrompt) {
@@ -636,13 +668,11 @@ ${typeList}
 
 Reply with ONLY the numeric id of the best matching meeting type. If none match well, reply with "none".`;
 
+        const { systemPrompt: classifySystemPrompt, budget: classifyBudget } =
+          await this._contextAwareBudget(config, classifyPrompt);
         const result = await this._inference.processText(
-          this._transcriptDigest(
-            noteId,
-            transcript,
-            await this._digestBudget(config, classifyPrompt)
-          ),
-          { ...config, systemPrompt: classifyPrompt, temperature: 0 }
+          this._transcriptDigest(noteId, transcript, classifyBudget),
+          { ...config, systemPrompt: classifySystemPrompt, temperature: 0 }
         );
 
         const match = result.trim().match(/^\d+$/);
@@ -705,6 +735,7 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
       : null;
     let systemPrompt = GENERIC_NOTES_PROMPT;
     if (meetingType?.template) systemPrompt = buildTypedNotesPrompt(meetingType);
+    const userContext = this._userContext();
 
     const text = this._flattenTranscript(noteId, transcript);
 
@@ -721,6 +752,7 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
         config,
         transcript,
         meetingTypeTemplate: meetingType?.template || null,
+        userContext,
       });
       if (debrief != null) return debrief;
       // Whatever the debrief attempt spent comes out of the chunked path's budget,
@@ -734,6 +766,7 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
         noteId,
         config,
         systemPrompt,
+        userContext,
         transcript,
         text,
         deadlineMs: remainingMs,
@@ -743,10 +776,14 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
     // A cloud model has context to spare, so it takes one call — but it no longer
     // takes only the first 8000 characters, which quietly ended every note at
     // about the 25-minute mark.
-    return this._inference.processText(text, { ...config, systemPrompt });
+    return this._inference.processText(text, {
+      ...config,
+      systemPrompt:
+        systemPrompt + fitUserContextBlock(userContext, "general", { budgetTokens: Infinity }),
+    });
   }
 
-  async _tryDebrief({ noteId, config, transcript, meetingTypeTemplate }) {
+  async _tryDebrief({ noteId, config, transcript, meetingTypeTemplate, userContext = "" }) {
     const segments = this._transcriptSegments(noteId, transcript);
     if (segments.length === 0) {
       debugLogger.notice(
@@ -794,7 +831,7 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
     }
 
     const budgetTokens = Math.floor((contextSize || MIN_CONTEXT) * PROMPT_SHARE);
-    const largestPromptTokens = estimatePromptTokens(
+    const sectionTokens = estimatePromptTokens(
       buildSectionPrompt(
         renderDebriefTranscript(segments),
         DEBRIEF_WORST_CASE_ANALYSIS,
@@ -802,6 +839,12 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
         recorderLabel
       )
     );
+    const contextBlock = fitUserContextBlock(userContext, "general", {
+      budgetTokens,
+      reservedTokens: sectionTokens,
+    });
+    const debriefSystem = debriefSystemPrompt(recorderLabel, contextBlock);
+    const largestPromptTokens = sectionTokens + estimatePromptTokens(debriefSystem);
     if (largestPromptTokens > budgetTokens) {
       debugLogger.notice(
         "Pipeline: debrief skipped, its largest prompt does not fit the context",
@@ -817,6 +860,7 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
         infer: (prompt, options) => this._inference.processText(prompt, { ...config, ...options }),
         segments,
         meetingTypeTemplate,
+        userContext: contextBlock,
         onProgress: ({ phase }) => {
           const subStage = debriefSubStageFor(phase);
           if (subStage === reportedSubStage) return;
@@ -854,12 +898,21 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
    * everything extracted. A meeting longer than the local model's context is the
    * normal case, not an error.
    */
-  async _generateNotesInPasses({ noteId, config, systemPrompt, transcript, text, deadlineMs }) {
+  async _generateNotesInPasses({
+    noteId,
+    config,
+    systemPrompt,
+    userContext = "",
+    transcript,
+    text,
+    deadlineMs,
+  }) {
     const { contextSize, isGpuBackend } = await this._resolveModelContext(config.model);
     const segments = this._transcriptSegments(noteId, transcript);
 
     const result = await runNoteAction({
       systemPrompt,
+      userContext,
       segments,
       // Chunking the same text twice would double it into the compose step.
       noteContent: segments.length > 0 ? "" : text,
