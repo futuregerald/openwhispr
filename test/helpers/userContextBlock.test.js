@@ -127,13 +127,19 @@ test("the token arithmetic matches the one the local gate actually uses", () => 
   assert.equal(CHARS_PER_TOKEN, llamaContext.CHARS_PER_TOKEN);
   assert.equal(PROMPT_SHARE, llamaContext.PROMPT_SHARE);
   assert.equal(budgetTokensForContext(2048), Math.floor(2048 * llamaContext.PROMPT_SHARE));
-  assert.equal(estimateContextTokens("x".repeat(3600)), llamaContext.estimatePromptTokens("x".repeat(3600)));
+  assert.equal(
+    estimateContextTokens("x".repeat(3600)),
+    llamaContext.estimatePromptTokens("x".repeat(3600))
+  );
 });
 
 test("an unknown context size yields an unusable budget, so the block is dropped", () => {
   assert.ok(Number.isNaN(budgetTokensForContext(null)));
-  assert.equal(fitUserContextBlock("Molly is the PM.", "general", {
-    budgetTokens: budgetTokensForContext(null),
-    reservedTokens: 0,
-  }), "");
+  assert.equal(
+    fitUserContextBlock("Molly is the PM.", "general", {
+      budgetTokens: budgetTokensForContext(null),
+      reservedTokens: 0,
+    }),
+    ""
+  );
 });

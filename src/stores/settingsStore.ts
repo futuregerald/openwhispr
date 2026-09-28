@@ -10,10 +10,7 @@ import type { GoogleCalendarAccount } from "../types/calendar";
 import { PROMPT_KIND_LIST, type PromptKind } from "../config/prompts/registry";
 import { deriveReasoningMode, buildReasoningScopePatches } from "../helpers/reasoningRouting";
 import { migrateLocalProviderField } from "./migrateLocalProviderField";
-import {
-  normalizeUserContext,
-  chooseStoredContext,
-} from "../helpers/userContextBlock.js";
+import { normalizeUserContext, chooseStoredContext } from "../helpers/userContextBlock.js";
 import {
   INFERENCE_SCOPES,
   type InferenceScope,

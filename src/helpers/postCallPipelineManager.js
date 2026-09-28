@@ -5,10 +5,7 @@ const { retranscribeNoteTranscript } = require("./retranscribeNoteTranscript");
 const { i18nMain, SUPPORTED_UI_LANGUAGES } = require("./i18nMain");
 const { MainProcessInference } = require("./mainProcessInference");
 const { runNoteAction } = require("./noteActionRunner");
-const {
-  formatUserContextBlock,
-  fitUserContextBlock,
-} = require("./userContextBlock.js");
+const { formatUserContextBlock, fitUserContextBlock } = require("./userContextBlock.js");
 const { resolveSpeaker, buildSpeakerMappings } = require("./transcriptFormatter");
 const {
   CHARS_PER_TOKEN,

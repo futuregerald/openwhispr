@@ -140,9 +140,7 @@ export function useChatStreaming({
       const combinedContext = [noteContextRef.current, ragContext].filter(Boolean).join("\n\n");
       const toolNames = registry?.getAll().map((t) => t.name);
       const promptWithoutContext = getAgentSystemPrompt(toolNames, combinedContext || undefined);
-      const historyChars = allMessages
-        .slice(-20)
-        .reduce((total, m) => total + m.content.length, 0);
+      const historyChars = allMessages.slice(-20).reduce((total, m) => total + m.content.length, 0);
       let budgetTokens = Infinity;
       if (isLocalProvider) {
         const resolved = await window.electronAPI?.resolveModelContext?.(settings.chatAgentModel);
