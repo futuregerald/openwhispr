@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.29.0] - 2026-09-28
+
+### Added
+
+- A new **Context** section in Settings, with two free-text boxes that tell OpenWhispr about your
+  world. **General context** — your team, your projects, the words you use — is given to the models
+  that write your meeting notes and note titles, detect the meeting type, and answer in the chat
+  agent, so "Molly" comes back as Molly Finn rather than an unfamiliar name. **Dictation context**
+  holds your preferred spellings and is used when a dictation is cleaned up.
+- Both boxes are stored on your machine and are available to meeting notes even with the control
+  panel closed. What you write there is sent to whichever model you have configured — so with a
+  cloud provider selected, it leaves your machine along with the rest of that request.
+- On a small local model the context is skipped for a particular step rather than crowding out the
+  transcript, so a long meeting never loses its notes to make room for it. The Settings page says
+  so under the general box.
+- The dictation box points at Custom Dictionary, which is the setting that changes what the
+  transcriber actually hears. The dictation context corrects spelling in the cleaned-up text; it
+  does not change transcription itself.
+
+### Fixed
+
+- The meeting debrief's "will this fit?" check never counted its own instructions, so it could
+  accept a meeting it then could not process. It now counts them.
+- Text spoken in a meeting, or stored in a note, can no longer imitate the Context block. Anything
+  that looks like one is stripped out of transcripts and retrieved notes before the model sees it.
+
 ## [1.28.0] - 2026-09-25
 
 ### Added

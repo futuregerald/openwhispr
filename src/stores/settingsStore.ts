@@ -10,6 +10,7 @@ import type { GoogleCalendarAccount } from "../types/calendar";
 import { PROMPT_KIND_LIST, type PromptKind } from "../config/prompts/registry";
 import { deriveReasoningMode, buildReasoningScopePatches } from "../helpers/reasoningRouting";
 import { migrateLocalProviderField } from "./migrateLocalProviderField";
+import { normalizeUserContext, chooseStoredContext } from "../helpers/userContextBlock.js";
 import {
   INFERENCE_SCOPES,
   type InferenceScope,
@@ -577,6 +578,10 @@ export interface SettingsState
   setCleanupCloudBaseUrl: (value: string) => void;
   setCustomDictionary: (words: string[]) => void;
   applyCustomDictionaryFromExternal: (words: string[]) => void;
+  generalContext: string;
+  dictationContext: string;
+  setGeneralContext: (value: string) => void;
+  setDictationContext: (value: string) => void;
   setSnippets: (snippets: Snippet[]) => void;
   applySnippetsFromExternal: (snippets: Snippet[]) => void;
   setAutoGenerateNoteTitle: (value: boolean) => void;
@@ -923,6 +928,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   cortiEnvironment: readString("cortiEnvironment", "us"),
   cortiTenant: readString("cortiTenant", "base"),
   customDictionary: readStringArray("customDictionary", []),
+  generalContext: readString("generalContext", ""),
+  dictationContext: readString("dictationContext", ""),
   snippets: (() => {
     try {
       const parsed = JSON.parse(readString("snippets", "[]"));
@@ -1243,6 +1250,32 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     window.electronAPI?.setDictionary(words).catch((err) => {
       logger.warn(
         "Failed to sync dictionary to SQLite",
+        { error: (err as Error).message },
+        "settings"
+      );
+    });
+  },
+
+  setGeneralContext: (value: string) => {
+    const next = normalizeUserContext(value, "general");
+    if (isBrowser) localStorage.setItem("generalContext", next);
+    set({ generalContext: next });
+    void window.electronAPI?.setUserContext?.({ general: next })?.catch?.((err: unknown) => {
+      logger.warn(
+        "Failed to sync general context to SQLite",
+        { error: (err as Error).message },
+        "settings"
+      );
+    });
+  },
+
+  setDictationContext: (value: string) => {
+    const next = normalizeUserContext(value, "dictation");
+    if (isBrowser) localStorage.setItem("dictationContext", next);
+    set({ dictationContext: next });
+    void window.electronAPI?.setUserContext?.({ dictation: next })?.catch?.((err: unknown) => {
+      logger.warn(
+        "Failed to sync dictation context to SQLite",
         { error: (err as Error).message },
         "settings"
       );
@@ -2136,6 +2169,35 @@ export async function initializeSettings(): Promise<void> {
     } catch (err) {
       logger.warn(
         "Failed to sync dictionary on startup",
+        { error: (err as Error).message },
+        "settings"
+      );
+    }
+
+    try {
+      if (window.electronAPI?.getUserContext) {
+        const stored = await window.electronAPI.getUserContext();
+        const state = useSettingsStore.getState();
+        const general = chooseStoredContext(stored.general, state.generalContext);
+        const dictation = chooseStoredContext(stored.dictation, state.dictationContext);
+        if (general.pushToDb || dictation.pushToDb) {
+          await window.electronAPI.setUserContext({
+            ...(general.pushToDb ? { general: general.value } : {}),
+            ...(dictation.pushToDb ? { dictation: dictation.value } : {}),
+          });
+        }
+        if (isBrowser) {
+          localStorage.setItem("generalContext", general.value);
+          localStorage.setItem("dictationContext", dictation.value);
+        }
+        useSettingsStore.setState({
+          generalContext: general.value,
+          dictationContext: dictation.value,
+        });
+      }
+    } catch (err) {
+      logger.warn(
+        "Failed to sync user context on startup",
         { error: (err as Error).message },
         "settings"
       );

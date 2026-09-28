@@ -4,6 +4,12 @@ import ReasoningService, { type AgentStreamChunk } from "../../services/Reasonin
 import { isEnterpriseProvider } from "../../models/ModelRegistry";
 import { getSettings } from "../../stores/settingsStore";
 import { getAgentSystemPrompt } from "../../config/prompts";
+import {
+  fitUserContextBlock,
+  budgetTokensForContext,
+  estimateContextTokens,
+  CHARS_PER_TOKEN,
+} from "../../helpers/userContextBlock.js";
 import { createToolRegistry } from "../../services/tools";
 import type { ToolRegistry } from "../../services/tools/ToolRegistry";
 import type { Message, AgentState, ToolCallInfo } from "./types";
@@ -132,9 +138,27 @@ export function useChatStreaming({
 
       const ragContext = await buildRAGContext(userText);
       const combinedContext = [noteContextRef.current, ragContext].filter(Boolean).join("\n\n");
+      const toolNames = registry?.getAll().map((t) => t.name);
+      const promptWithoutContext = getAgentSystemPrompt(toolNames, combinedContext || undefined);
+      const historyChars = allMessages.slice(-20).reduce((total, m) => total + m.content.length, 0);
+      let budgetTokens = Infinity;
+      if (isLocalProvider) {
+        const resolved = await window.electronAPI?.resolveModelContext?.(settings.chatAgentModel);
+        budgetTokens = budgetTokensForContext(resolved?.contextSize);
+      } else if (isLanAgent || isCustomAgent) {
+        budgetTokens = NaN;
+      }
+      const userContextBlock = fitUserContextBlock(settings.generalContext, "general", {
+        budgetTokens,
+        reservedTokens:
+          estimateContextTokens(promptWithoutContext) +
+          estimateContextTokens(JSON.stringify(registry?.toAISDKFormat() ?? {})) +
+          Math.ceil(historyChars / CHARS_PER_TOKEN),
+      });
       const systemPrompt = getAgentSystemPrompt(
-        registry?.getAll().map((t) => t.name),
-        combinedContext || undefined
+        toolNames,
+        combinedContext || undefined,
+        userContextBlock
       );
 
       const llmMessages = [

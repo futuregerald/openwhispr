@@ -82,13 +82,19 @@ function resolveReasoningRoute(text, settings, agentName, voiceAgentRequested) {
           customDictionary: getDictionaryHintWords(settings),
           uiLanguage: settings.uiLanguage,
         }),
+        userContext: settings.dictationContext,
+        userContextKind: "dictation",
       },
     };
   }
   if (kind === "cleanup") {
     return {
       kind: "cleanup",
-      config: { disableThinking: settings.cleanupDisableThinking },
+      config: {
+        disableThinking: settings.cleanupDisableThinking,
+        userContext: settings.dictationContext,
+        userContextKind: "dictation",
+      },
     };
   }
   return { kind: "skip" };

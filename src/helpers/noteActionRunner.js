@@ -18,6 +18,7 @@ const {
   resolveChunkBudget,
   estimateTokens,
 } = require("./transcriptPassChunker");
+const { fitUserContextBlock, neutraliseContextMarkers } = require("./userContextBlock.js");
 const {
   runnerError,
   throwIfDegrading,
@@ -107,6 +108,7 @@ async function runNoteAction({
   noteContent = "",
   segments = [],
   systemPrompt,
+  userContext = "",
   contextSize,
   isGpuBackend = true,
   resumeExtracts = null,
@@ -125,24 +127,37 @@ async function runNoteAction({
     Math.min(COMPOSE_MAX_TOKENS, Math.floor(contextSize * 0.3))
   );
 
-  const note = String(noteContent || "").trim();
-  const transcript = renderSegments(segments);
+  const note = neutraliseContextMarkers(String(noteContent || "").trim());
+  const transcript = neutraliseContextMarkers(renderSegments(segments));
   const assembled = [note, transcript ? `## Meeting Transcript\n${transcript}` : ""]
     .filter(Boolean)
     .join("\n\n");
 
   // The common case. Kept byte-identical to the pre-multi-pass behaviour.
   if (estimateTokens(systemPrompt + assembled) <= inputBudget) {
+    const singleCallBlock = fitUserContextBlock(userContext, "general", {
+      budgetTokens: inputBudget,
+      reservedTokens: estimateTokens(systemPrompt + assembled),
+    });
+    const singleCallSystemPrompt = systemPrompt + singleCallBlock;
     onProgress?.({ phase: "composing", currentPass: 1, totalPasses: 1 });
     const { text, error } = await runPass({
       infer,
       prompt: assembled,
-      options: { systemPrompt, maxTokens: composeMaxTokens },
+      options: { systemPrompt: singleCallSystemPrompt, maxTokens: composeMaxTokens },
       sleep,
       signal,
     });
     if (text == null) throw error;
-    return { text, passes: 1, partial: false, gapCount: 0, foldLevels: 0, inputBudget };
+    return {
+      text,
+      passes: 1,
+      partial: false,
+      gapCount: 0,
+      foldLevels: 0,
+      inputBudget,
+      userContextDropped: Boolean(userContext) && !singleCallBlock,
+    };
   }
 
   const chunks =
@@ -161,8 +176,13 @@ async function runNoteAction({
   // hours of thrash is strictly worse than saying so now.
   const noteTokensEstimate = estimateTokens(hasTranscriptText(transcript) ? note : "");
   const bestCaseExtracts = Math.ceil(chunks.length / 2 ** MAX_FOLD_LEVELS);
-  const bestCaseComposeTokens =
+  const bestCaseReserved =
     bestCaseExtracts * EXTRACTION_MAX_TOKENS + noteTokensEstimate + estimateTokens(systemPrompt);
+  const contextBlock = fitUserContextBlock(userContext, "general", {
+    budgetTokens: inputBudget,
+    reservedTokens: bestCaseReserved,
+  });
+  const bestCaseComposeTokens = bestCaseReserved + estimateTokens(contextBlock);
   if (bestCaseComposeTokens > inputBudget) {
     throw runnerError(
       "This note is too long for the local model's available context",
@@ -258,7 +278,14 @@ async function runNoteAction({
   });
 
   const composePrompt = `${notePreamble}${folded.extracts.join("\n\n")}`;
-  if (estimateTokens(systemPrompt + composePrompt) > inputBudget) {
+  const composeBlock = contextBlock
+    ? fitUserContextBlock(userContext, "general", {
+        budgetTokens: inputBudget,
+        reservedTokens: estimateTokens(systemPrompt + composePrompt),
+      })
+    : "";
+  const composeSystemPrompt = systemPrompt + composeBlock;
+  if (estimateTokens(composeSystemPrompt + composePrompt) > inputBudget) {
     throw runnerError(
       "The extracted material is still too long for the local model",
       "LOCAL_CONTEXT_EXCEEDED",
@@ -274,7 +301,7 @@ async function runNoteAction({
   const { text, error } = await runPass({
     infer,
     prompt: composePrompt,
-    options: { systemPrompt, maxTokens: composeMaxTokens },
+    options: { systemPrompt: composeSystemPrompt, maxTokens: composeMaxTokens },
     sleep,
     signal,
   });
@@ -287,6 +314,7 @@ async function runNoteAction({
     gapCount,
     foldLevels: folded.levels,
     inputBudget,
+    userContextDropped: Boolean(userContext) && !composeBlock,
   };
 }
 

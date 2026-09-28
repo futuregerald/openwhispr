@@ -66,6 +66,7 @@ async function runMeetingDebrief({
   infer,
   segments,
   meetingTypeTemplate = null,
+  userContextBlock = "",
   onProgress = null,
   signal = null,
   // MUST have this default. Without it the first transient failure in production
@@ -80,7 +81,7 @@ async function runMeetingDebrief({
   if (!transcript) throw runnerError("Nothing to process", "LOCAL_CONTEXT_EXCEEDED");
 
   const recorderLabel = resolveRecorderLabel(segments);
-  const systemPrompt = debriefSystemPrompt(recorderLabel);
+  const systemPrompt = debriefSystemPrompt(recorderLabel, userContextBlock);
   const totalPasses = 1 + PROBES.length + SECTIONS.length;
   let donePasses = 0;
   let calls = 0;

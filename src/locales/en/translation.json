@@ -1034,6 +1034,10 @@
       "system": {
         "description": "Updates, storage & developer tools",
         "label": "System"
+      },
+      "context": {
+        "label": "Context",
+        "description": "Team, projects & spellings"
       }
     },
     "title": "Settings"
@@ -1647,6 +1651,23 @@
       "endpointUrl": "Endpoint URL",
       "serverUrl": "Server URL",
       "apiKeyOptional": "API Key (optional)"
+    },
+    "context": {
+      "title": "Context",
+      "description": "Standing notes about your world, given to the models that write your notes and clean up your dictation.",
+      "general": {
+        "label": "General context",
+        "description": "Your team, projects and vocabulary. Used for meeting notes, note titles, meeting-type detection and the chat agent.",
+        "placeholder": "Team: Molly Finn (PM), Mauricio Reis (SWE)… · Projects: CPT, SkillSync…",
+        "help": "Sent to whichever model you have configured, including a cloud provider. On a small local model it may be skipped so the transcript still fits."
+      },
+      "dictation": {
+        "label": "Dictation context",
+        "description": "Preferred spellings, used when your dictation is cleaned up.",
+        "placeholder": "\"Mauricio Reis\" not \"Maurizio Race\"",
+        "help": "This corrects spelling in the cleaned-up text. If a name is mis-heard, add it to Custom Dictionary — that is what biases transcription itself."
+      },
+      "counter": "{{count}} / {{max}}"
     }
   },
   "models": {

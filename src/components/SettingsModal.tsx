@@ -9,6 +9,7 @@ import {
   Keyboard,
   CreditCard,
   Shield,
+  BookOpen,
 } from "lucide-react";
 import SidebarModal, { type SidebarItem } from "./ui/SidebarModal";
 import SettingsPage, { SettingsSectionType } from "./SettingsPage";
@@ -60,6 +61,13 @@ export default function SettingsModal({ open, onOpenChange, initialSection }: Se
         label: t("settingsModal.sections.general.label"),
         icon: Sliders,
         description: t("settingsModal.sections.general.description"),
+        group: t("settingsModal.groups.app"),
+      },
+      {
+        id: "context",
+        label: t("settingsModal.sections.context.label"),
+        icon: BookOpen,
+        description: t("settingsModal.sections.context.description"),
         group: t("settingsModal.groups.app"),
       },
       {

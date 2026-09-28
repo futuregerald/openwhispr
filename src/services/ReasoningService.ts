@@ -22,6 +22,8 @@ import { getConfiguredOpenAIBase } from "./ai/openaiBase";
 import { applyThinkingSuppression } from "./ai/thinkingSuppression";
 import { clearTinfoilClientCache } from "./ai/tinfoilClient";
 import { resolveChatRoute } from "../helpers/chatRouting";
+import { fitUserContextBlock } from "../helpers/userContextBlock.js";
+import { budgetTokensForProvider } from "./ai/userContextBudget";
 
 export type AgentStreamChunk =
   | { type: "content"; text: string }
@@ -176,7 +178,8 @@ class ReasoningService extends BaseReasoningService {
     // No systemPrompt override means the default cleanup path: a deterministic
     // transform, so zero temperature and a delimited transcript.
     const isCleanup = !config.systemPrompt;
-    const systemPrompt = config.systemPrompt || this.getSystemPrompt(agentName);
+    const systemPrompt =
+      (config.systemPrompt || this.getSystemPrompt(agentName)) + (config.userContextBlock || "");
     const userPrompt = isCleanup ? wrapCleanupTranscript(text) : text;
 
     const messages = [
@@ -352,13 +355,25 @@ class ReasoningService extends BaseReasoningService {
       throw new Error(`Unsupported reasoning provider: ${providerId}`);
     }
 
+    const effectiveConfig =
+      config.userContext && providerId !== "local"
+        ? {
+            ...config,
+            userContextBlock: fitUserContextBlock(
+              config.userContext,
+              config.userContextKind || "dictation",
+              { budgetTokens: budgetTokensForProvider(providerId) }
+            ),
+          }
+        : config;
+
     const startTime = Date.now();
     try {
       const result = await handler.call({
         text,
         model: trimmedModel,
         agentName,
-        config,
+        config: effectiveConfig,
         ctx: this.providerContext,
       });
 

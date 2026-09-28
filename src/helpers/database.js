@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const { randomUUID } = require("crypto");
 const debugLogger = require("./debugLogger");
+const { normalizeUserContext } = require("./userContextBlock.js");
 const { buildNoteSearchQuery } = require("./noteSearch");
 const peopleResolver = require("./peopleResolver");
 const { resolveDateRange } = require("./searchDateRange");
@@ -11,6 +12,14 @@ const { app } = require("electron");
 // Server-enforced trigger cap (openwhispr-api); enforced here so one oversized
 // trigger can't 400 the whole sync batch.
 const MAX_SNIPPET_TRIGGER_LENGTH = 100;
+
+const USER_CONTEXT_DDL = `
+  CREATE TABLE IF NOT EXISTS user_context (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT '',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`;
 
 const TRANSCRIPT_ORIGIN_SOURCES = new Set(["audio:system", "first-segment", "unanchored"]);
 
@@ -272,6 +281,8 @@ class DatabaseManager {
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
+
+      this.db.exec(USER_CONTEXT_DDL);
 
       this._repairFtsIndex(FTS_REPAIR.notes);
 
@@ -1152,6 +1163,36 @@ class DatabaseManager {
       debugLogger.error("Error clearing audio flags", { error: error.message }, "database");
       throw error;
     }
+  }
+
+  getUserContext() {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    const rows = this.db.prepare("SELECT key, value FROM user_context").all();
+    const stored = new Map(rows.map((row) => [row.key, row.value]));
+    return { general: stored.get("general") ?? "", dictation: stored.get("dictation") ?? "" };
+  }
+
+  setUserContext(patch) {
+    if (!this.db) {
+      throw new Error("Database not initialized");
+    }
+    const entries = Object.entries(patch || {});
+    for (const [key] of entries) {
+      if (key !== "general" && key !== "dictation") {
+        throw new Error(`unknown user context key: ${key}`);
+      }
+    }
+    const upsert = this.db.prepare(
+      "INSERT INTO user_context (key, value, updated_at) VALUES (?, ?, datetime('now')) " +
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+    );
+    const write = this.db.transaction((rows) => {
+      for (const [key, value] of rows) upsert.run(key, value);
+    });
+    write(entries.map(([key, value]) => [key, normalizeUserContext(value, key)]));
+    return this.getUserContext();
   }
 
   getDictionary() {
@@ -3510,5 +3551,7 @@ class DatabaseManager {
     return null;
   }
 }
+
+DatabaseManager.USER_CONTEXT_DDL = USER_CONTEXT_DDL;
 
 module.exports = DatabaseManager;

@@ -990,6 +990,10 @@
       "workspace": {
         "label": "Espacio de trabajo",
         "description": "Miembros, equipos, facturación y claves API"
+      },
+      "context": {
+        "label": "Contexto",
+        "description": "Equipa, projetos e grafias"
       }
     },
     "title": "Configurações"
@@ -1603,6 +1607,23 @@
         "keyCreatedTitle": "Clave API creada",
         "keyCreatedDescription": "Copia esta clave ahora — no podrás verla de nuevo."
       }
+    },
+    "context": {
+      "title": "Contexto",
+      "description": "Notas permanentes sobre o teu contexto, enviadas aos modelos que escrevem as tuas notas e limpam o teu ditado.",
+      "general": {
+        "label": "Contexto geral",
+        "description": "A tua equipa, projetos e vocabulário. Usado em notas de reunião, títulos, deteção do tipo de reunião e no agente de conversa.",
+        "placeholder": "Equipa: Molly Finn (PM), Mauricio Reis (SWE)… · Projetos: CPT, SkillSync…",
+        "help": "Enviado para o modelo que tiveres configurado, incluindo um fornecedor na nuvem. Num modelo local pequeno pode ser ignorado para que a transcrição ainda caiba."
+      },
+      "dictation": {
+        "label": "Contexto de ditado",
+        "description": "Grafias preferidas, usadas ao limpar o teu ditado.",
+        "placeholder": "«Mauricio Reis» e não «Maurizio Race»",
+        "help": "Isto corrige a grafia no texto já limpo. Se um nome for mal ouvido, acrescenta-o ao Dicionário personalizado — é isso que influencia a transcrição."
+      },
+      "counter": "{{count}} / {{max}}"
     }
   },
   "models": {

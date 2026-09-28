@@ -996,6 +996,10 @@
       "workspace": {
         "label": "Espacio de trabajo",
         "description": "Miembros, equipos, facturación y claves API"
+      },
+      "context": {
+        "label": "Contexto",
+        "description": "Equipo, proyectos y ortografía"
       }
     },
     "title": "Ajustes"
@@ -1609,6 +1613,23 @@
         "keyCreatedTitle": "Clave API creada",
         "keyCreatedDescription": "Copia esta clave ahora — no podrás verla de nuevo."
       }
+    },
+    "context": {
+      "title": "Contexto",
+      "description": "Notas permanentes sobre tu entorno, enviadas a los modelos que escriben tus notas y limpian tu dictado.",
+      "general": {
+        "label": "Contexto general",
+        "description": "Tu equipo, proyectos y vocabulario. Se usa para notas de reuniones, títulos, detección del tipo de reunión y el agente de chat.",
+        "placeholder": "Equipo: Molly Finn (PM), Mauricio Reis (SWE)… · Proyectos: CPT, SkillSync…",
+        "help": "Se envía al modelo que tengas configurado, incluido un proveedor en la nube. En un modelo local pequeño puede omitirse para que la transcripción siga cabiendo."
+      },
+      "dictation": {
+        "label": "Contexto de dictado",
+        "description": "Ortografía preferida, usada al limpiar tu dictado.",
+        "placeholder": "«Mauricio Reis», no «Maurizio Race»",
+        "help": "Esto corrige la ortografía en el texto ya limpio. Si un nombre se escucha mal, añádelo al Diccionario personalizado: eso es lo que influye en la transcripción."
+      },
+      "counter": "{{count}} / {{max}}"
     }
   },
   "models": {

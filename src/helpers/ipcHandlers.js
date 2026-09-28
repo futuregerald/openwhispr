@@ -1024,6 +1024,25 @@ class IPCHandlers {
       return this.databaseManager.setDictionary(words);
     });
 
+    ipcMain.handle("db-get-user-context", async () => {
+      return this.databaseManager.getUserContext();
+    });
+
+    ipcMain.handle("db-set-user-context", async (event, patch) => {
+      if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+        throw new Error("patch must be an object");
+      }
+      return this.databaseManager.setUserContext(patch);
+    });
+
+    ipcMain.handle("resolve-model-context", async (event, modelId) => {
+      try {
+        return await require("./modelManagerBridge").default.resolveModelContext(modelId);
+      } catch (error) {
+        return { contextSize: null, isGpuBackend: false, error: error.message };
+      }
+    });
+
     ipcMain.handle("db-get-snippets", async () => {
       return this.databaseManager.getSnippets();
     });
@@ -3411,7 +3430,8 @@ class IPCHandlers {
     // scheduler that keeps them from starving dictation lives in this process,
     // and a run of this length must survive the control panel being closed.
     ipcMain.handle("run-note-action", async (event, payload) => {
-      const { noteId, noteContent, segments, systemPrompt, modelId, disableThinking } = payload;
+      const { noteId, noteContent, segments, systemPrompt, userContext, modelId, disableThinking } =
+        payload;
       const controller = new AbortController();
       this._noteActionRuns = this._noteActionRuns || new Map();
       this._noteActionRuns.set(noteId, controller);
@@ -3428,6 +3448,7 @@ class IPCHandlers {
           noteContent,
           segments,
           systemPrompt,
+          userContext,
           contextSize,
           isGpuBackend,
           signal: controller.signal,
@@ -3450,6 +3471,7 @@ class IPCHandlers {
             partial: result.partial,
             gapCount: result.gapCount,
             foldLevels: result.foldLevels,
+            userContextDropped: result.userContextDropped === true,
             contextSize,
             isGpuBackend,
           },

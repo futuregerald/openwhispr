@@ -504,6 +504,14 @@ declare global {
       // Dictionary operations
       getDictionary: () => Promise<string[]>;
       setDictionary: (words: string[]) => Promise<{ success: boolean }>;
+      getUserContext: () => Promise<{ general: string; dictation: string }>;
+      setUserContext: (patch: {
+        general?: string;
+        dictation?: string;
+      }) => Promise<{ general: string; dictation: string }>;
+      resolveModelContext: (
+        modelId: string
+      ) => Promise<{ contextSize: number | null; isGpuBackend: boolean; error?: string }>;
       onDictionaryUpdated?: (callback: (words: string[]) => void) => () => void;
       getSnippets?: () => Promise<Array<{ trigger: string; replacement: string }>>;
       setSnippets?: (
@@ -855,6 +863,7 @@ declare global {
         noteContent: string;
         segments: Array<{ label: string; text: string }>;
         systemPrompt: string;
+        userContext?: string;
         modelId: string;
         disableThinking?: boolean;
       }) => Promise<{

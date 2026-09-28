@@ -996,6 +996,10 @@
       "workspace": {
         "label": "Espacio de trabajo",
         "description": "Miembros, equipos, facturación y claves API"
+      },
+      "context": {
+        "label": "背景資訊",
+        "description": "團隊、專案與拼寫"
       }
     },
     "title": "設定"
@@ -1609,6 +1613,23 @@
         "keyCreatedTitle": "Clave API creada",
         "keyCreatedDescription": "Copia esta clave ahora — no podrás verla de nuevo."
       }
+    },
+    "context": {
+      "title": "背景資訊",
+      "description": "關於你工作環境的常駐說明，會提供給撰寫筆記和整理口述的模型。",
+      "general": {
+        "label": "通用背景",
+        "description": "你的團隊、專案和術語。用於會議筆記、筆記標題、會議類型辨識和聊天助理。",
+        "placeholder": "團隊：Molly Finn (PM)、Mauricio Reis (SWE)… · 專案：CPT、SkillSync…",
+        "help": "會傳送給你設定的模型，包括雲端服務商。在較小的本機模型上，為了讓轉錄內容放得下，這部分可能會被略過。"
+      },
+      "dictation": {
+        "label": "口述背景",
+        "description": "偏好的拼寫，在整理口述文字時使用。",
+        "placeholder": "是「Mauricio Reis」，不是「Maurizio Race」",
+        "help": "這會修正整理後文字中的拼寫。如果名字被聽錯，請加入自訂辭典——那才會影響轉錄本身。"
+      },
+      "counter": "{{count}} / {{max}}"
     }
   },
   "models": {

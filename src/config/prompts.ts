@@ -1,4 +1,5 @@
 import { resolvePrompt } from "./prompts/index";
+import { neutraliseContextMarkers } from "../helpers/userContextBlock.js";
 
 export {
   resolvePrompt,
@@ -42,7 +43,11 @@ const TOOL_INSTRUCTIONS: Record<string, string> = {
     "Use get_calendar_events to check the user's schedule, upcoming meetings, or calendar events.",
 };
 
-export function getAgentSystemPrompt(availableTools?: string[], noteContext?: string): string {
+export function getAgentSystemPrompt(
+  availableTools?: string[],
+  noteContext?: string,
+  userContextBlock?: string
+): string {
   let prompt = resolvePrompt("chatAgent", { agentName: null });
 
   if (availableTools && availableTools.length > 0) {
@@ -56,8 +61,10 @@ export function getAgentSystemPrompt(availableTools?: string[], noteContext?: st
     prompt +=
       "\n\nBelow are notes from the user's library that may be relevant. " +
       "Reference them naturally if they help answer the question.\n\n" +
-      noteContext;
+      neutraliseContextMarkers(noteContext);
   }
+
+  if (userContextBlock) prompt += userContextBlock;
 
   return prompt;
 }
