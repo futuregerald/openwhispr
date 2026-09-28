@@ -10,6 +10,7 @@ const HEADINGS = {
 };
 
 const CLOSE = "END OF USER CONTEXT.";
+const CLOSE_PATTERN = /END OF USER CONTEXT\./gi;
 export const CHARS_PER_TOKEN = 3.6;
 export const PROMPT_SHARE = 0.6;
 
@@ -44,10 +45,7 @@ export function normalizeUserContext(value, kind) {
 }
 
 export function formatUserContextBlock(value, kind) {
-  const text = normalizeUserContext(value, kind).replace(
-    new RegExp(CLOSE.replace(/\./g, "\\."), "gi"),
-    "[marker removed]"
-  );
+  const text = normalizeUserContext(value, kind).replace(CLOSE_PATTERN, "[marker removed]");
   if (!text) return "";
   return `\n\n${HEADINGS[kind] || HEADINGS.general}\n\n${text}\n\n${CLOSE}`;
 }
