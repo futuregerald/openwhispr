@@ -98,12 +98,13 @@ import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { formatBytes } from "../utils/formatBytes";
 import { useSettingsStore, selectResolvedNoteFormatting } from "../stores/settingsStore";
 import { canManageSystemAudioInApp } from "../utils/systemAudioAccess";
+import ContextSettings from "./settings/ContextSettings";
 
 const formatAmount = (cents: number, currency: string) =>
   (cents / 100).toLocaleString(undefined, { style: "currency", currency });
 
 export type SettingsSectionType =
-  "general" | "hotkeys" | "speechToText" | "llms" | "privacyData" | "system";
+  "general" | "context" | "hotkeys" | "speechToText" | "llms" | "privacyData" | "system";
 
 interface SettingsPageProps {
   activeSection?: SettingsSectionType;
@@ -2595,6 +2596,23 @@ EOF`,
                   </SettingsPanel>
                 </div>
               )}
+            </div>
+          </div>
+        );
+
+      case "context":
+        return (
+          <div className="space-y-6">
+            <div>
+              <SectionHeader
+                title={t("settingsPage.context.title")}
+                description={t("settingsPage.context.description")}
+              />
+              <SettingsPanel>
+                <SettingsPanelRow>
+                  <ContextSettings />
+                </SettingsPanelRow>
+              </SettingsPanel>
             </div>
           </div>
         );
