@@ -7,7 +7,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey?style=flat" alt="Platform" />
-  <img src="https://img.shields.io/badge/version-1.22.3-informational?style=flat" alt="Version 1.22.3" />
+  <img src="https://img.shields.io/badge/version-1.28.0-informational?style=flat" alt="Version 1.28.0" />
   <img src="https://img.shields.io/badge/build-from%20source-orange?style=flat" alt="Build from source" />
   <img src="https://img.shields.io/badge/telemetry-none-brightgreen?style=flat" alt="No telemetry" />
 </p>
@@ -24,7 +24,7 @@
 <p align="center">
   <strong>
     Forked from <a href="https://github.com/OpenWhispr/openwhispr">OpenWhispr/openwhispr</a> ·
-    274 commits ahead · 338 files changed · ~39,000 lines added
+    303 commits ahead · 386 files changed · ~52,700 lines added
   </strong>
 </p>
 
@@ -49,7 +49,7 @@ Grouped by what it actually changes for you. Everything below is in `main`.
 - **No account, no signup, no billing.** The Account, Plans & Billing, Workspace and Pro-upsell
   sections were removed outright. First run goes straight to on-device transcription.
 - **Hosted cloud transcription removed.** Speech-to-text offers **Local** and **Self-hosted**
-  only. Bring-your-own-key cloud providers are still available for the *AI* features, strictly
+  only. Bring-your-own-key cloud providers are still available for the _AI_ features, strictly
   opt-in.
 - **Cloud note sync removed**, including the database columns that backed it.
 
@@ -78,11 +78,23 @@ This is why the fork exists.
 
 ### A post-call pipeline you can see and retry
 
-- Four steps after every call — re-transcribe, title, classify, write notes — with a live
+- Four steps after every call — re-transcribe, classify, title, write notes — with a live
   indicator showing elapsed time and sub-stages.
 - **Retry the step that actually failed**, not the whole pipeline.
 - **A persisted background job queue**, so quitting mid-process no longer loses the work.
 - Meeting-detection health is recorded and surfaced in the UI instead of failing silently.
+
+### Meeting notes a local model can actually write
+
+Asking a small local model for a whole write-up in one prompt produces something vague. Instead
+the app works through the transcript one question at a time — why the meeting was happening, what
+each person committed to, what was said carefully, which questions never got asked, what could go
+wrong next — and only then writes the notes section by section, reusing the cached context
+between passes.
+
+Measured against a reference debrief of a real 35-minute call, the pass-based notes hit **11 of
+11** checks where the old single-prompt notes hit 6. Notes cite timestamps you can scan back to,
+and include a candid read of the conversation rather than only a summary of it.
 
 ### Meeting types
 
@@ -96,15 +108,42 @@ This is why the fork exists.
 - **NVIDIA Parakeet TDT 0.6B v3** is the default transcription engine — fast, 680 MB,
   multilingual — and auto-downloads on first run with a progress banner. Whisper is one click
   away in Settings for noisy audio or other languages.
+- **Four Parakeet/Nemotron models**, two of them cache-aware streaming — with those, the
+  live preview updates word by word over a persistent stream instead of in 1.5-second chunks.
 - **LLM inference defaults to local**, with a guided Gemma download when nothing is configured.
 - Provider settings simplified to **local** and **remote** rather than a wall of options.
+- **A model that cannot fit is refused, not loaded.** Before mapping weights the app checks them
+  against what the machine can actually reclaim, and tells you what it needs and what is free —
+  instead of paging the desktop into the ground. macOS only for now, and inert elsewhere.
+
+### It speaks your language
+
+- **The interface is translated into 10 languages** — English, Spanish, French, German,
+  Portuguese, Italian, Russian, Japanese, and both Simplified and Traditional Chinese.
+- **61 languages for transcription**, 59 of them on local Whisper, plus automatic detection.
+
+### Your keys stay yours
+
+- **API keys are encrypted at rest** through the OS keychain — Keychain on macOS, DPAPI on
+  Windows, libsecret on Linux — rather than sitting in a plaintext `.env`. (On a Linux box with
+  no keyring available, Electron falls back to plaintext.)
+- Keys are only ever sent to the provider they belong to, and only if you configured one.
+
+### Hotkeys that work where Electron's don't
+
+- **Wayland global shortcuts** on GNOME, KDE and Hyprland, registered natively through D-Bus,
+  gsettings, KGlobalAccel or `hyprctl` — Electron's own `globalShortcut` does not work there.
+- **True push-to-talk on Windows** via a low-level keyboard hook, including compound hotkeys.
+- Automatic fallback to a working key when the default is already taken.
 
 ### Other additions
 
 - **Agent web search** on a bring-your-own Brave API key.
+- **An MCP server**, so Claude Desktop or Claude Code can read your notes, transcripts and
+  people — see [docs/MCP-SETUP.md](docs/MCP-SETUP.md).
 - New colour scheme (Silver / Pacific Cyan / Blue Slate).
-- **78 new test files** added under `test/helpers/` (125 in total) — the fork carries
-  substantially more test coverage than it inherited.
+- **100 new test files** added under `test/helpers/` (148 in total, ~1,500 tests) — the fork
+  carries substantially more test coverage than it inherited.
 
 ### Known limitations
 
@@ -135,8 +174,9 @@ machine.
   across meetings
 - **Notes** — folders, full-text and semantic search, AI actions, markdown mirroring to disk
 - **Custom dictionary** — teach it names, jargon and brand terms it keeps getting wrong
-- **Public API & MCP** — manage notes and transcriptions programmatically, or connect your own AI
-  assistant
+- **Public API & MCP** — manage notes and transcriptions programmatically, or connect Claude
+  Desktop / Claude Code to your own notes ([setup](docs/MCP-SETUP.md))
+- **10 interface languages** and 61 transcription languages, with automatic detection
 
 ## Install
 
@@ -152,10 +192,10 @@ npm run dev
 
 **Requirements**
 
-| | |
-|---|---|
-| Node.js | 24+ (pinned in `.nvmrc`) |
-| npm | **11.11.0+** — see below |
+|              |                                                                                  |
+| ------------ | -------------------------------------------------------------------------------- |
+| Node.js      | 24+ (pinned in `.nvmrc`)                                                         |
+| npm          | **11.11.0+** — see below                                                         |
 | macOS extras | Xcode Command Line Tools (`xcode-select --install`), only for `setup:fluidaudio` |
 
 > **The npm floor is not optional.** Below 11.11.0, npm silently strips the `libc` fields from
@@ -193,6 +233,7 @@ To re-enable real signing and notarization with your own Developer ID, see
 
 Fork-specific:
 
+- [Connecting an AI assistant over MCP](docs/MCP-SETUP.md)
 - [Fork setup, sharing & upstream-sync guide](docs/FORK-SETUP.md)
 - [FluidAudio integration notes](docs/FLUIDAUDIO-INTEGRATION.md)
 - [Local diarization research & decision record](docs/LOCAL-DIARIZATION-RESEARCH.md)
