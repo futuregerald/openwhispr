@@ -86,10 +86,89 @@ test("a real citation survives", () => {
   assert.equal(r.invalidTimestamps, 0);
 });
 
-test("a citation of a moment that does not exist is removed", () => {
+test("a citation of a moment that does not exist is removed with its connector", () => {
   const r = verifyDebriefSection("Dana answered at [07:13].", TRANSCRIPT);
-  assert.equal(r.text, "Dana answered at.");
+  assert.equal(r.text, "Dana answered.");
   assert.equal(r.invalidTimestamps, 1);
+});
+
+// The shape the section prompts actually ask for ("what was said, with names and
+// [mm:ss] timestamps"), and the one a naive removal turns into broken English.
+test("a citation removed mid-sentence does not leave a dangling preposition", () => {
+  const r = verifyDebriefSection("Dana said at [07:13] that it slipped.", TRANSCRIPT);
+  assert.equal(r.text, "Dana said that it slipped.");
+  assert.equal(r.invalidTimestamps, 1);
+});
+
+test("a dead citation elsewhere does not disturb a real one", () => {
+  const r = verifyDebriefSection("Dana at [00:42] and again at [07:13] said so.", TRANSCRIPT);
+  assert.equal(r.text, "Dana at [00:42] and again said so.");
+  assert.equal(r.invalidTimestamps, 1);
+});
+
+// Two trailing spaces are the only way to hold consecutive lines apart in the
+// markdown these notes render through, and the Assessment section is three such
+// lines. A removal anywhere in the section must not flatten them.
+test("a removal does not destroy Markdown hard line breaks elsewhere", () => {
+  const body = "**Strengths:** clear  \n**Concerns:** vague [07:13]  \n**Lean:** hire";
+  const r = verifyDebriefSection(body, TRANSCRIPT);
+  assert.equal(r.text, "**Strengths:** clear  \n**Concerns:** vague  \n**Lean:** hire");
+  assert.equal(r.invalidTimestamps, 1);
+});
+
+test("a removal does not edit the inside of a quotation just verified as exact", () => {
+  const r = verifyDebriefSection(
+    'Dana said "we shipped it ... two weeks late" and left [07:13].',
+    TRANSCRIPT
+  );
+  assert.equal(r.text, 'Dana said "we shipped it ... two weeks late" and left.');
+  assert.equal(r.unverifiedQuotes, 0);
+});
+
+test("a bullet left holding nothing but a dead citation is dropped", () => {
+  const r = verifyDebriefSection("Dana drove it\n- [07:13]\n", TRANSCRIPT);
+  assert.equal(r.text, "Dana drove it\n", "a bare - renders as a setext heading underline");
+});
+
+// Anchored because renderDebriefTranscript only emits a stamp at line start, and
+// transcript text is untrusted -- anyone audible can say a timestamp out loud.
+test("a timestamp spoken aloud inside a turn does not whitelist a citation", () => {
+  const spoken = "[00:00] Dana: the log says [07:13] is when it broke";
+  const r = verifyDebriefSection("Dana answered at [07:13].", spoken);
+  assert.equal(r.text, "Dana answered.");
+  assert.equal(r.invalidTimestamps, 1);
+});
+
+test("a markdown link whose label reads like a time is left intact", () => {
+  const r = verifyDebriefSection("See [12:30](https://x) for detail.", TRANSCRIPT);
+  assert.equal(r.text, "See [12:30](https://x) for detail.");
+  assert.equal(r.invalidTimestamps, 0);
+});
+
+test("a short quoted term is not treated as a claim of verbatim speech", () => {
+  const body = 'Dana treated the deadline as a "soft" target.';
+  const r = verifyDebriefSection(body, TRANSCRIPT);
+  assert.equal(r.text, body, "a scare quote was stripped and counted as a fabrication");
+  assert.equal(r.unverifiedQuotes, 0);
+});
+
+test("a quotation taken from the user's own context verifies", () => {
+  const body = 'Dana leads the "Delivery Domain platform team" here.';
+  const r = verifyDebriefSection(body, TRANSCRIPT, "Delivery Domain platform team owns delivery");
+  assert.equal(r.text, body);
+  assert.equal(r.unverifiedQuotes, 0);
+});
+
+test("a quotation that embeds a real citation is not called a fabrication", () => {
+  const body = 'Dana said "We shipped it in March [00:42]".';
+  const r = verifyDebriefSection(body, TRANSCRIPT);
+  assert.equal(r.text, body);
+  assert.equal(r.unverifiedQuotes, 0);
+});
+
+test("a quotation wrapped over four lines is still checked", () => {
+  const r = verifyDebriefSection('Dana said "we\nshipped\nit in\nJanuary".', TRANSCRIPT);
+  assert.equal(r.unverifiedQuotes, 1, "a multi-line quotation was exempted from checking");
 });
 
 test("an unpadded citation of a real moment is canonicalised, not removed", () => {

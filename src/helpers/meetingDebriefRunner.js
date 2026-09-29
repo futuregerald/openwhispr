@@ -146,7 +146,7 @@ async function runMeetingDebrief({
         { systemPrompt, maxTokens: section.maxTokens, temperature: section.temperature }
       );
       const stripped = text == null ? "" : stripEchoedHeading(text, section.heading).trim();
-      const verified = verifyDebriefSection(stripped, transcript);
+      const verified = verifyDebriefSection(stripped, transcript, userContextBlock);
       unverifiedQuotes += verified.unverifiedQuotes;
       invalidTimestamps += verified.invalidTimestamps;
       const body = verified.text.trim();
