@@ -79,3 +79,58 @@ test("an empty body is returned untouched", () => {
   const r = verifyDebriefSection("", TRANSCRIPT);
   assert.deepEqual(r, { text: "", unverifiedQuotes: 0, invalidTimestamps: 0 });
 });
+
+test("a real citation survives", () => {
+  const r = verifyDebriefSection("Dana answered at [00:42].", TRANSCRIPT);
+  assert.equal(r.text, "Dana answered at [00:42].");
+  assert.equal(r.invalidTimestamps, 0);
+});
+
+test("a citation of a moment that does not exist is removed", () => {
+  const r = verifyDebriefSection("Dana answered at [07:13].", TRANSCRIPT);
+  assert.equal(r.text, "Dana answered at.");
+  assert.equal(r.invalidTimestamps, 1);
+});
+
+test("an unpadded citation of a real moment is canonicalised, not removed", () => {
+  const r = verifyDebriefSection("Dana answered at [0:42].", TRANSCRIPT);
+  assert.equal(r.text, "Dana answered at [00:42].");
+  assert.equal(r.invalidTimestamps, 0);
+});
+
+test("an hh:mm:ss citation is rewritten when the moment is real", () => {
+  const r = verifyDebriefSection("You asked at [00:01:35].", TRANSCRIPT);
+  assert.equal(r.text, "You asked at [01:35].");
+  assert.equal(r.invalidTimestamps, 0);
+});
+
+test("a bracketed analysis label is not treated as a citation", () => {
+  const r = verifyDebriefSection("See [DRIVER] and [the plan](x).", TRANSCRIPT);
+  assert.equal(r.text, "See [DRIVER] and [the plan](x).");
+  assert.equal(r.invalidTimestamps, 0);
+});
+
+test("removing a citation leaves nested list indentation intact", () => {
+  const r = verifyDebriefSection("- a\n  - nested [07:13]\n    - deeper", TRANSCRIPT);
+  assert.equal(r.invalidTimestamps, 1);
+  assert.equal(
+    r.text,
+    "- a\n  - nested\n    - deeper",
+    "the tidy flattened a nested list into three siblings"
+  );
+});
+
+// Stated, not an oversight: a malformed stamp falls outside CITATION and is left
+// alone. Widening the pattern to catch it would also catch ordinary brackets.
+test("a malformed stamp is left alone rather than guessed at", () => {
+  const r = verifyDebriefSection("Dana answered at [09:99].", TRANSCRIPT);
+  assert.equal(r.text, "Dana answered at [09:99].");
+  assert.equal(r.invalidTimestamps, 0);
+});
+
+// Two trailing spaces are a hard line break in Markdown, so whitespace left
+// behind by a removed citation is not cosmetic.
+test("a removed citation leaves no trailing whitespace behind", () => {
+  const r = verifyDebriefSection("- nested [07:13]\n- next", TRANSCRIPT);
+  assert.equal(r.text, "- nested\n- next");
+});
