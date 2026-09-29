@@ -878,6 +878,8 @@ Reply with ONLY the numeric id of the best matching meeting type. If none match 
           calls: result.calls,
           skipped: result.skipped,
           failedProbes: result.failedProbes,
+          unverifiedQuotes: result.unverifiedQuotes,
+          invalidTimestamps: result.invalidTimestamps,
           contextSize,
         },
         "meeting"
