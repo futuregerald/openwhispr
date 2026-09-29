@@ -35,6 +35,8 @@ function ContextField({
 
   const pending = useRef({ draft, value, onCommit });
   pending.current = { draft, value, onCommit };
+  // Not redundant with onBlur: closing Settings unmounts the field without
+  // firing blur, so without this the user's last typing is silently lost.
   useEffect(
     () => () => {
       const { draft: latest, value: committed, onCommit: commit } = pending.current;

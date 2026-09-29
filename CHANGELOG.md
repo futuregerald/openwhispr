@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.30.0] - 2026-09-28
+
+### Fixed
+
+- Meeting debriefs no longer present quotations nobody said as if they were word for word, or cite
+  timestamps for moments that never happened. Wording that cannot be found in the transcript keeps
+  its words but loses its quotation marks, so a paraphrase stops looking like a direct quote, and a
+  citation matching no point in the recording is removed rather than sending you to the wrong
+  moment. The debrief already told the model to do both; nothing had been checking.
+- This applies to the debrief specifically — the notes you get when a local model writes them on a
+  GPU. Notes written by the shorter chunked path, which is what a CPU machine gets, are not checked
+  this way yet.
+
 ## [1.29.0] - 2026-09-28
 
 ### Added

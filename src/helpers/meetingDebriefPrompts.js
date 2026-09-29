@@ -364,4 +364,5 @@ module.exports = {
   topicsInstruction,
   renderDebriefTranscript,
   resolveRecorderLabel,
+  formatDebriefTimestamp,
 };
