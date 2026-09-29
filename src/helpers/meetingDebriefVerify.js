@@ -1,11 +1,11 @@
-const QUOTED = /[«"“]([^"“”\n]+(?:\n[^"“”\n]+)?)[»"”]/g;
-const ELLIPSIS = /\s*(?:\.\.\.|…)\s*/;
+const QUOTED = /[\u00ab"\u201c]([^"\u201c\u201d\n]+(?:\n[^"\u201c\u201d\n]+)?)[\u00bb"\u201d]/g;
+const ELLIPSIS = /\s*(?:\.\.\.|\u2026)\s*/;
 
 const normalise = (value) =>
   String(value)
-    .replace(/[‘’]/g, "'")
-    .replace(/[“”]/g, '"')
-    .replace(/[.,;:!?—–-]/g, " ")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/[.,;:!?\u2014\u2013-]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
