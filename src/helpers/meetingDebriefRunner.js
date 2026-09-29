@@ -19,6 +19,7 @@ const {
   runPass,
 } = require("./inferencePassGuards");
 const { classifyInferenceError } = require("./inferenceErrorClass");
+const { verifyDebriefSection } = require("./meetingDebriefVerify");
 
 // 10 minutes, not the 30 the chunk-and-fold runner uses: this pipeline's pass
 // count is fixed at 19 rather than growing with the transcript, and the slowest
@@ -129,6 +130,8 @@ async function runMeetingDebrief({
   const analysis = composeAnalysis(answers);
   const written = [];
   const skipped = [];
+  let unverifiedQuotes = 0;
+  let invalidTimestamps = 0;
 
   for (const section of SECTIONS) {
     if (appliesToKind(section.when, kind)) {
@@ -142,7 +145,11 @@ async function runMeetingDebrief({
         ),
         { systemPrompt, maxTokens: section.maxTokens, temperature: section.temperature }
       );
-      const body = text == null ? "" : stripEchoedHeading(text, section.heading).trim();
+      const stripped = text == null ? "" : stripEchoedHeading(text, section.heading).trim();
+      const verified = verifyDebriefSection(stripped, transcript);
+      unverifiedQuotes += verified.unverifiedQuotes;
+      invalidTimestamps += verified.invalidTimestamps;
+      const body = verified.text.trim();
       if (body && body.toUpperCase() !== EMPTY_SECTION_BODY) {
         written.push(`${section.heading}\n\n${body}`);
       } else {
@@ -164,7 +171,15 @@ async function runMeetingDebrief({
     });
   }
 
-  return { text: written.join("\n\n"), calls, skipped, failedProbes, kind };
+  return {
+    text: written.join("\n\n"),
+    calls,
+    skipped,
+    failedProbes,
+    kind,
+    unverifiedQuotes,
+    invalidTimestamps,
+  };
 }
 
 module.exports = { runMeetingDebrief };

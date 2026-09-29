@@ -411,3 +411,33 @@ test("the recorder label the transcript uses is the one the prompts carry", asyn
   assert.ok(h.calls[0].opts.systemPrompt.includes('labelled "Du"'));
   assert.ok(!h.calls.some((c) => c.prompt.includes('("You")')));
 });
+
+test("a section's fabricated quote and dead citation are repaired, and both are counted", async () => {
+  // [07:13] and not [09:99]: CITATION's seconds group is [0-5]\d, so a malformed
+  // stamp is never matched and never removed. Asserting on one would fail
+  // against a correct implementation.
+  const h = harness({
+    kindAnswer: "team",
+    reply: (prompt) =>
+      isSectionPrompt(prompt) ? 'Dana said "we shipped it in January" at [07:13].' : undefined,
+  });
+  const result = await runMeetingDebrief(h.options);
+
+  assert.ok(
+    !result.text.includes('"we shipped it in January"'),
+    "an unverifiable quotation kept its quotation marks"
+  );
+  assert.ok(result.text.includes("we shipped it in January"), "the words were deleted");
+  assert.ok(!result.text.includes("[07:13]"), "a dead citation reached the user");
+  assert.ok(result.unverifiedQuotes > 0 && result.invalidTimestamps > 0);
+});
+
+test("a truthful section is returned byte for byte", async () => {
+  const body = 'Dana said "we shipped it in March" at [00:42].';
+  const h = harness({ kindAnswer: "team", reply: (p) => (isSectionPrompt(p) ? body : undefined) });
+  const result = await runMeetingDebrief(h.options);
+
+  assert.ok(result.text.includes(body), "a verified section was altered");
+  assert.equal(result.unverifiedQuotes, 0);
+  assert.equal(result.invalidTimestamps, 0);
+});
