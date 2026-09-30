@@ -28,6 +28,44 @@ class QdrantManager {
     this.startupPromise = null;
     this.healthCheckInterval = null;
     this.cachedBinaryPath = null;
+    this.stopping = false;
+    this.lastSuccessAt = null;
+    this.firstStartAt = null;
+    this._restartTimer = null;
+    this._restartAttempts = 0;
+    this._onReadyCallbacks = [];
+  }
+
+  _spawn(binaryPath, args, options) {
+    return spawn(binaryPath, args, options);
+  }
+
+  _writeConfig() {
+    fs.mkdirSync(STORAGE_DIR, { recursive: true });
+
+    const configPath = path.join(STORAGE_DIR, "config.yaml");
+    const storagePath = path.join(STORAGE_DIR, "storage");
+    const configContent = [
+      "storage:",
+      `  storage_path: ${storagePath}`,
+      "service:",
+      "  host: 127.0.0.1",
+      `  http_port: ${this.port}`,
+      `  grpc_port: ${this.port + 1}`,
+      "log_level: warn",
+      "",
+    ].join("\n");
+
+    fs.writeFileSync(configPath, configContent, "utf-8");
+    return { configPath, storagePath };
+  }
+
+  _findPort() {
+    return findAvailablePort(PORT_RANGE_START, PORT_RANGE_END);
+  }
+
+  onReady(fn) {
+    this._onReadyCallbacks.push(fn);
   }
 
   getBinaryPath() {
@@ -47,6 +85,7 @@ class QdrantManager {
   }
 
   async start() {
+    if (this.firstStartAt === null) this.firstStartAt = Date.now();
     if (this.startupPromise) return this.startupPromise;
     if (this.ready) return;
     if (this.process) await this.stop();
@@ -60,27 +99,13 @@ class QdrantManager {
   }
 
   async _doStart() {
+    this.stopping = false;
     const binaryPath = this.getBinaryPath();
     if (!binaryPath) throw new Error("qdrant binary not found");
 
-    this.port = await findAvailablePort(PORT_RANGE_START, PORT_RANGE_END);
+    this.port = await this._findPort();
 
-    fs.mkdirSync(STORAGE_DIR, { recursive: true });
-
-    const configPath = path.join(STORAGE_DIR, "config.yaml");
-    const storagePath = path.join(STORAGE_DIR, "storage");
-    const configContent = [
-      "storage:",
-      `  storage_path: ${storagePath}`,
-      "service:",
-      "  host: 127.0.0.1",
-      `  http_port: ${this.port}`,
-      `  grpc_port: ${this.port + 1}`,
-      "log_level: warn",
-      "",
-    ].join("\n");
-
-    fs.writeFileSync(configPath, configContent, "utf-8");
+    const { configPath, storagePath } = this._writeConfig();
 
     debugLogger.debug("Starting qdrant", {
       port: this.port,
@@ -89,7 +114,7 @@ class QdrantManager {
       storagePath,
     });
 
-    this.process = spawn(binaryPath, ["--config-path", configPath], {
+    this.process = this._spawn(binaryPath, ["--config-path", configPath], {
       cwd: STORAGE_DIR,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -124,9 +149,19 @@ class QdrantManager {
     });
 
     await this._waitForReady(() => ({ stderr: stderrBuffer, exitCode }));
+    this._restartAttempts = 0;
+    this.lastSuccessAt = Date.now();
     this._startHealthCheck();
 
     debugLogger.info("qdrant started successfully", { port: this.port });
+
+    for (const fn of this._onReadyCallbacks) {
+      try {
+        fn(this.port);
+      } catch (err) {
+        debugLogger.warn("qdrant onReady callback failed", { error: err.message });
+      }
+    }
   }
 
   async _waitForReady(getProcessInfo) {
