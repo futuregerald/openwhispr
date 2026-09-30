@@ -87,3 +87,20 @@ test("a non-finite score does not mask a real winner", () => {
   assert.equal(r.outcome, "match");
   assert.equal(r.speakerId, "speaker_1");
 });
+
+// NaN needs no guard -- every comparison against it is false, so a NaN
+// candidate loses on its own. Infinity is the value the guard actually earns:
+// without it, Infinity beats every score AND clears the threshold, matching
+// with a confidence of Infinity.
+test("an infinite score is rejected rather than beating everything", () => {
+  assert.equal(classify([{ speakerId: "speaker_0", score: Infinity }]), null);
+});
+
+test("an infinite score cannot outrank a real winner", () => {
+  const r = classify([
+    { speakerId: "speaker_0", score: Infinity },
+    { speakerId: "speaker_1", score: 0.9 },
+  ]);
+  assert.equal(r.outcome, "match");
+  assert.equal(r.speakerId, "speaker_1");
+});

@@ -140,16 +140,21 @@ test("a confident match renames only the matched speaker's unnamed segments", as
 
 // The inverted check this replaces force-wrote exactly the locked segments it
 // was meant to protect.
-test("a locked segment is left alone", async () => {
+//
+// Asserting on the absence of a WRITE, not on the segment's name:
+// applyConfirmedSpeaker already self-protects against a locked segment
+// (speakerAssignmentPolicy.js:39), so a name assertion holds whether or not the
+// skip exists and the test would pass with the skip deleted. What the skip
+// uniquely controls is whether `changed` is set, and so whether the note is
+// rewritten at all.
+test("a locked segment causes no write at all", async () => {
   const h = sweepHarness({
     scores: [0.9, 0.2],
     segments: [{ speaker: "speaker_0", text: "a", speakerLocked: true, speakerLockSource: "user" }],
   });
   await h.run();
-  const segments = writtenSegments(h);
-  if (segments.length > 0) {
-    assert.notEqual(segments[0].speakerName, "Dana", "a locked segment was force-written");
-  }
+  assert.equal(h.noteUpdates.length, 0, "a locked segment triggered a pointless transcript write");
+  assert.equal(h.mappingWrites.length, 1, "the mapping row itself should still be written");
 });
 
 test("nothing is written when no speaker is close enough", async () => {
