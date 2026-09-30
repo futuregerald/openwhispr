@@ -7863,6 +7863,25 @@ class IPCHandlers {
           );
           if (!decision) continue;
 
+          const note = this.databaseManager.getNote(noteId);
+          let segments = null;
+          if (note?.transcript) {
+            try {
+              segments = JSON.parse(note.transcript);
+            } catch (err) {
+              debugLogger.warn(
+                "Retroactive mapping could not read a transcript",
+                { noteId, error: err.message },
+                "database"
+              );
+            }
+          }
+
+          const locked = (segments || []).some(
+            (seg) => seg.speaker === decision.speakerId && isSpeakerLocked(seg)
+          );
+          if (locked) continue;
+
           if (decision.outcome === "match") {
             this.databaseManager.setSpeakerMapping(
               noteId,
@@ -7873,10 +7892,8 @@ class IPCHandlers {
             );
           }
 
-          const note = this.databaseManager.getNote(noteId);
-          if (!note?.transcript) continue;
+          if (!segments) continue;
           try {
-            const segments = JSON.parse(note.transcript);
             let changed = false;
             for (const seg of segments) {
               if (seg.speaker !== decision.speakerId) continue;

@@ -158,14 +158,32 @@ test("a confident match renames only the matched speaker's unnamed segments", as
 // skip exists and the test would pass with the skip deleted. What the skip
 // uniquely controls is whether `changed` is set, and so whether the note is
 // rewritten at all.
-test("a locked segment causes no write at all", async () => {
+// Not even a mapping row. MeetingTranscriptChat resolves the displayed name as
+// `mappedName || segment.speakerName`, so a mapping row OUTRANKS the locked
+// segment name -- writing one would replace the name the user locked, in the UI,
+// while leaving the segment untouched. handleBulkAssignName locks segments
+// without writing a mapping, so this combination is ordinary, not contrived.
+test("a locked speaker is left entirely alone, mapping row included", async () => {
   const h = sweepHarness({
     scores: [0.9, 0.2],
     segments: [{ speaker: "speaker_0", text: "a", speakerLocked: true, speakerLockSource: "user" }],
   });
   await h.run();
   assert.equal(h.noteUpdates.length, 0, "a locked segment triggered a pointless transcript write");
-  assert.equal(h.mappingWrites.length, 1, "the mapping row itself should still be written");
+  assert.equal(h.mappingWrites.length, 0, "an auto row would outrank the locked name in the UI");
+});
+
+test("a lock on a different speaker does not block a legitimate match", async () => {
+  const h = sweepHarness({
+    scores: [0.9, 0.2],
+    segments: [
+      { speaker: "speaker_0", text: "a" },
+      { speaker: "speaker_1", text: "b", speakerLocked: true, speakerLockSource: "user" },
+    ],
+  });
+  await h.run();
+  assert.equal(h.mappingWrites.length, 1, "an unrelated lock blocked the whole note");
+  assert.equal(h.mappingWrites[0].speakerId, "speaker_0");
 });
 
 test("nothing is written when no speaker is close enough", async () => {
