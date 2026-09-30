@@ -6,15 +6,10 @@ import type { QdrantHealth } from "../types/electron";
 // the same period would make the notice appear and clear up to 30s late.
 const POLL_MS = 10000;
 
-/**
- * Reads the main process's view of whether the semantic-search sidecar is
- * working. Polled rather than pushed, for the same reason as detection health:
- * the interesting state persists, and a sidecar going quiet is exactly what a
- * push would miss.
- */
 export function useQdrantHealth(enabled = true) {
   const [health, setHealth] = useState<QdrantHealth | null>(null);
   const [repairing, setRepairing] = useState(false);
+  const [repairFailed, setRepairFailed] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -27,8 +22,12 @@ export function useQdrantHealth(enabled = true) {
 
   const repair = useCallback(async () => {
     setRepairing(true);
+    setRepairFailed(false);
     try {
-      await window.electronAPI?.repairQdrant?.();
+      const result = await window.electronAPI?.repairQdrant?.();
+      setRepairFailed(!result?.success);
+    } catch {
+      setRepairFailed(true);
     } finally {
       setRepairing(false);
       await refresh();
@@ -42,5 +41,5 @@ export function useQdrantHealth(enabled = true) {
     return () => clearInterval(id);
   }, [enabled, refresh]);
 
-  return { health, refresh, repair, repairing };
+  return { health, refresh, repair, repairing, repairFailed };
 }

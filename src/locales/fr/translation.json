@@ -53,7 +53,8 @@
         "title": "La recherche ne fonctionne que par mots-clés",
         "description": "Le moteur qui retrouve les notes par le sens ne répond plus ; votre agent se rabat donc sur la correspondance par mots-clés.",
         "action": "Réparer",
-        "repairing": "Réparation…"
+        "repairing": "Réparation…",
+        "repairFailed": "La réparation n'a pas fonctionné. Redémarrer OpenWhispr peut aider ; le fichier journal contient les détails."
       }
     }
   },

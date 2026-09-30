@@ -17,8 +17,6 @@ const STARTUP_TIMEOUT_MS = 30000;
 const STARTUP_POLL_INTERVAL_MS = 100;
 const HEALTH_CHECK_INTERVAL_MS = 5000;
 const HEALTH_CHECK_TIMEOUT_MS = 2000;
-// Slower than audioActivityDetector's 1s base: qdrant costs more to start, and a
-// tight respawn loop against a genuinely broken binary is worse than being down.
 const RESTART_BASE_MS = 2000;
 const RESTART_MAX_MS = 60 * 1000;
 const RESTART_MAX_ATTEMPTS = 5;
@@ -105,6 +103,7 @@ class QdrantManager {
     if (this.ready) return;
     if (this.process) await this.stop();
 
+    this.stopping = false;
     this.startupPromise = this._doStart();
     try {
       await this.startupPromise;
@@ -113,14 +112,22 @@ class QdrantManager {
     }
   }
 
+  _abortIfStopping() {
+    if (this.stopping) throw new Error("qdrant start aborted by shutdown");
+  }
+
   async _doStart() {
-    this.stopping = false;
     const binaryPath = this.getBinaryPath();
     if (!binaryPath) throw new Error("qdrant binary not found");
 
     this.port = await this._findPort();
+    // Re-checked after every await: a stop that lands while this is suspended
+    // would otherwise let the spawn below run anyway, and the child is detached,
+    // so it would outlive app.exit(0) holding the storage directory.
+    this._abortIfStopping();
 
     const { configPath, storagePath } = this._writeConfig();
+    this._abortIfStopping();
 
     debugLogger.debug("Starting qdrant", {
       port: this.port,
@@ -268,8 +275,6 @@ class QdrantManager {
     }
   }
 
-  // A sidecar that dies takes semantic search with it, so keep trying to bring
-  // it back rather than degrading once and never retrying.
   _scheduleRestart(reason) {
     if (this._restartTimer || this.stopping) return;
 
@@ -306,18 +311,22 @@ class QdrantManager {
     this._clearRestartTimer();
     this._stopHealthCheck();
 
-    if (!this.process) {
-      this.ready = false;
-      return;
+    const inflight = this.startupPromise;
+
+    if (this.process) {
+      debugLogger.debug("Stopping qdrant");
+      try {
+        await gracefulStopProcess(this.process);
+      } catch (error) {
+        debugLogger.error("Error stopping qdrant", { error: error.message });
+      }
     }
 
-    debugLogger.debug("Stopping qdrant");
-
-    try {
-      await gracefulStopProcess(this.process);
-    } catch (error) {
-      debugLogger.error("Error stopping qdrant", { error: error.message });
-    }
+    // A start still in flight must not outlive this call. Killing the child
+    // above makes _waitForReady give up promptly; awaiting here is what stops
+    // the repair path handing back the very start it just killed, and what
+    // stops a suspended _doStart spawning after shutdown has begun.
+    if (inflight) await inflight.catch(() => {});
 
     this.process = null;
     this.ready = false;

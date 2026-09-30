@@ -53,7 +53,8 @@
         "title": "Suche läuft nur noch über Stichwörter",
         "description": "Die Suchmaschine, die Notizen nach Bedeutung findet, antwortet nicht mehr. Dein Agent weicht auf die Stichwortsuche aus.",
         "action": "Reparieren",
-        "repairing": "Wird repariert…"
+        "repairing": "Wird repariert…",
+        "repairFailed": "Die Reparatur hat nicht funktioniert. Ein Neustart von OpenWhispr kann helfen; Details stehen in der Protokolldatei."
       }
     }
   },

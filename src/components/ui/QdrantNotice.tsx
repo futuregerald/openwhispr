@@ -3,18 +3,9 @@ import { AlertCircle } from "lucide-react";
 import { Button } from "./button";
 import { useQdrantHealth } from "../../hooks/useQdrantHealth";
 
-/**
- * Semantic search failing is silent: the agent quietly falls back to keyword
- * matching and nothing says why the results got worse. This says so, and offers
- * the one action that helps.
- *
- * Deliberately not dismissable, unlike MeetingDetectionNotice: this state is
- * repairable from the notice itself, so dismissing it would hide the fix rather
- * than acknowledge something the user can do nothing about.
- */
 export default function QdrantNotice() {
   const { t } = useTranslation();
-  const { health, repair, repairing } = useQdrantHealth();
+  const { health, repair, repairing, repairFailed } = useQdrantHealth();
 
   if (!health?.available || !health.degraded) return null;
 
@@ -30,7 +21,9 @@ export default function QdrantNotice() {
               {t("settings.semanticSearch.notice.title")}
             </p>
             <p className="text-xs text-muted-foreground mb-2">
-              {t("settings.semanticSearch.notice.description")}
+              {repairFailed
+                ? t("settings.semanticSearch.notice.repairFailed")
+                : t("settings.semanticSearch.notice.description")}
             </p>
             <Button
               variant="default"

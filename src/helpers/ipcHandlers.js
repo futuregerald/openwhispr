@@ -6690,9 +6690,8 @@ class IPCHandlers {
       try {
         await manager.stop();
         await manager.start();
-        // Reported from a fresh snapshot rather than from start() resolving:
-        // the caller needs to know whether search actually works now.
-        return { success: manager.getStatus().ready, status: manager.getStatus() };
+        const status = manager.getStatus();
+        return { success: Boolean(status.ready), status };
       } catch (error) {
         debugLogger.warn("qdrant repair failed", { error: error.message });
         return { success: false, error: error.message };

@@ -57,6 +57,7 @@ function managerHarness(
     restartBaseMs = null,
     healthIntervalMs = null,
     degradedAfterMs = null,
+    slowPortMs = null,
   } = {}
 ) {
   const m = new QdrantManager();
@@ -64,6 +65,7 @@ function managerHarness(
   const logs = [];
   let startAttempts = 0;
   let healthFailuresRemaining = 0;
+  let heldUnhealthy = false;
   let child = null;
 
   // debugLogger is a shared singleton and qdrantManager calls it by property
@@ -86,7 +88,10 @@ function managerHarness(
   if (degradedAfterMs !== null) m._degradedAfterMs = degradedAfterMs;
 
   m.getBinaryPath = () => "/fake/qdrant";
-  m._findPort = async () => ports[Math.min(startAttempts, ports.length - 1)];
+  m._findPort = async () => {
+    if (slowPortMs) await new Promise((r) => setTimeout(r, slowPortMs));
+    return ports[Math.min(startAttempts, ports.length - 1)];
+  };
   m._writeConfig = () => ({ configPath: "/fake/config.yaml", storagePath: "/fake/storage" });
 
   m._spawn = () => {
@@ -95,15 +100,27 @@ function managerHarness(
     // Past the allowance, the binary dies on launch -- how a genuinely broken
     // sidecar fails. Letting _waitForReady poll for its full 30s startup
     // timeout instead would make these tests take minutes.
+    //
+    // The child is RETURNED and then emits close, rather than returning null:
+    // real spawn never returns null, and _doStart reads `this.process.pid`
+    // immediately, so a null made these tests exercise a TypeError before any
+    // listener was attached -- the close never reached the handler at all.
+    const spawned = child;
     if (startAttempts > failStartsAfter) {
-      const dying = child;
-      child = null;
-      queueMicrotask(() => dying.emit("close", 1));
+      queueMicrotask(() => {
+        child = null;
+        spawned.emit("close", 1);
+      });
     }
-    return child;
+    return spawned;
   };
 
   m._checkHealth = async () => {
+    if (heldUnhealthy) return false;
+    // A doomed spawn must also fail its health check: _waitForReady polls health
+    // before the child's close event can land, so reporting healthy here would
+    // let a start that is already dying be recorded as a success.
+    if (startAttempts > failStartsAfter) return false;
     if (healthFailuresRemaining > 0) {
       healthFailuresRemaining -= 1;
       return false;
@@ -154,6 +171,10 @@ function managerHarness(
     },
     failHealthChecks(n) {
       healthFailuresRemaining = n;
+    },
+    // Keeps a start suspended inside _waitForReady for as long as the test needs.
+    holdHealth(held) {
+      heldUnhealthy = held;
     },
   };
 }
@@ -237,16 +258,36 @@ test("a start after a stop re-arms the restart", async (t) => {
   assert.equal(h.startAttempts, 3, "restart stayed disabled after a manual repair");
 });
 
+// Asserts the contract, not an exact spawn count. A restart is scheduled from
+// two places -- the close handler and the catch of a failed restart -- so a
+// given attempt does not always translate into a spawn before the next one is
+// scheduled, and `1 + RESTART_MAX_ATTEMPTS` is not an invariant.
 test("restart gives up rather than looping forever", async (t) => {
   const h = managerHarness(t, { restartBaseMs: 1, failStartsAfter: 1 });
   await h.start();
   h.killForTest();
-  await h.settle(500);
+  // Each doomed attempt costs one STARTUP_POLL_INTERVAL_MS (100ms) inside
+  // _waitForReady before the child's close is observed, so the cap needs room.
+  await h.settle(1500);
+
   assert.equal(
-    h.startAttempts,
-    1 + RESTART_MAX_ATTEMPTS,
-    "it kept retrying past the cap, or stopped early"
+    h.manager._restartAttempts,
+    RESTART_MAX_ATTEMPTS,
+    "the attempt counter ran past its cap, or stopped early"
   );
+  assert.ok(
+    h.startAttempts > 1 && h.startAttempts <= 1 + RESTART_MAX_ATTEMPTS,
+    `spawned ${h.startAttempts} times, outside the 2..${1 + RESTART_MAX_ATTEMPTS} the cap allows`
+  );
+  assert.ok(
+    h.logs.some((l) => l.message === "qdrant could not be restarted; giving up"),
+    "it never said it had given up"
+  );
+
+  // And having given up, it stays given up.
+  const settled = h.startAttempts;
+  await h.settle(300);
+  assert.equal(h.startAttempts, settled, "it resumed retrying after giving up");
 });
 
 test("an unexpected exit is logged at a level that reaches the log file", async (t) => {
@@ -293,12 +334,17 @@ test("ready recovers when the health check succeeds again", async (t) => {
 
 // 795 of 986 measured gaps are a single alternation, so a per-failure signal
 // would flap constantly.
+// Asserted while `ready` is still false, which is the only window in which a
+// `degraded = !ready` implementation would differ from a time-based one. The
+// first draft settled 40ms against a 500ms window with ready already restored,
+// so it held for every possible implementation and could not fail.
 test("one failed check does not report degraded", async (t) => {
   const h = managerHarness(t, { healthIntervalMs: 5, degradedAfterMs: 500 });
   await h.start();
-  h.failHealthChecks(1);
+  h.failHealthChecks(Infinity);
   await h.settle(40);
-  assert.equal(h.manager.getStatus().degraded, false);
+  assert.equal(h.manager.isReady(), false, "precondition: the check is failing right now");
+  assert.equal(h.manager.getStatus().degraded, false, "a single blip was reported as an outage");
 });
 
 test("a sustained outage reports degraded", async (t) => {
@@ -348,4 +394,47 @@ test("a failed check clears ready while it lasts", async (t) => {
   h.failHealthChecks(Infinity);
   await h.settle(40);
   assert.equal(h.manager.isReady(), false, "a failing health check still reported ready");
+});
+
+// The CRITICAL this branch originally shipped with. stop() neither awaited nor
+// cancelled an in-flight _doStart, so the repair handler's stop()-then-start()
+// handed back the very start it had just killed: no new process was spawned,
+// the error reported described the process the repair itself killed, and
+// `stopping` -- cleared only inside _doStart -- stayed latched true, which
+// silently disabled crash-restart for the rest of the session.
+test("repairing during an in-flight start really does start a new one", async (t) => {
+  const h = managerHarness(t, { restartBaseMs: 1, healthIntervalMs: 5, slowPortMs: 0 });
+  h.holdHealth(true);
+
+  const inflight = h.start().catch(() => {});
+  await h.settle(30);
+  assert.equal(h.startAttempts, 1, "nothing was spawned to begin with");
+
+  h.holdHealth(false);
+  await h.stop();
+  await h.start();
+  await inflight;
+
+  assert.equal(h.startAttempts, 2, "the repair handed back the start it had just killed");
+  assert.equal(h.manager.stopping, false, "stopping latched true, disabling crash-restart");
+  assert.equal(h.manager.isReady(), true);
+});
+
+// The child is spawned detached, so a start that completes after shutdown has
+// begun outlives app.exit(0) and holds the storage directory until the reaper
+// finds it on the next launch. Clearing the restart timer does not cover this:
+// _doStart is already past its guard, suspended on an await.
+test("a stop while a start is mid-flight never spawns", async (t) => {
+  const h = managerHarness(t, { slowPortMs: 60 });
+
+  const pending = h.start().catch(() => {});
+  await h.settle(10);
+  assert.equal(h.startAttempts, 0, "the port lookup should still be in flight");
+
+  await h.stop();
+  await h.settle(150);
+  await pending;
+
+  assert.equal(h.startAttempts, 0, "a detached qdrant was spawned after shutdown began");
+  assert.equal(h.manager.process, null);
 });
