@@ -25,6 +25,7 @@ Module._load = function patchedLoad(request, parent, isMain) {
 process.env.NODE_ENV = "test";
 
 const DatabaseManager = require("../../src/helpers/database.js");
+const IPCHandlers = require("../../src/helpers/ipcHandlers.js");
 
 function freshDatabase() {
   requireSqlite();
@@ -37,6 +38,14 @@ function insertNote(db) {
     .prepare("INSERT INTO notes (title, transcript) VALUES (?, ?)")
     .run("A meeting", JSON.stringify([]));
   return info.lastInsertRowid;
+}
+
+// The first coverage _reconcileLiveSpeakerState has ever had: before this,
+// grep -rln _reconcileLiveSpeakerState test/ returned nothing.
+function reconcileHarness(db) {
+  const handlers = Object.create(IPCHandlers.prototype);
+  Object.assign(handlers, { databaseManager: db, _applySpeakerName: () => {} });
+  return handlers;
 }
 
 const columnsOf = (db, table) =>
@@ -93,7 +102,9 @@ test("an auto mapping stores its similarity, a manual one stores none", () => {
   const db = freshDatabase();
   const noteId = insertNote(db);
   db.setSpeakerMapping(noteId, "speaker_0", null, "Dana", { origin: "auto", confidence: 0.71 });
-  db.setSpeakerMapping(noteId, "speaker_1", null, "Sam", { origin: "manual" });
+  // A confidence IS passed: without one, null comes out either way and the
+  // second half of this test cannot fail.
+  db.setSpeakerMapping(noteId, "speaker_1", null, "Sam", { origin: "manual", confidence: 0.71 });
   const rows = db.getSpeakerMappings(noteId);
   const dana = rows.find((r) => r.speaker_id === "speaker_0");
   const sam = rows.find((r) => r.speaker_id === "speaker_1");
@@ -113,17 +124,40 @@ test("rewriting a mapping cannot silently drop its provenance", () => {
   assert.equal(db.getSpeakerMappings(noteId)[0].origin, "manual");
 });
 
-test("carrying a manual mapping to a new speaker id keeps it manual", () => {
+// Drives the real branch rather than re-passing carried.origin by hand: a test
+// that supplies the value it then asserts on cannot fail, and this one could not.
+test("the live reconcile path carries a manual mapping forward without downgrading it", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+  // The row sits on the LIVE speaker's id, which is what the carry-forward
+  // branch looks up before moving it onto the note's new cluster id.
+  db.setSpeakerMapping(noteId, "live_0", null, "Dana", { origin: "manual" });
+
+  reconcileHarness(db)._reconcileLiveSpeakerState(
+    { live_0: { displayName: "Dana", profileId: null, noteId, embedding: [1, 0] } },
+    { speaker_0: [1, 0] },
+    []
+  );
+
+  const moved = db.getSpeakerMappings(noteId).find((r) => r.speaker_id === "speaker_0");
+  assert.ok(moved, "the mapping was not carried forward at all");
+  assert.equal(moved.origin, "manual", "a name the user typed was relabelled as a guess");
+});
+
+test("the live reconcile path will not overwrite a manual mapping with a guess", () => {
   const db = freshDatabase();
   const noteId = insertNote(db);
   db.setSpeakerMapping(noteId, "speaker_0", null, "Dana", { origin: "manual" });
-  const carried = db.getSpeakerMappings(noteId).find((r) => r.speaker_id === "speaker_0");
-  db.setSpeakerMapping(noteId, "speaker_9", null, carried.display_name, {
-    origin: carried.origin,
-    confidence: carried.confidence,
-  });
-  const moved = db.getSpeakerMappings(noteId).find((r) => r.speaker_id === "speaker_9");
-  assert.equal(moved.origin, "manual", "a name the user typed was downgraded to a guess");
+
+  reconcileHarness(db)._reconcileLiveSpeakerState(
+    { live_9: { displayName: "Someone Else", profileId: null, noteId, embedding: [1, 0] } },
+    { speaker_0: [1, 0] },
+    []
+  );
+
+  const row = db.getSpeakerMappings(noteId).find((r) => r.speaker_id === "speaker_0");
+  assert.equal(row.display_name, "Dana", "a manual name was overwritten by a guess");
+  assert.equal(row.origin, "manual");
 });
 
 // mergeSpeakerProfiles rewrites display_name with a raw UPDATE, bypassing

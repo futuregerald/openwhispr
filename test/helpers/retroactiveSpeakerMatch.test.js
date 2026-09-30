@@ -8,7 +8,7 @@ const { classifyRetroactiveMatch } = require("../../src/helpers/retroactiveSpeak
 const classify = (candidates) =>
   classifyRetroactiveMatch(
     null,
-    candidates.map((c) => ({ speakerId: c.speakerId, embedding: c })),
+    candidates.map((c) => ({ speakerId: c.speakerId, mapped: !!c.mapped, embedding: c })),
     (_profile, candidate) => candidate.score
   );
 
@@ -103,4 +103,57 @@ test("an infinite score cannot outrank a real winner", () => {
   ]);
   assert.equal(r.outcome, "match");
   assert.equal(r.speakerId, "speaker_1");
+});
+
+// `runnerUp = bestScore` inside the `score > bestScore` branch is what makes
+// runner-up tracking independent of arrival order. getNoteSpeakerEmbeddings has
+// no ORDER BY, so ascending order is roughly half of all two-speaker notes --
+// and without that line an ascending near-tie is promoted to a confident match.
+test("a near-tie is caught when the scores arrive in ascending order", () => {
+  const r = classify([
+    { speakerId: "speaker_0", score: 0.94 },
+    { speakerId: "speaker_1", score: 0.95 },
+  ]);
+  assert.equal(r.outcome, "suggest", "arrival order decided the outcome");
+  assert.equal(r.speakerId, "speaker_1");
+});
+
+test("an already-mapped best candidate takes nothing rather than settling for second", () => {
+  const r = classify([
+    { speakerId: "speaker_0", score: 0.95, mapped: true },
+    { speakerId: "speaker_1", score: 0.7 },
+  ]);
+  assert.equal(r, null, "the profile grabbed a second speaker in the same note");
+});
+
+// The margin must be measured over the WHOLE field. Excluding mapped speakers
+// from scoring is what recreated the original defect one sweep later.
+test("a mapped speaker still counts as the runner-up", () => {
+  const r = classify([
+    { speakerId: "speaker_0", score: 0.94, mapped: true },
+    { speakerId: "speaker_1", score: 0.95 },
+  ]);
+  assert.equal(r.outcome, "suggest", "a mapped speaker was dropped from the field");
+});
+
+test("exactly at the threshold is a match, just under is not", () => {
+  assert.equal(classify([{ speakerId: "s", score: 0.65 }]).outcome, "match");
+  assert.equal(classify([{ speakerId: "s", score: 0.6499 }]), null);
+});
+
+test("a gap of exactly the margin is a match, just under is a suggestion", () => {
+  assert.equal(
+    classify([
+      { speakerId: "a", score: 0.73 },
+      { speakerId: "b", score: 0.7 },
+    ]).outcome,
+    "match"
+  );
+  assert.equal(
+    classify([
+      { speakerId: "a", score: 0.7299 },
+      { speakerId: "b", score: 0.7 },
+    ]).outcome,
+    "suggest"
+  );
 });
