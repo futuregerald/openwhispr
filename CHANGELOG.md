@@ -20,12 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   meeting is offered as a **suggestion** instead, shown in italics with a tick to accept it, so you
   decide. The practical trade is that a few names you used to get automatically now need one click —
   and no longer need correcting when they were wrong.
-- A speaker label you set or locked yourself is never overwritten by this process.
+- A speaker label you locked yourself is no longer touched by this process, and a name already shown
+  against a speaker is not replaced by a suggestion.
 
 ### Changed
 
 - OpenWhispr now records whether a speaker's name was guessed or set by you. Names from before this
   release cannot be told apart, so they are recorded as unknown rather than guessed at either way.
+
+## [1.30.0] - 2026-09-28
 
 ### Fixed
 

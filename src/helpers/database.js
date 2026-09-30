@@ -579,9 +579,6 @@ class DatabaseManager {
         )
       `);
 
-      // Rows written before these columns existed stay 'unknown': nothing can
-      // tell an auto-match from a typed name, and guessing either way makes a
-      // later re-score unsafe.
       try {
         this.db.exec(
           "ALTER TABLE speaker_mappings ADD COLUMN origin TEXT NOT NULL DEFAULT 'unknown'"
@@ -3349,9 +3346,6 @@ class DatabaseManager {
         .run(finalName, finalEmail, Buffer.from(blended.buffer), total, winner.id);
       this.db
         .prepare(
-          // confidence is dropped because it was computed against the loser's
-          // name, which these rows no longer carry. origin is inherited: a merge
-          // does not change who named the speaker.
           "UPDATE speaker_mappings SET profile_id = ?, display_name = ?, confidence = NULL WHERE profile_id = ?"
         )
         .run(winner.id, finalName, loser.id);

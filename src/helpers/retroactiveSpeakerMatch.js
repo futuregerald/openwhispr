@@ -36,8 +36,9 @@ function classifyRetroactiveMatch(profileEmbedding, candidates, similarityOf) {
   }
 
   if (!best || bestScore < MATCH_THRESHOLD) return null;
+  if (best.mapped) return null;
 
-  const ambiguous = Number.isFinite(runnerUp) && bestScore - runnerUp < MATCH_MARGIN;
+  const ambiguous = bestScore - runnerUp < MATCH_MARGIN;
   return {
     outcome: ambiguous ? "suggest" : "match",
     speakerId: best.speakerId,

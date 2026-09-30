@@ -7846,18 +7846,19 @@ class IPCHandlers {
           const embeddings = this.databaseManager.getNoteSpeakerEmbeddings(noteId);
           const existing = this.databaseManager.getSpeakerMappings(noteId);
           const mappedSpeakers = new Set(existing.map((m) => m.speaker_id));
-          const unmapped = embeddings
-            .filter((emb) => !mappedSpeakers.has(emb.speaker_id))
-            .map((emb) => ({
-              speakerId: emb.speaker_id,
-              embedding: new Float32Array(
-                emb.embedding.buffer,
-                emb.embedding.byteOffset,
-                emb.embedding.byteLength / 4
-              ),
-            }));
+          if (existing.some((mapping) => mapping.profile_id === profile.id)) continue;
 
-          const decision = classifyRetroactiveMatch(profileEmb, unmapped, (a, b) =>
+          const candidates = embeddings.map((emb) => ({
+            speakerId: emb.speaker_id,
+            mapped: mappedSpeakers.has(emb.speaker_id),
+            embedding: new Float32Array(
+              emb.embedding.buffer,
+              emb.embedding.byteOffset,
+              emb.embedding.byteLength / 4
+            ),
+          }));
+
+          const decision = classifyRetroactiveMatch(profileEmb, candidates, (a, b) =>
             speakerEmbeddings.cosineSimilarity(a, b)
           );
           if (!decision) continue;
@@ -7881,6 +7882,8 @@ class IPCHandlers {
               if (seg.speaker !== decision.speakerId) continue;
               if (isSpeakerLocked(seg)) continue;
               if (decision.outcome === "suggest") {
+                if (seg.speakerName && !seg.speakerIsPlaceholder) continue;
+                if (seg.suggestedName === profile.display_name) continue;
                 applySuggestedSpeaker(seg, {
                   suggestedName: profile.display_name,
                   suggestedProfileId: profile.id,
@@ -8069,9 +8072,6 @@ class IPCHandlers {
         if (liveMapping) {
           displayName = liveMapping.display_name || displayName;
           profileId = liveMapping.profile_id ?? profileId;
-          // Inherited, not reset: this moves an existing mapping to a new
-          // speaker id, and stamping it "auto" would silently downgrade a name
-          // the user typed.
           this.databaseManager.setSpeakerMapping(
             bestEntry.noteId,
             mappedId,
@@ -8084,13 +8084,18 @@ class IPCHandlers {
           );
           this.databaseManager.removeSpeakerMapping(bestEntry.noteId, bestEntry.speakerId);
         } else if (displayName) {
-          this.databaseManager.setSpeakerMapping(
-            bestEntry.noteId,
-            mappedId,
-            profileId,
-            displayName,
-            { origin: "auto", confidence: null }
+          const target = getMappingsForNote(bestEntry.noteId).find(
+            (mapping) => mapping.speaker_id === mappedId
           );
+          if (target?.origin !== "manual") {
+            this.databaseManager.setSpeakerMapping(
+              bestEntry.noteId,
+              mappedId,
+              profileId,
+              displayName,
+              { origin: "auto", confidence: null }
+            );
+          }
         }
       }
 
