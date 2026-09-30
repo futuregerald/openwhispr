@@ -3375,14 +3375,21 @@ class DatabaseManager {
     }
   }
 
-  setSpeakerMapping(noteId, speakerId, profileId, displayName) {
+  setSpeakerMapping(noteId, speakerId, profileId, displayName, provenance) {
     try {
       if (!this.db) throw new Error("Database not initialized");
+      const origin = provenance?.origin;
+      if (origin !== "manual" && origin !== "auto" && origin !== "unknown") {
+        throw new Error(
+          `setSpeakerMapping requires origin of manual, auto or unknown, got ${String(origin)}`
+        );
+      }
+      const confidence = origin === "auto" ? (provenance.confidence ?? null) : null;
       this.db
         .prepare(
-          "INSERT OR REPLACE INTO speaker_mappings (note_id, speaker_id, profile_id, display_name) VALUES (?, ?, ?, ?)"
+          "INSERT OR REPLACE INTO speaker_mappings (note_id, speaker_id, profile_id, display_name, origin, confidence) VALUES (?, ?, ?, ?, ?, ?)"
         )
-        .run(noteId, speakerId, profileId, displayName);
+        .run(noteId, speakerId, profileId, displayName, origin, confidence);
       this._markTranscriptDirty(noteId);
       return { success: true };
     } catch (error) {

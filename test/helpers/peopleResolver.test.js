@@ -120,12 +120,16 @@ test("a mapping, its profile and a matching contact merge into one identity", ()
   const noteId = spokenNote(dbm, [
     { text: "I think we should ship it", timestamp: 0, speaker: "speaker_1" },
   ]);
-  dbm.setSpeakerMapping(noteId, "speaker_1", profileId, "Jorge Chayan");
+  dbm.setSpeakerMapping(noteId, "speaker_1", profileId, "Jorge Chayan", { origin: "manual" });
   reshredNote(dbm.db, noteId);
 
   const result = peopleResolver.resolve(dbm.db, "jorge chayan");
 
-  assert.equal(result.candidates.length, 1, "profile_id and email links collapse the three sources");
+  assert.equal(
+    result.candidates.length,
+    1,
+    "profile_id and email links collapse the three sources"
+  );
   assert.deepEqual(result.person.sources.sort(), ["contacts", "speaker_profiles", "transcripts"]);
   assert.equal(result.person.spoken_segments, 1);
 });
@@ -186,11 +190,22 @@ test("activity returns spoken quotes, mentions and attendance for a resolved per
   addContact(dbm, "jorge@example.com", "Jorge Chayan");
   const spokeIn = spokenNote(
     dbm,
-    [{ text: "the migration lands on Friday", timestamp: 0, speaker: "speaker_0", speakerName: "Jorge Chayan" }],
+    [
+      {
+        text: "the migration lands on Friday",
+        timestamp: 0,
+        speaker: "speaker_0",
+        speakerName: "Jorge Chayan",
+      },
+    ],
     "Platform sync"
   );
 
-  const { note: mentioning } = dbm.saveNote("Retro", "Jorge Chayan raised the rollback risk", "personal");
+  const { note: mentioning } = dbm.saveNote(
+    "Retro",
+    "Jorge Chayan raised the rollback risk",
+    "personal"
+  );
   const { note: attended } = dbm.saveNote("Roadmap", "", "meeting");
   dbm.updateNote(attended.id, {
     participants: JSON.stringify([{ email: "jorge@example.com", displayName: "Jorge Chayan" }]),

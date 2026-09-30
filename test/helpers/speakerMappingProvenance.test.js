@@ -40,7 +40,12 @@ function insertNote(db) {
 }
 
 const columnsOf = (db, table) =>
-  new Map(db.db.prepare(`PRAGMA table_info(${table})`).all().map((c) => [c.name, c]));
+  new Map(
+    db.db
+      .prepare(`PRAGMA table_info(${table})`)
+      .all()
+      .map((c) => [c.name, c])
+  );
 
 test("speaker_mappings carries origin and confidence, defaulting to unknown", () => {
   const db = freshDatabase();
@@ -67,4 +72,43 @@ test("the provenance migration survives a reopen", () => {
   const row = reopened.getSpeakerMappings(noteId)[0];
   assert.equal(row.origin, "unknown", "a row written before the column existed must stay unknown");
   assert.equal(row.confidence, null);
+});
+
+test("setSpeakerMapping refuses to write without provenance", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+  assert.throws(() => db.setSpeakerMapping(noteId, "speaker_0", null, "Dana"), /origin/i);
+});
+
+test("setSpeakerMapping refuses an unrecognised origin", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+  assert.throws(
+    () => db.setSpeakerMapping(noteId, "speaker_0", null, "Dana", { origin: "guess" }),
+    /origin/i
+  );
+});
+
+test("an auto mapping stores its similarity, a manual one stores none", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+  db.setSpeakerMapping(noteId, "speaker_0", null, "Dana", { origin: "auto", confidence: 0.71 });
+  db.setSpeakerMapping(noteId, "speaker_1", null, "Sam", { origin: "manual" });
+  const rows = db.getSpeakerMappings(noteId);
+  const dana = rows.find((r) => r.speaker_id === "speaker_0");
+  const sam = rows.find((r) => r.speaker_id === "speaker_1");
+  assert.equal(dana.origin, "auto");
+  assert.ok(Math.abs(dana.confidence - 0.71) < 1e-9);
+  assert.equal(sam.origin, "manual");
+  assert.equal(sam.confidence, null);
+});
+
+// INSERT OR REPLACE replaces the whole row, so an optional argument would let a
+// re-write silently reset provenance.
+test("rewriting a mapping cannot silently drop its provenance", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+  db.setSpeakerMapping(noteId, "speaker_0", null, "Dana", { origin: "manual" });
+  assert.throws(() => db.setSpeakerMapping(noteId, "speaker_0", null, "Dana"), /origin/i);
+  assert.equal(db.getSpeakerMappings(noteId)[0].origin, "manual");
 });
