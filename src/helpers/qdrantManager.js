@@ -22,6 +22,12 @@ const HEALTH_CHECK_TIMEOUT_MS = 2000;
 const RESTART_BASE_MS = 2000;
 const RESTART_MAX_MS = 60 * 1000;
 const RESTART_MAX_ATTEMPTS = 5;
+// Not a failure count. Across 2,767 measured health-check failures the longest
+// consecutive run is 1 -- every failure is followed by a success on the next
+// tick -- so any threshold above 1 can never fire. Elapsed time since the last
+// success is correct regardless of tick rate. See issue #109 for why those
+// alternating failures happen, which is still unexplained.
+const DEGRADED_AFTER_MS = 30000;
 
 const STORAGE_DIR = path.join(os.homedir(), ".cache", "openwhispr", "qdrant-data");
 
@@ -41,6 +47,8 @@ class QdrantManager {
     this._onReadyCallbacks = [];
     this._restartBaseMs = RESTART_BASE_MS;
     this._restartMaxMs = RESTART_MAX_MS;
+    this._healthIntervalMs = HEALTH_CHECK_INTERVAL_MS;
+    this._degradedAfterMs = DEGRADED_AFTER_MS;
   }
 
   _spawn(binaryPath, args, options) {
@@ -236,11 +244,14 @@ class QdrantManager {
         this._stopHealthCheck();
         return;
       }
-      if (!(await this._checkHealth())) {
+      if (await this._checkHealth()) {
+        this.ready = true;
+        this.lastSuccessAt = Date.now();
+      } else {
         debugLogger.warn("qdrant health check failed");
         this.ready = false;
       }
-    }, HEALTH_CHECK_INTERVAL_MS);
+    }, this._healthIntervalMs);
   }
 
   _stopHealthCheck() {
@@ -322,10 +333,21 @@ class QdrantManager {
   }
 
   getStatus() {
+    // Measured from firstStartAt when nothing has ever succeeded: lastSuccessAt
+    // is only set by a passing health check, so a qdrant that never came up
+    // would otherwise stay un-degraded forever and never surface a repair.
+    const reference = this.lastSuccessAt ?? this.firstStartAt;
+    const since = reference === null ? null : Date.now() - reference;
     return {
       available: this.isAvailable(),
-      running: this.ready && this.process !== null,
+      // Deliberately not `this.ready && ...`: a process that is up but failing
+      // its health check is exactly the state this snapshot exists to describe.
+      running: this.process !== null,
+      ready: this.ready,
       port: this.port,
+      degraded: since !== null && since > this._degradedAfterMs,
+      lastSuccessAt: this.lastSuccessAt,
+      restartAttempts: this._restartAttempts,
     };
   }
 }

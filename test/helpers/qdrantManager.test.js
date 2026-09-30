@@ -54,7 +54,13 @@ function fakeChild(pid) {
  */
 function managerHarness(
   t,
-  { ports = [6333, 6340, 6350], failStartsAfter = Infinity, restartBaseMs = null } = {}
+  {
+    ports = [6333, 6340, 6350],
+    failStartsAfter = Infinity,
+    restartBaseMs = null,
+    healthIntervalMs = null,
+    degradedAfterMs = null,
+  } = {}
 ) {
   const m = new QdrantManager();
   const started = [];
@@ -79,6 +85,8 @@ function managerHarness(
     m._restartBaseMs = restartBaseMs;
     m._restartMaxMs = restartBaseMs * 4;
   }
+  if (healthIntervalMs !== null) m._healthIntervalMs = healthIntervalMs;
+  if (degradedAfterMs !== null) m._degradedAfterMs = degradedAfterMs;
 
   m.getBinaryPath = () => "/fake/qdrant";
   m._findPort = async () => ports[Math.min(startAttempts, ports.length - 1)];
@@ -282,4 +290,73 @@ test("a restart is never scheduled while stopping", async (t) => {
   h.manager.stopping = true;
   h.manager._scheduleRestart("restart-failed");
   assert.equal(h.manager._restartTimer, null, "a restart was queued during shutdown");
+});
+
+// Defect 2: ready was set true only at startup, so any transient failure
+// downgraded it permanently.
+test("ready recovers when the health check succeeds again", async (t) => {
+  const h = managerHarness(t, { healthIntervalMs: 5 });
+  await h.start();
+  h.failHealthChecks(1);
+  await h.settle(40);
+  assert.equal(h.manager.isReady(), true, "ready never came back after a single blip");
+});
+
+// 795 of 986 measured gaps are a single alternation, so a per-failure signal
+// would flap constantly.
+test("one failed check does not report degraded", async (t) => {
+  const h = managerHarness(t, { healthIntervalMs: 5, degradedAfterMs: 500 });
+  await h.start();
+  h.failHealthChecks(1);
+  await h.settle(40);
+  assert.equal(h.manager.getStatus().degraded, false);
+});
+
+test("a sustained outage reports degraded", async (t) => {
+  const h = managerHarness(t, { healthIntervalMs: 5, degradedAfterMs: 50 });
+  await h.start();
+  h.failHealthChecks(Infinity);
+  await h.settle(150);
+  assert.equal(h.manager.getStatus().degraded, true);
+});
+
+test("degraded clears on the first confirmed success", async (t) => {
+  const h = managerHarness(t, { healthIntervalMs: 5, degradedAfterMs: 50 });
+  await h.start();
+  h.failHealthChecks(Infinity);
+  await h.settle(150);
+  assert.equal(h.manager.getStatus().degraded, true);
+  h.failHealthChecks(0);
+  await h.settle(40);
+  assert.equal(h.manager.getStatus().degraded, false);
+});
+
+// The case Task 1 exists for, and the one a lastSuccessAt-only rule cannot see:
+// if qdrant never came up, lastSuccessAt stays null forever, degraded stays
+// false, and neither the notice nor the Repair button is ever reachable.
+test("a qdrant that never starts reads as degraded", async (t) => {
+  const h = managerHarness(t, { failStartsAfter: 0, restartBaseMs: 1, degradedAfterMs: 30 });
+  await h.start().catch(() => {});
+  await h.settle(120);
+  assert.equal(h.manager.isReady(), false);
+  assert.equal(
+    h.manager.getStatus().degraded,
+    true,
+    "a qdrant that never came up looked perfectly healthy"
+  );
+});
+
+test("a sidecar that was never asked to start is not degraded", async (t) => {
+  const h = managerHarness(t, { degradedAfterMs: 1 });
+  await h.settle(20);
+  assert.equal(h.manager.getStatus().degraded, false, "an unstarted sidecar reported a fault");
+});
+
+test("a failed check clears ready while it lasts", async (t) => {
+  const h = managerHarness(t, { healthIntervalMs: 5 });
+  await h.start();
+  assert.equal(h.manager.isReady(), true);
+  h.failHealthChecks(Infinity);
+  await h.settle(40);
+  assert.equal(h.manager.isReady(), false, "a failing health check still reported ready");
 });
