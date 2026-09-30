@@ -13,6 +13,12 @@ const RESTART_MAX_ATTEMPTS = 5;
 const HEALTH_CHECK_INTERVAL_MS = 5000;
 const DEGRADED_AFTER_MS = 30000;
 
+// PERSIST_FROM is LOG_LEVELS.notice (src/helpers/debugLogger.js), and neither
+// is exported. Mirrored here; if that threshold moves, this set goes stale.
+const PERSISTED_LEVELS = new Set(["notice", "warn", "error", "fatal"]);
+
+const debugLogger = require("../../src/helpers/debugLogger");
+
 /**
  * A stand-in for the spawned child, carrying only the surface qdrantManager and
  * gracefulStopProcess touch.
@@ -46,12 +52,33 @@ function fakeChild(pid) {
  *    the fake child never closes on its own, so `stop()` deadlocks. The harness
  *    emits `close` while that await is pending.
  */
-function managerHarness(t, { ports = [6333, 6340, 6350], failStartsAfter = Infinity } = {}) {
+function managerHarness(
+  t,
+  { ports = [6333, 6340, 6350], failStartsAfter = Infinity, restartBaseMs = null } = {}
+) {
   const m = new QdrantManager();
   const started = [];
+  const logs = [];
   let startAttempts = 0;
   let healthFailuresRemaining = 0;
   let child = null;
+
+  // debugLogger is a shared singleton and qdrantManager calls it by property
+  // lookup, so patching the instance is enough to observe what it logs.
+  const originals = {};
+  for (const level of ["trace", "debug", "info", "notice", "warn", "error", "fatal"]) {
+    if (typeof debugLogger[level] !== "function") continue;
+    originals[level] = debugLogger[level].bind(debugLogger);
+    debugLogger[level] = (message, meta) => logs.push({ level, message, meta });
+  }
+  t.after(() => {
+    for (const [level, fn] of Object.entries(originals)) debugLogger[level] = fn;
+  });
+
+  if (restartBaseMs !== null) {
+    m._restartBaseMs = restartBaseMs;
+    m._restartMaxMs = restartBaseMs * 4;
+  }
 
   m.getBinaryPath = () => "/fake/qdrant";
   m._findPort = async () => ports[Math.min(startAttempts, ports.length - 1)];
@@ -60,11 +87,18 @@ function managerHarness(t, { ports = [6333, 6340, 6350], failStartsAfter = Infin
   m._spawn = () => {
     startAttempts += 1;
     child = fakeChild(900000 + startAttempts);
+    // Past the allowance, the binary dies on launch -- how a genuinely broken
+    // sidecar fails. Letting _waitForReady poll for its full 30s startup
+    // timeout instead would make these tests take minutes.
+    if (startAttempts > failStartsAfter) {
+      const dying = child;
+      child = null;
+      queueMicrotask(() => dying.emit("close", 1));
+    }
     return child;
   };
 
   m._checkHealth = async () => {
-    if (startAttempts > failStartsAfter) return false;
     if (healthFailuresRemaining > 0) {
       healthFailuresRemaining -= 1;
       return false;
@@ -85,6 +119,13 @@ function managerHarness(t, { ports = [6333, 6340, 6350], failStartsAfter = Infin
   return {
     manager: m,
     startedPorts: started,
+    logs,
+    // Drains real timers by yielding repeatedly; the restart backoff is shortened
+    // to single-digit ms so this stays fast and deterministic.
+    async settle(ms = 100) {
+      const deadline = Date.now() + ms;
+      while (Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+    },
     get startAttempts() {
       return startAttempts;
     },
@@ -140,4 +181,105 @@ test("a throwing onReady consumer does not fail the start", async (t) => {
   });
   await h.start();
   assert.equal(h.manager.isReady(), true, "a bad callback took down a healthy start");
+});
+
+const tick = async (ms) => {
+  const step = 50;
+  for (let waited = 0; waited < ms; waited += step) {
+    await new Promise((r) => setTimeout(r, 0));
+  }
+};
+void tick;
+
+test("an unexpected exit schedules a restart", async (t) => {
+  const h = managerHarness(t, { restartBaseMs: 1 });
+  await h.start();
+  h.killForTest();
+  await h.settle();
+  assert.equal(h.startAttempts, 2, "a crashed qdrant was never brought back");
+});
+
+// Without this the app resurrects the sidecar it is trying to shut down.
+test("a deliberate stop does not restart", async (t) => {
+  const h = managerHarness(t, { restartBaseMs: 1 });
+  await h.start();
+  await h.stop();
+  await h.settle();
+  assert.equal(h.startAttempts, 1, "quitting the app respawned qdrant");
+});
+
+// The flag alone does not cover this: _doStart clears `stopping` on entry, so a
+// timer scheduled BEFORE stop() walks straight through it. The child is
+// detached, so the respawn survives app.exit(0) as an orphan holding the
+// storage directory.
+test("quitting during a restart backoff does not respawn", async (t) => {
+  const h = managerHarness(t, { restartBaseMs: 50 });
+  await h.start();
+  h.killForTest();
+  await h.stop();
+  // Asserted BEFORE the backoff elapses: the two guards are redundant by
+  // construction -- stop() clearing the timer and the timer re-checking
+  // `stopping` each mask the other in startAttempts -- and once the timer has
+  // fired it nulls itself either way. Checked here, this pins the clearing; the
+  // re-check is pinned by the pair together. A pending timer also holds the
+  // event loop open against the 8s shutdown deadline.
+  assert.equal(h.manager._restartTimer, null, "a pending restart timer survived stop()");
+  await h.settle(200);
+  assert.equal(h.startAttempts, 1, "quitting mid-backoff left an orphaned qdrant");
+});
+
+// The single easiest thing to leave out and the hardest to notice: without
+// clearing the flag, the first Repair permanently disables crash-restart.
+test("a start after a stop re-arms the restart", async (t) => {
+  const h = managerHarness(t, { restartBaseMs: 1 });
+  await h.start();
+  await h.stop();
+  await h.start();
+  h.killForTest();
+  await h.settle();
+  assert.equal(h.startAttempts, 3, "restart stayed disabled after a manual repair");
+});
+
+test("restart gives up rather than looping forever", async (t) => {
+  const h = managerHarness(t, { restartBaseMs: 1, failStartsAfter: 1 });
+  await h.start();
+  h.killForTest();
+  await h.settle(500);
+  assert.equal(
+    h.startAttempts,
+    1 + RESTART_MAX_ATTEMPTS,
+    "it kept retrying past the cap, or stopped early"
+  );
+});
+
+test("an unexpected exit is logged at a level that reaches the log file", async (t) => {
+  const h = managerHarness(t, { restartBaseMs: 1 });
+  await h.start();
+  h.killForTest();
+  await h.settle();
+  const entry = h.logs.find((l) => l.message === "qdrant exited unexpectedly");
+  assert.ok(entry, "the crash was not logged under the expected message");
+  assert.ok(
+    PERSISTED_LEVELS.has(entry.level),
+    `a crash logged at ${entry.level} never reaches the log file`
+  );
+});
+
+test("a deliberate stop is not logged as a crash", async (t) => {
+  const h = managerHarness(t, { restartBaseMs: 1 });
+  await h.start();
+  await h.stop();
+  assert.ok(!h.logs.some((l) => l.message === "qdrant exited unexpectedly"));
+});
+
+// _scheduleRestart is also called from the catch of a failed restart, which is
+// async and can therefore interleave with a stop. That path is not reachable
+// from the close handler (which returns early on `stopping`), so it is driven
+// directly rather than through a contrived race.
+test("a restart is never scheduled while stopping", async (t) => {
+  const h = managerHarness(t, { restartBaseMs: 1 });
+  await h.start();
+  h.manager.stopping = true;
+  h.manager._scheduleRestart("restart-failed");
+  assert.equal(h.manager._restartTimer, null, "a restart was queued during shutdown");
 });

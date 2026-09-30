@@ -17,6 +17,11 @@ const STARTUP_TIMEOUT_MS = 30000;
 const STARTUP_POLL_INTERVAL_MS = 100;
 const HEALTH_CHECK_INTERVAL_MS = 5000;
 const HEALTH_CHECK_TIMEOUT_MS = 2000;
+// Slower than audioActivityDetector's 1s base: qdrant costs more to start, and a
+// tight respawn loop against a genuinely broken binary is worse than being down.
+const RESTART_BASE_MS = 2000;
+const RESTART_MAX_MS = 60 * 1000;
+const RESTART_MAX_ATTEMPTS = 5;
 
 const STORAGE_DIR = path.join(os.homedir(), ".cache", "openwhispr", "qdrant-data");
 
@@ -34,6 +39,8 @@ class QdrantManager {
     this._restartTimer = null;
     this._restartAttempts = 0;
     this._onReadyCallbacks = [];
+    this._restartBaseMs = RESTART_BASE_MS;
+    this._restartMaxMs = RESTART_MAX_MS;
   }
 
   _spawn(binaryPath, args, options) {
@@ -141,11 +148,16 @@ class QdrantManager {
 
     this.process.on("close", (code) => {
       exitCode = code;
-      debugLogger.debug("qdrant process exited", { code });
       this.ready = false;
       this.process = null;
       this._stopHealthCheck();
       sidecarPidFile.clear("qdrant");
+      if (this.stopping) {
+        debugLogger.debug("qdrant stopped", { code });
+        return;
+      }
+      debugLogger.warn("qdrant exited unexpectedly", { code });
+      this._scheduleRestart(`exit:${code}`);
     });
 
     await this._waitForReady(() => ({ stderr: stderrBuffer, exitCode }));
@@ -238,7 +250,49 @@ class QdrantManager {
     }
   }
 
+  _clearRestartTimer() {
+    if (this._restartTimer) {
+      clearTimeout(this._restartTimer);
+      this._restartTimer = null;
+    }
+  }
+
+  // A sidecar that dies takes semantic search with it, so keep trying to bring
+  // it back rather than degrading once and never retrying.
+  _scheduleRestart(reason) {
+    if (this._restartTimer || this.stopping) return;
+
+    if (this._restartAttempts >= RESTART_MAX_ATTEMPTS) {
+      debugLogger.error("qdrant could not be restarted; giving up", {
+        attempts: this._restartAttempts,
+        reason,
+      });
+      return;
+    }
+
+    this._restartAttempts += 1;
+    const delayMs = Math.min(
+      this._restartBaseMs * 2 ** (this._restartAttempts - 1),
+      this._restartMaxMs
+    );
+    debugLogger.notice("Scheduling qdrant restart", {
+      attempt: this._restartAttempts,
+      delayMs,
+      reason,
+    });
+
+    this._restartTimer = setTimeout(() => {
+      this._restartTimer = null;
+      this.start().catch((err) => {
+        debugLogger.warn("qdrant restart attempt failed", { error: err.message });
+        this._scheduleRestart("restart-failed");
+      });
+    }, delayMs);
+  }
+
   async stop() {
+    this.stopping = true;
+    this._clearRestartTimer();
     this._stopHealthCheck();
 
     if (!this.process) {
