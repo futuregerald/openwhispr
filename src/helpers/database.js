@@ -3349,7 +3349,10 @@ class DatabaseManager {
         .run(finalName, finalEmail, Buffer.from(blended.buffer), total, winner.id);
       this.db
         .prepare(
-          "UPDATE speaker_mappings SET profile_id = ?, display_name = ? WHERE profile_id = ?"
+          // confidence is dropped because it was computed against the loser's
+          // name, which these rows no longer carry. origin is inherited: a merge
+          // does not change who named the speaker.
+          "UPDATE speaker_mappings SET profile_id = ?, display_name = ?, confidence = NULL WHERE profile_id = ?"
         )
         .run(winner.id, finalName, loser.id);
       this.db.prepare("DELETE FROM speaker_profiles WHERE id = ?").run(loser.id);

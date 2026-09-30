@@ -7316,7 +7316,9 @@ class IPCHandlers {
           this._retroactiveMapping(profile);
         }
 
-        this.databaseManager.setSpeakerMapping(noteId, speakerId, resolvedProfileId, displayName);
+        this.databaseManager.setSpeakerMapping(noteId, speakerId, resolvedProfileId, displayName, {
+          origin: "manual",
+        });
         liveSpeakerIdentifier.mapSpeaker(speakerId, resolvedProfileId, displayName, noteId);
         return { success: true, profileId: resolvedProfileId };
       }
@@ -7941,7 +7943,10 @@ class IPCHandlers {
             emb.embedding,
             profile?.id ?? null
           );
-          this.databaseManager.setSpeakerMapping(noteId, emb.speaker_id, profile.id, displayName);
+          this.databaseManager.setSpeakerMapping(noteId, emb.speaker_id, profile.id, displayName, {
+            origin: "auto",
+            confidence: null,
+          });
           liveSpeakerIdentifier.mapSpeaker(emb.speaker_id, profile.id, displayName, noteId);
         }
 
@@ -8064,11 +8069,18 @@ class IPCHandlers {
         if (liveMapping) {
           displayName = liveMapping.display_name || displayName;
           profileId = liveMapping.profile_id ?? profileId;
+          // Inherited, not reset: this moves an existing mapping to a new
+          // speaker id, and stamping it "auto" would silently downgrade a name
+          // the user typed.
           this.databaseManager.setSpeakerMapping(
             bestEntry.noteId,
             mappedId,
             profileId,
-            displayName
+            displayName,
+            {
+              origin: liveMapping.origin ?? "unknown",
+              confidence: liveMapping.confidence ?? null,
+            }
           );
           this.databaseManager.removeSpeakerMapping(bestEntry.noteId, bestEntry.speakerId);
         } else if (displayName) {
@@ -8076,7 +8088,8 @@ class IPCHandlers {
             bestEntry.noteId,
             mappedId,
             profileId,
-            displayName
+            displayName,
+            { origin: "auto", confidence: null }
           );
         }
       }

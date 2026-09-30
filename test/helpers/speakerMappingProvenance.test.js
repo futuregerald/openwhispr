@@ -112,3 +112,42 @@ test("rewriting a mapping cannot silently drop its provenance", () => {
   assert.throws(() => db.setSpeakerMapping(noteId, "speaker_0", null, "Dana"), /origin/i);
   assert.equal(db.getSpeakerMappings(noteId)[0].origin, "manual");
 });
+
+test("carrying a manual mapping to a new speaker id keeps it manual", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+  db.setSpeakerMapping(noteId, "speaker_0", null, "Dana", { origin: "manual" });
+  const carried = db.getSpeakerMappings(noteId).find((r) => r.speaker_id === "speaker_0");
+  db.setSpeakerMapping(noteId, "speaker_9", null, carried.display_name, {
+    origin: carried.origin,
+    confidence: carried.confidence,
+  });
+  const moved = db.getSpeakerMappings(noteId).find((r) => r.speaker_id === "speaker_9");
+  assert.equal(moved.origin, "manual", "a name the user typed was downgraded to a guess");
+});
+
+// mergeSpeakerProfiles rewrites display_name with a raw UPDATE, bypassing
+// setSpeakerMapping entirely -- a sixth write site.
+test("merging profiles drops a confidence that no longer describes the name", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+  const unit = (s) => Buffer.from(Float32Array.from([s, Math.sqrt(1 - s * s)]).buffer);
+  db.upsertSpeakerProfile("Jorge Chayan", null, unit(1), null);
+  db.upsertSpeakerProfile("J. Chayan", null, unit(0.99), null);
+  // getSpeakerProfiles omits the embedding column, and mergeSpeakerProfiles
+  // needs it, so read the rows directly.
+  const rowFor = (name) =>
+    db.db.prepare("SELECT * FROM speaker_profiles WHERE display_name = ?").get(name);
+  const winner = rowFor("Jorge Chayan");
+  const loser = rowFor("J. Chayan");
+
+  db.setSpeakerMapping(noteId, "speaker_0", loser.id, "J. Chayan", {
+    origin: "auto",
+    confidence: 0.71,
+  });
+  db.mergeSpeakerProfiles(winner, loser);
+
+  const row = db.getSpeakerMappings(noteId).find((r) => r.speaker_id === "speaker_0");
+  assert.equal(row.confidence, null, "a similarity computed against another name survived a merge");
+  assert.equal(row.origin, "auto", "origin should be inherited through a merge, not reset");
+});
