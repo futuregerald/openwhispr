@@ -320,6 +320,7 @@ function initializeCoreManagers() {
     windowsLoopbackAudioManager,
     meetingAecManager,
     getTrayManager: () => trayManager,
+    getQdrantManager: () => qdrantManager,
   });
 }
 

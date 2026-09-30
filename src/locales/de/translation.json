@@ -47,6 +47,14 @@
         "action": "Einstellungen öffnen",
         "dismiss": "Ausblenden"
       }
+    },
+    "semanticSearch": {
+      "notice": {
+        "title": "Suche läuft nur noch über Stichwörter",
+        "description": "Die Suchmaschine, die Notizen nach Bedeutung findet, antwortet nicht mehr. Dein Agent weicht auf die Stichwortsuche aus.",
+        "action": "Reparieren",
+        "repairing": "Wird repariert…"
+      }
     }
   },
   "tray": {

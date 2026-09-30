@@ -4,14 +4,11 @@ const { EventEmitter } = require("node:events");
 
 const QdrantManager = require("../../src/helpers/qdrantManager");
 
-// Mirrors the values in src/helpers/qdrantManager.js. Kept local rather than
-// exported: a test that imports the constant it asserts on cannot catch the
-// constant changing.
-const RESTART_BASE_MS = 2000;
-const RESTART_MAX_MS = 60 * 1000;
+// Mirrors src/helpers/qdrantManager.js. Kept local rather than imported: a test
+// that reads the constant it asserts on cannot catch that constant changing.
+// The timing values are not mirrored here -- each test overrides them on the
+// instance so the suite runs in milliseconds instead of minutes.
 const RESTART_MAX_ATTEMPTS = 5;
-const HEALTH_CHECK_INTERVAL_MS = 5000;
-const DEGRADED_AFTER_MS = 30000;
 
 // PERSIST_FROM is LOG_LEVELS.notice (src/helpers/debugLogger.js), and neither
 // is exported. Mirrored here; if that threshold moves, this set goes stale.
@@ -190,14 +187,6 @@ test("a throwing onReady consumer does not fail the start", async (t) => {
   await h.start();
   assert.equal(h.manager.isReady(), true, "a bad callback took down a healthy start");
 });
-
-const tick = async (ms) => {
-  const step = 50;
-  for (let waited = 0; waited < ms; waited += step) {
-    await new Promise((r) => setTimeout(r, 0));
-  }
-};
-void tick;
 
 test("an unexpected exit schedules a restart", async (t) => {
   const h = managerHarness(t, { restartBaseMs: 1 });

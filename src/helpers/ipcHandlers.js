@@ -290,6 +290,7 @@ class IPCHandlers {
     this.linuxKeyManager = managers.linuxKeyManager;
     this.textEditMonitor = managers.textEditMonitor;
     this.getTrayManager = managers.getTrayManager;
+    this.getQdrantManager = managers.getQdrantManager;
     this.whisperCudaManager = managers.whisperCudaManager;
     this.googleCalendarManager = managers.googleCalendarManager;
     this.meetingDetectionEngine = managers.meetingDetectionEngine;
@@ -6673,6 +6674,27 @@ class IPCHandlers {
         };
       } catch (error) {
         debugLogger.error("Failed to set debug logging:", error);
+        return { success: false, error: error.message };
+      }
+    });
+
+    ipcMain.handle("get-qdrant-health", () => {
+      const manager = this.getQdrantManager?.();
+      if (!manager) return { available: false, running: false, degraded: false };
+      return manager.getStatus();
+    });
+
+    ipcMain.handle("repair-qdrant", async () => {
+      const manager = this.getQdrantManager?.();
+      if (!manager) return { success: false, error: "qdrant is not configured" };
+      try {
+        await manager.stop();
+        await manager.start();
+        // Reported from a fresh snapshot rather than from start() resolving:
+        // the caller needs to know whether search actually works now.
+        return { success: manager.getStatus().ready, status: manager.getStatus() };
+      } catch (error) {
+        debugLogger.warn("qdrant repair failed", { error: error.message });
         return { success: false, error: error.message };
       }
     });

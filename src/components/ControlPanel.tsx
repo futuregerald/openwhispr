@@ -51,6 +51,7 @@ import PostCallPipelineIndicator from "./PostCallPipelineIndicator";
 import { usePostCallPipelineListener } from "../hooks/usePostCallPipelineListener";
 import ModelDownloadBanner from "./ModelDownloadBanner";
 import MeetingDetectionNotice from "./ui/MeetingDetectionNotice";
+import QdrantNotice from "./ui/QdrantNotice";
 import { initAutoDownloadListeners } from "../stores/modelAutoDownloadStore";
 
 const platform = getCachedPlatform();
@@ -789,6 +790,7 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
                 }}
               />
             )}
+            {activeView === "home" && <QdrantNotice />}
             {(gpuAccelAvailable.cuda || gpuAccelAvailable.vulkan) &&
               activeView === "home" &&
               !gpuBannerDismissed && (
