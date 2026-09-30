@@ -579,6 +579,22 @@ class DatabaseManager {
         )
       `);
 
+      // Rows written before these columns existed stay 'unknown': nothing can
+      // tell an auto-match from a typed name, and guessing either way makes a
+      // later re-score unsafe.
+      try {
+        this.db.exec(
+          "ALTER TABLE speaker_mappings ADD COLUMN origin TEXT NOT NULL DEFAULT 'unknown'"
+        );
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+      try {
+        this.db.exec("ALTER TABLE speaker_mappings ADD COLUMN confidence REAL");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS note_speaker_embeddings (
           note_id INTEGER NOT NULL,
