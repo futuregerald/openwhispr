@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.31.0] - 2026-09-29
+
+### Fixed
+
+- Naming one speaker no longer risks putting that name on the wrong people across your whole
+  library. Previously, naming a speaker in one note swept every other note and applied the name to
+  **every** voice that looked even loosely similar — so several different people in the same meeting
+  could all end up labelled as one person, and the label was marked as confirmed.
+- OpenWhispr is now stricter about when it is sure, and honest when it is not. A voice it is
+  confident about is still named for you. A voice it cannot tell apart from another in the same
+  meeting is offered as a **suggestion** instead, shown in italics with a tick to accept it, so you
+  decide. The practical trade is that a few names you used to get automatically now need one click —
+  and no longer need correcting when they were wrong.
+- A speaker label you locked yourself is no longer touched by this process, and a name already shown
+  against a speaker is not replaced by a suggestion.
+
+### Changed
+
+- OpenWhispr now records whether a speaker's name was guessed or set by you. Names from before this
+  release cannot be told apart, so they are recorded as unknown rather than guessed at either way.
+
 ## [1.30.0] - 2026-09-28
 
 ### Fixed

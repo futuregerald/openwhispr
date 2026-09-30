@@ -53,6 +53,7 @@ const {
   canAutoRelabelSpeaker,
   isSpeakerLocked,
 } = require("./speakerAssignmentPolicy");
+const { classifyRetroactiveMatch } = require("./retroactiveSpeakerMatch");
 const { downsample24kTo16k, pcm16ToWav } = require("../utils/audioUtils");
 const {
   createChunkBoundaryFinder,
@@ -7315,7 +7316,9 @@ class IPCHandlers {
           this._retroactiveMapping(profile);
         }
 
-        this.databaseManager.setSpeakerMapping(noteId, speakerId, resolvedProfileId, displayName);
+        this.databaseManager.setSpeakerMapping(noteId, speakerId, resolvedProfileId, displayName, {
+          origin: "manual",
+        });
         liveSpeakerIdentifier.mapSpeaker(speakerId, resolvedProfileId, displayName, noteId);
         return { success: true, profileId: resolvedProfileId };
       }
@@ -7473,7 +7476,6 @@ class IPCHandlers {
       this.environmentManager.saveAllKeysToEnvFile().catch(() => {});
       return { success: true };
     });
-
   }
 
   /**
@@ -7844,51 +7846,83 @@ class IPCHandlers {
           const embeddings = this.databaseManager.getNoteSpeakerEmbeddings(noteId);
           const existing = this.databaseManager.getSpeakerMappings(noteId);
           const mappedSpeakers = new Set(existing.map((m) => m.speaker_id));
-          for (const emb of embeddings) {
-            if (mappedSpeakers.has(emb.speaker_id)) continue;
+          if (existing.some((mapping) => mapping.profile_id === profile.id)) continue;
 
-            const speakerEmb = new Float32Array(
+          const candidates = embeddings.map((emb) => ({
+            speakerId: emb.speaker_id,
+            mapped: mappedSpeakers.has(emb.speaker_id),
+            embedding: new Float32Array(
               emb.embedding.buffer,
               emb.embedding.byteOffset,
               emb.embedding.byteLength / 4
-            );
-            const similarity = speakerEmbeddings.cosineSimilarity(profileEmb, speakerEmb);
+            ),
+          }));
 
-            if (similarity > 0.6) {
-              this.databaseManager.setSpeakerMapping(
-                noteId,
-                emb.speaker_id,
-                profile.id,
-                profile.display_name
+          const decision = classifyRetroactiveMatch(profileEmb, candidates, (a, b) =>
+            speakerEmbeddings.cosineSimilarity(a, b)
+          );
+          if (!decision) continue;
+
+          const note = this.databaseManager.getNote(noteId);
+          let segments = null;
+          if (note?.transcript) {
+            try {
+              segments = JSON.parse(note.transcript);
+            } catch (err) {
+              debugLogger.warn(
+                "Retroactive mapping could not read a transcript",
+                { noteId, error: err.message },
+                "database"
               );
+            }
+          }
 
-              const note = this.databaseManager.getNote(noteId);
-              if (note?.transcript) {
-                try {
-                  const segments = JSON.parse(note.transcript);
-                  let changed = false;
-                  for (const seg of segments) {
-                    if (seg.speaker === emb.speaker_id && !seg.speakerName) {
-                      if (canAutoRelabelSpeaker(seg)) {
-                        applyConfirmedSpeaker(seg, {
-                          speakerName: profile.display_name,
-                          speakerIsPlaceholder: false,
-                        });
-                      } else {
-                        seg.speakerName = profile.display_name;
-                        seg.speakerIsPlaceholder = false;
-                      }
-                      changed = true;
-                    }
-                  }
-                  if (changed) {
-                    this.databaseManager.updateNote(noteId, {
-                      transcript: JSON.stringify(segments),
-                    });
-                  }
-                } catch (_) {}
+          const locked = (segments || []).some(
+            (seg) => seg.speaker === decision.speakerId && isSpeakerLocked(seg)
+          );
+          if (locked) continue;
+
+          if (decision.outcome === "match") {
+            this.databaseManager.setSpeakerMapping(
+              noteId,
+              decision.speakerId,
+              profile.id,
+              profile.display_name,
+              { origin: "auto", confidence: decision.confidence }
+            );
+          }
+
+          if (!segments) continue;
+          try {
+            let changed = false;
+            for (const seg of segments) {
+              if (seg.speaker !== decision.speakerId) continue;
+              if (isSpeakerLocked(seg)) continue;
+              if (decision.outcome === "suggest") {
+                if (seg.speakerName && !seg.speakerIsPlaceholder) continue;
+                if (seg.suggestedName === profile.display_name) continue;
+                applySuggestedSpeaker(seg, {
+                  suggestedName: profile.display_name,
+                  suggestedProfileId: profile.id,
+                });
+                changed = true;
+              } else if (!seg.speakerName) {
+                applyConfirmedSpeaker(seg, {
+                  speakerName: profile.display_name,
+                  speakerIsPlaceholder: false,
+                });
+                changed = true;
               }
             }
+            if (changed) {
+              this.databaseManager.updateNote(noteId, { transcript: JSON.stringify(segments) });
+            }
+          } catch (err) {
+            debugLogger.warn(
+              "Retroactive mapping could not rewrite a transcript",
+              { noteId, error: err.message },
+              "database"
+            );
           }
         }
       } catch (err) {
@@ -7929,7 +7963,10 @@ class IPCHandlers {
             emb.embedding,
             profile?.id ?? null
           );
-          this.databaseManager.setSpeakerMapping(noteId, emb.speaker_id, profile.id, displayName);
+          this.databaseManager.setSpeakerMapping(noteId, emb.speaker_id, profile.id, displayName, {
+            origin: "auto",
+            confidence: null,
+          });
           liveSpeakerIdentifier.mapSpeaker(emb.speaker_id, profile.id, displayName, noteId);
         }
 
@@ -8056,16 +8093,26 @@ class IPCHandlers {
             bestEntry.noteId,
             mappedId,
             profileId,
-            displayName
+            displayName,
+            {
+              origin: liveMapping.origin ?? "unknown",
+              confidence: liveMapping.confidence ?? null,
+            }
           );
           this.databaseManager.removeSpeakerMapping(bestEntry.noteId, bestEntry.speakerId);
         } else if (displayName) {
-          this.databaseManager.setSpeakerMapping(
-            bestEntry.noteId,
-            mappedId,
-            profileId,
-            displayName
+          const target = getMappingsForNote(bestEntry.noteId).find(
+            (mapping) => mapping.speaker_id === mappedId
           );
+          if (target?.origin !== "manual") {
+            this.databaseManager.setSpeakerMapping(
+              bestEntry.noteId,
+              mappedId,
+              profileId,
+              displayName,
+              { origin: "auto", confidence: null }
+            );
+          }
         }
       }
 

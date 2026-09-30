@@ -579,6 +579,19 @@ class DatabaseManager {
         )
       `);
 
+      try {
+        this.db.exec(
+          "ALTER TABLE speaker_mappings ADD COLUMN origin TEXT NOT NULL DEFAULT 'unknown'"
+        );
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+      try {
+        this.db.exec("ALTER TABLE speaker_mappings ADD COLUMN confidence REAL");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS note_speaker_embeddings (
           note_id INTEGER NOT NULL,
@@ -3333,7 +3346,7 @@ class DatabaseManager {
         .run(finalName, finalEmail, Buffer.from(blended.buffer), total, winner.id);
       this.db
         .prepare(
-          "UPDATE speaker_mappings SET profile_id = ?, display_name = ? WHERE profile_id = ?"
+          "UPDATE speaker_mappings SET profile_id = ?, display_name = ?, confidence = NULL WHERE profile_id = ?"
         )
         .run(winner.id, finalName, loser.id);
       this.db.prepare("DELETE FROM speaker_profiles WHERE id = ?").run(loser.id);
@@ -3359,14 +3372,21 @@ class DatabaseManager {
     }
   }
 
-  setSpeakerMapping(noteId, speakerId, profileId, displayName) {
+  setSpeakerMapping(noteId, speakerId, profileId, displayName, provenance) {
     try {
       if (!this.db) throw new Error("Database not initialized");
+      const origin = provenance?.origin;
+      if (origin !== "manual" && origin !== "auto" && origin !== "unknown") {
+        throw new Error(
+          `setSpeakerMapping requires origin of manual, auto or unknown, got ${String(origin)}`
+        );
+      }
+      const confidence = origin === "auto" ? (provenance.confidence ?? null) : null;
       this.db
         .prepare(
-          "INSERT OR REPLACE INTO speaker_mappings (note_id, speaker_id, profile_id, display_name) VALUES (?, ?, ?, ?)"
+          "INSERT OR REPLACE INTO speaker_mappings (note_id, speaker_id, profile_id, display_name, origin, confidence) VALUES (?, ?, ?, ?, ?, ?)"
         )
-        .run(noteId, speakerId, profileId, displayName);
+        .run(noteId, speakerId, profileId, displayName, origin, confidence);
       this._markTranscriptDirty(noteId);
       return { success: true };
     } catch (error) {

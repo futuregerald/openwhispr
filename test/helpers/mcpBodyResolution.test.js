@@ -151,7 +151,12 @@ test("epoch-millisecond transcripts render sane hours, not five-digit ones", () 
   const note = makeNote(dbm, {
     transcript: JSON.stringify([
       { text: "first thing", timestamp: origin + 5000, speaker: "speaker_0", speakerName: "Jorge" },
-      { text: "much later", timestamp: origin + 3700000, speaker: "speaker_0", speakerName: "Jorge" },
+      {
+        text: "much later",
+        timestamp: origin + 3700000,
+        speaker: "speaker_0",
+        speakerName: "Jorge",
+      },
     ]),
     transcript_origin_ms: origin,
   });
@@ -189,7 +194,9 @@ test("segments merge by speaker rather than emitting one block per utterance", (
 test("a segment with no usable timestamp renders without one rather than as 00:00:00", () => {
   const dbm = createDb();
   const note = makeNote(dbm, {
-    transcript: JSON.stringify([{ text: "clockless remark", speaker: "speaker_0", speakerName: "Jorge" }]),
+    transcript: JSON.stringify([
+      { text: "clockless remark", speaker: "speaker_0", speakerName: "Jorge" },
+    ]),
   });
 
   const body = resolveNoteBody(dbm.db, note);
@@ -297,7 +304,7 @@ test("a speaker mapping supplies the label for a placeholder cluster", () => {
       { text: "mapped speech", timestamp: 0, speaker: "speaker_1", speakerIsPlaceholder: true },
     ]),
   });
-  dbm.setSpeakerMapping(note.id, "speaker_1", null, "Jorge");
+  dbm.setSpeakerMapping(note.id, "speaker_1", null, "Jorge", { origin: "manual" });
   reshredNote(dbm.db, note.id);
 
   const body = resolveNoteBody(dbm.db, dbm.getNote(note.id));

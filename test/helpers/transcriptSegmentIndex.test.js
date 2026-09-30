@@ -40,7 +40,11 @@ function seedNote(dbm, transcript, { originMs = null, title = "Note" } = {}) {
   const { note } = dbm.saveNote(title, "", "meeting");
   dbm.db
     .prepare("UPDATE notes SET transcript = ?, transcript_origin_ms = ? WHERE id = ?")
-    .run(typeof transcript === "string" ? transcript : JSON.stringify(transcript), originMs, note.id);
+    .run(
+      typeof transcript === "string" ? transcript : JSON.stringify(transcript),
+      originMs,
+      note.id
+    );
   return note.id;
 }
 
@@ -181,18 +185,16 @@ test("appending segments rewrites the note in full with correct ordering", () =>
   ]);
   reshredNote(dbm.db, noteId);
 
-  dbm.db
-    .prepare("UPDATE notes SET transcript = ? WHERE id = ?")
-    .run(
-      JSON.stringify([
-        { text: "alpha", timestamp: 0, speaker: "speaker_0" },
-        { text: "beta", timestamp: 3, speaker: "speaker_0" },
-        { text: "gamma", timestamp: 6, speaker: "speaker_0" },
-        { text: "delta", timestamp: 9, speaker: "speaker_1" },
-        { text: "epsilon", timestamp: 12, speaker: "speaker_1" },
-      ]),
-      noteId
-    );
+  dbm.db.prepare("UPDATE notes SET transcript = ? WHERE id = ?").run(
+    JSON.stringify([
+      { text: "alpha", timestamp: 0, speaker: "speaker_0" },
+      { text: "beta", timestamp: 3, speaker: "speaker_0" },
+      { text: "gamma", timestamp: 6, speaker: "speaker_0" },
+      { text: "delta", timestamp: 9, speaker: "speaker_1" },
+      { text: "epsilon", timestamp: 12, speaker: "speaker_1" },
+    ]),
+    noteId
+  );
   reshredNote(dbm.db, noteId);
 
   assert.deepEqual(
@@ -215,15 +217,13 @@ test("editing the first segment is reflected without changing the row count", ()
   ]);
   reshredNote(dbm.db, noteId);
 
-  dbm.db
-    .prepare("UPDATE notes SET transcript = ? WHERE id = ?")
-    .run(
-      JSON.stringify([
-        { text: "alpha corrected", timestamp: 0, speaker: "speaker_0" },
-        { text: "beta", timestamp: 3, speaker: "speaker_0" },
-      ]),
-      noteId
-    );
+  dbm.db.prepare("UPDATE notes SET transcript = ? WHERE id = ?").run(
+    JSON.stringify([
+      { text: "alpha corrected", timestamp: 0, speaker: "speaker_0" },
+      { text: "beta", timestamp: 3, speaker: "speaker_0" },
+    ]),
+    noteId
+  );
   reshredNote(dbm.db, noteId);
 
   const rows = segmentRows(dbm, noteId);
@@ -238,7 +238,11 @@ test("a plain-string transcript is indexed as one segment rather than dropped", 
   reshredNote(dbm.db, noteId);
   const rows = segmentRows(dbm, noteId);
 
-  assert.equal(rows.length, 1, "PersonalNotesView writes a bare string when a recording has no segments");
+  assert.equal(
+    rows.length,
+    1,
+    "PersonalNotesView writes a bare string when a recording has no segments"
+  );
   assert.equal(rows[0].seq, 0);
   assert.equal(rows[0].speaker_name, null);
   assert.equal(rows[0].timestamp_kind, "unknown");
@@ -248,12 +252,18 @@ test("a plain-string transcript is indexed as one segment rather than dropped", 
 test("changing only a speaker mapping still relabels the indexed segments", () => {
   const dbm = createDb();
   const noteId = seedNote(dbm, [
-    { text: "alpha", timestamp: 0, speaker: "speaker_1", speakerName: "Speaker 2", speakerIsPlaceholder: true },
+    {
+      text: "alpha",
+      timestamp: 0,
+      speaker: "speaker_1",
+      speakerName: "Speaker 2",
+      speakerIsPlaceholder: true,
+    },
   ]);
   reshredNote(dbm.db, noteId);
   assert.equal(segmentRows(dbm, noteId)[0].speaker_name, null);
 
-  dbm.setSpeakerMapping(noteId, "speaker_1", null, "Jorge");
+  dbm.setSpeakerMapping(noteId, "speaker_1", null, "Jorge", { origin: "manual" });
   reshredNote(dbm.db, noteId);
 
   assert.equal(
@@ -267,10 +277,16 @@ test("an explicit non-placeholder name wins over a mapping, and a placeholder st
   const dbm = createDb();
   const noteId = seedNote(dbm, [
     { text: "alpha", timestamp: 0, speaker: "speaker_0", speakerName: "Jorge Chayan" },
-    { text: "beta", timestamp: 3, speaker: "speaker_1", speakerName: "Speaker 2", speakerIsPlaceholder: true },
+    {
+      text: "beta",
+      timestamp: 3,
+      speaker: "speaker_1",
+      speakerName: "Speaker 2",
+      speakerIsPlaceholder: true,
+    },
     { text: "gamma", timestamp: 6, speaker: "speaker_2" },
   ]);
-  dbm.setSpeakerMapping(noteId, "speaker_0", null, "J. Chayan");
+  dbm.setSpeakerMapping(noteId, "speaker_0", null, "J. Chayan", { origin: "manual" });
 
   reshredNote(dbm.db, noteId);
 
@@ -297,7 +313,9 @@ test("a soft-deleted note has its segments removed", () => {
   reshredNote(dbm.db, noteId);
   assert.equal(segmentRows(dbm, noteId).length, 1);
 
-  dbm.db.prepare("UPDATE notes SET deleted_at = ? WHERE id = ?").run(new Date().toISOString(), noteId);
+  dbm.db
+    .prepare("UPDATE notes SET deleted_at = ? WHERE id = ?")
+    .run(new Date().toISOString(), noteId);
   reshredNote(dbm.db, noteId);
 
   assert.equal(segmentRows(dbm, noteId).length, 0);
@@ -313,7 +331,11 @@ test("updateNote marks a note dirty only when it writes the transcript", () => {
   const { note } = dbm.saveNote("Hooks", "", "meeting");
 
   dbm.updateNote(note.id, { title: "Renamed" });
-  assert.equal(dbm._dirtyTranscriptNotes.has(note.id), false, "a title edit is not transcript work");
+  assert.equal(
+    dbm._dirtyTranscriptNotes.has(note.id),
+    false,
+    "a title edit is not transcript work"
+  );
 
   dbm.updateNote(note.id, { transcript: JSON.stringify([{ text: "alpha", timestamp: 0 }]) });
   assert.equal(dbm._dirtyTranscriptNotes.has(note.id), true);
@@ -346,7 +368,7 @@ test("speaker mapping writes mark a note dirty even though the transcript is unt
   const dbm = createDb();
   const noteId = seedNote(dbm, [{ text: "alpha", timestamp: 0, speaker: "speaker_1" }]);
 
-  dbm.setSpeakerMapping(noteId, "speaker_1", null, "Jorge");
+  dbm.setSpeakerMapping(noteId, "speaker_1", null, "Jorge", { origin: "manual" });
   assert.equal(dbm._dirtyTranscriptNotes.has(noteId), true);
 
   dbm._dirtyTranscriptNotes.clear();
@@ -432,7 +454,10 @@ test("the sweep wraps back to the start once it runs out of notes", () => {
 
   dbm.db
     .prepare("UPDATE notes SET transcript = ? WHERE id = ?")
-    .run(JSON.stringify([{ text: "changed behind the hook", timestamp: 0, speaker: "speaker_0" }]), first);
+    .run(
+      JSON.stringify([{ text: "changed behind the hook", timestamp: 0, speaker: "speaker_0" }]),
+      first
+    );
   dbm._dirtyTranscriptNotes.clear();
 
   for (let sweep = 0; sweep < 6; sweep++) {
@@ -455,7 +480,10 @@ test("a sweep never reshreds more notes in one tick than an ordinary drain would
     drained <= 3,
     `a sweep drained ${drained} notes in one synchronous tick; at 1800 segments each that is over a second of frozen main process`
   );
-  assert.ok(dbm._dirtyTranscriptNotes.size > 0, "the rest stay queued and bleed off over later ticks");
+  assert.ok(
+    dbm._dirtyTranscriptNotes.size > 0,
+    "the rest stay queued and bleed off over later ticks"
+  );
 });
 
 test("the indexer tick reconciles only once the dirty queue is drained", () => {
@@ -479,8 +507,8 @@ test("merging two speaker profiles relabels the segments of every note they touc
   const winner = dbm.upsertSpeakerProfile("Jorge Chayan", "jorge@example.com", embedding);
   const loser = dbm.upsertSpeakerProfile("J. Chayan", null, embedding);
 
-  dbm.setSpeakerMapping(noteA, "speaker_0", winner.id, "Jorge Chayan");
-  dbm.setSpeakerMapping(noteB, "speaker_0", loser.id, "J. Chayan");
+  dbm.setSpeakerMapping(noteA, "speaker_0", winner.id, "Jorge Chayan", { origin: "manual" });
+  dbm.setSpeakerMapping(noteB, "speaker_0", loser.id, "J. Chayan", { origin: "manual" });
   dbm._drainDirtyTranscriptNotes(10);
 
   assert.equal(segmentRows(dbm, noteB)[0].speaker_name, "J. Chayan");
@@ -530,7 +558,11 @@ test("a tick over a closed database stops the indexer instead of throwing every 
   dbm.db.close();
 
   assert.doesNotThrow(() => dbm._drainDirtyTranscriptNotes());
-  assert.equal(dbm._transcriptIndexTimer, null, "factory reset closes the handle without nulling it");
+  assert.equal(
+    dbm._transcriptIndexTimer,
+    null,
+    "factory reset closes the handle without nulling it"
+  );
 });
 
 test("the backfill indexes every pending note and is a no-op on a second run", async () => {
