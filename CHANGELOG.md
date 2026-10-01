@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer have its rename quietly replaced by automatic speaker matching.
 - Adding dictionary words through an assistant can only add. It cannot remove
   words you have saved.
+- If your assistant asks for something your installed version is too old for, it
+  now says which feature needs the update and keeps everything else working,
+  instead of reporting that OpenWhispr does not support assistants at all.
+
+### Fixed
+
+- A speaker renamed by an assistant no longer reverts the next time you rename
+  someone else in that note. The name held in the editor, but exports, search
+  and generated notes quietly went back to the old one.
 
 ## [1.32.0] - 2026-09-30
 
