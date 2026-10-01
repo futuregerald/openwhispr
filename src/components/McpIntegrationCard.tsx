@@ -147,11 +147,7 @@ export default function McpIntegrationCard() {
             onClick={() => setShowWrite((open) => !open)}
             className="flex items-center gap-1 text-xs text-muted-foreground/70 hover:text-foreground transition-colors mb-2"
           >
-            {showWrite ? (
-              <ChevronDown className="h-3 w-3" />
-            ) : (
-              <ChevronRight className="h-3 w-3" />
-            )}
+            {showWrite ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
             {t("integrations.mcp.writeToggle")}
           </button>
 
@@ -163,7 +159,9 @@ export default function McpIntegrationCard() {
                   {t("integrations.mcp.writeWarning")}
                 </p>
               </div>
-              <CopyableCommand command={showFallback ? commands.fallbackReadWrite : commands.readWrite} />
+              <CopyableCommand
+                command={showFallback ? commands.fallbackReadWrite : commands.readWrite}
+              />
             </div>
           )}
 
@@ -190,9 +188,7 @@ export default function McpIntegrationCard() {
                   <CopyableCommand
                     block
                     command={
-                      clientConfigs[
-                        mcpConfigVariant({ fallback: showFallback, write: showWrite })
-                      ]
+                      clientConfigs[mcpConfigVariant({ fallback: showFallback, write: showWrite })]
                     }
                   />
                 </div>

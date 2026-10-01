@@ -63,7 +63,10 @@ test("a path with a space is carried raw, not shell-quoted", () => {
     !read.includes("'"),
     "a single quote means the shell quoting from buildCommands leaked into the JSON, where it would become part of the path"
   );
-  assert.equal(entry(fallbackRead).command, "/Applications/Open Whispr.app/Contents/MacOS/OpenWhispr");
+  assert.equal(
+    entry(fallbackRead).command,
+    "/Applications/Open Whispr.app/Contents/MacOS/OpenWhispr"
+  );
 });
 
 test("a Windows path survives the round trip with its backslashes intact", () => {

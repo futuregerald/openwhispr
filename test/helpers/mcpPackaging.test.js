@@ -5,11 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const repoRoot = path.join(__dirname, "../..");
-const {
-  getMcpConfig,
-  resolveExecPath,
-  WRITE_ENV_VAR,
-} = require("../../src/helpers/mcpConfig.js");
+const { getMcpConfig, resolveExecPath, WRITE_ENV_VAR } = require("../../src/helpers/mcpConfig.js");
 
 test("the mcp directory ships as extraResources, outside the asar", () => {
   const config = JSON.parse(fs.readFileSync(path.join(repoRoot, "electron-builder.json"), "utf8"));
@@ -83,10 +79,7 @@ test("the copyable commands carry -s user so the server works outside one direct
   });
 
   assert.match(config.commands.read, /^claude mcp add openwhispr -s user -- node /);
-  assert.ok(
-    !config.commands.read.includes(WRITE_ENV_VAR),
-    "the default command must be read-only"
-  );
+  assert.ok(!config.commands.read.includes(WRITE_ENV_VAR), "the default command must be read-only");
   assert.match(config.commands.readWrite, /-e OPENWHISPR_MCP_WRITE=1/);
   assert.match(config.commands.fallbackRead, /-e ELECTRON_RUN_AS_NODE=1/);
   assert.equal(config.commands.remove, "claude mcp remove openwhispr -s user");
