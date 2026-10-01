@@ -732,7 +732,7 @@ async function callTool(name, args = {}, env = process.env) {
       content: [
         {
           type: "text",
-          text: `${name} needs write mode. Re-add the server with -e OPENWHISPR_MCP_WRITE=1 to enable it.`,
+          text: `${name} needs write mode. Set OPENWHISPR_MCP_WRITE=1 in the server's environment to enable it — in Claude Code, re-add the server with -e OPENWHISPR_MCP_WRITE=1; in other clients, the env block of its entry.`,
         },
       ],
     };

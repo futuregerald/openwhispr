@@ -2430,7 +2430,7 @@
       "writeToggle": "Allow the agent to write notes",
       "writeWarning": "Write mode lets an agent create and overwrite notes. There is no version history, and a note can be overwritten by instructions hidden in a transcript. Leave it off unless you need it.",
       "manualToggle": "Using a different agent?",
-      "manualDescription": "Most MCP clients read their servers from a JSON config file — Claude Desktop, Cursor, Windsurf and others. Paste this entry into yours and restart the client. It follows the options you picked above.",
+      "manualDescription": "Most MCP clients read their servers from a JSON config file — Claude Desktop, Cursor, Windsurf and others. Paste this entry into yours and restart the client. It runs the server with OpenWhispr's own runtime, so your client does not need to find Node.",
       "removeLabel": "Remove the server",
       "indexBuilding_one": "Building transcript index — {{count}} note remaining",
       "indexBuilding_other": "Building transcript index — {{count}} notes remaining",

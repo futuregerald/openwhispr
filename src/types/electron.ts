@@ -1029,8 +1029,6 @@ declare global {
         clientConfigs: {
           read: string;
           readWrite: string;
-          fallbackRead: string;
-          fallbackReadWrite: string;
         } | null;
       }>;
 

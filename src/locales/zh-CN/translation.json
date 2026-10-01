@@ -2392,7 +2392,7 @@
       "writeToggle": "允许代理写入笔记",
       "writeWarning": "写入模式允许代理创建和覆盖笔记。没有版本历史，而且笔记可能被隐藏在转录中的指令覆盖。非必要请保持关闭。",
       "manualToggle": "使用其他智能体？",
-      "manualDescription": "大多数 MCP 客户端从 JSON 配置文件中读取服务器 —— Claude Desktop、Cursor、Windsurf 等。将此条目粘贴到你的配置文件中并重启客户端。它会跟随上面选择的选项。",
+      "manualDescription": "大多数 MCP 客户端从 JSON 配置文件中读取服务器 —— Claude Desktop、Cursor、Windsurf 等。将此条目粘贴到你的配置文件中并重启客户端。它使用 OpenWhispr 自带的运行时启动服务器，因此你的客户端无需找到 Node。",
       "removeLabel": "移除服务器",
       "indexBuilding_one": "正在建立转录索引 — 还剩 {{count}} 条笔记",
       "indexBuilding_other": "正在建立转录索引 — 还剩 {{count}} 条笔记",

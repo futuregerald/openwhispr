@@ -1,4 +1,3 @@
-export function mcpConfigVariant({ fallback = false, write = false } = {}) {
-  if (fallback) return write ? "fallbackReadWrite" : "fallbackRead";
+export function mcpConfigVariant({ write = false } = {}) {
   return write ? "readWrite" : "read";
 }

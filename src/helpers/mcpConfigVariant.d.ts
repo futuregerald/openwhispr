@@ -1,6 +1,3 @@
-export type McpConfigVariant = "read" | "readWrite" | "fallbackRead" | "fallbackReadWrite";
+export type McpConfigVariant = "read" | "readWrite";
 
-export declare function mcpConfigVariant(options?: {
-  fallback?: boolean;
-  write?: boolean;
-}): McpConfigVariant;
+export declare function mcpConfigVariant(options?: { write?: boolean }): McpConfigVariant;

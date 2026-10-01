@@ -2392,7 +2392,7 @@
       "writeToggle": "Permitir que o agente escreva notas",
       "writeWarning": "O modo de escrita permite que um agente crie e substitua notas. Não há histórico de versões e uma nota pode ser substituída por instruções escondidas numa transcrição. Deixe desligado a menos que precise.",
       "manualToggle": "Usando outro agente?",
-      "manualDescription": "A maioria dos clientes MCP lê os servidores de um arquivo de configuração JSON — Claude Desktop, Cursor, Windsurf e outros. Cole esta entrada no seu e reinicie o cliente. Ela segue as opções escolhidas acima.",
+      "manualDescription": "A maioria dos clientes MCP lê os servidores de um arquivo de configuração JSON — Claude Desktop, Cursor, Windsurf e outros. Cole esta entrada no seu e reinicie o cliente. Ela executa o servidor com o runtime do próprio OpenWhispr, então seu cliente não precisa encontrar o Node.",
       "removeLabel": "Remover o servidor",
       "indexBuilding_one": "A criar o índice de transcrições — falta {{count}} nota",
       "indexBuilding_other": "A criar o índice de transcrições — faltam {{count}} notas",

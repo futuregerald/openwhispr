@@ -40,17 +40,16 @@ function buildCommands({ serverPath, execPath }) {
 }
 
 function buildClientConfigs({ serverPath, execPath }) {
-  const entry = ({ fallback, write }) => {
-    const env = {};
-    if (fallback) env.ELECTRON_RUN_AS_NODE = "1";
+  const entry = ({ write }) => {
+    const env = { ELECTRON_RUN_AS_NODE: "1" };
     if (write) env[WRITE_ENV_VAR] = "1";
 
     return {
       mcpServers: {
         [SERVER_NAME]: {
-          command: fallback ? execPath : "node",
+          command: execPath,
           args: [serverPath],
-          ...(Object.keys(env).length > 0 ? { env } : {}),
+          env,
         },
       },
     };
@@ -59,10 +58,8 @@ function buildClientConfigs({ serverPath, execPath }) {
   const render = (options) => JSON.stringify(entry(options), null, 2);
 
   return {
-    read: render({ fallback: false, write: false }),
-    readWrite: render({ fallback: false, write: true }),
-    fallbackRead: render({ fallback: true, write: false }),
-    fallbackReadWrite: render({ fallback: true, write: true }),
+    read: render({ write: false }),
+    readWrite: render({ write: true }),
   };
 }
 

@@ -17,8 +17,6 @@ type McpCommands = {
 type McpClientConfigs = {
   read: string;
   readWrite: string;
-  fallbackRead: string;
-  fallbackReadWrite: string;
 };
 
 const INDEX_POLL_MS = 5000;
@@ -187,9 +185,7 @@ export default function McpIntegrationCard() {
                   </p>
                   <CopyableCommand
                     block
-                    command={
-                      clientConfigs[mcpConfigVariant({ fallback: showFallback, write: showWrite })]
-                    }
+                    command={clientConfigs[mcpConfigVariant({ write: showWrite })]}
                   />
                 </div>
               )}
