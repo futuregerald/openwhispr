@@ -52,6 +52,7 @@ const {
   applySuggestedSpeaker,
   canAutoRelabelSpeaker,
   isSpeakerLocked,
+  isOriginUserAuthored,
 } = require("./speakerAssignmentPolicy");
 const { classifyRetroactiveMatch } = require("./retroactiveSpeakerMatch");
 const { downsample24kTo16k, pcm16ToWav } = require("../utils/audioUtils");
@@ -8125,7 +8126,7 @@ class IPCHandlers {
           const target = getMappingsForNote(bestEntry.noteId).find(
             (mapping) => mapping.speaker_id === mappedId
           );
-          if (target?.origin !== "manual") {
+          if (!isOriginUserAuthored(target?.origin)) {
             this.databaseManager.setSpeakerMapping(
               bestEntry.noteId,
               mappedId,

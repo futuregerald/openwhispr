@@ -23,6 +23,8 @@ const USER_CONTEXT_DDL = `
 
 const TRANSCRIPT_ORIGIN_SOURCES = new Set(["audio:system", "first-segment", "unanchored"]);
 
+const SPEAKER_MAPPING_ORIGINS = new Set(["manual", "auto", "unknown", "agent"]);
+
 const MAX_NOTE_SUMMARY_LIMIT = 50;
 const NOTE_PREVIEW_CHARS = 400;
 const NOTE_PREVIEW_SEGMENTS = 20;
@@ -1223,8 +1225,29 @@ class DatabaseManager {
     }
   }
 
+  addDictionaryWords(words) {
+    if (!Array.isArray(words)) {
+      throw new Error("words must be an array");
+    }
+    const existing = this.getDictionary();
+    const seen = new Set(existing.map((word) => word.toLowerCase()));
+    const union = [...existing];
+    for (const raw of words) {
+      if (typeof raw !== "string") continue;
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      const lower = trimmed.toLowerCase();
+      if (seen.has(lower)) continue;
+      seen.add(lower);
+      union.push(trimmed);
+    }
+    this.setDictionary(union, "agent");
+    return this.getDictionary();
+  }
+
   // Diff-based update so unchanged rows keep their source and created_at.
-  // `sourceForNewWords` tags additions ('manual' for user-typed, 'learned' for auto-learn).
+  // `sourceForNewWords` tags additions ('manual' for user-typed, 'learned' for auto-learn,
+  // 'agent' for an MCP client).
   setDictionary(words, sourceForNewWords = "manual") {
     try {
       if (!this.db) {
@@ -3376,9 +3399,9 @@ class DatabaseManager {
     try {
       if (!this.db) throw new Error("Database not initialized");
       const origin = provenance?.origin;
-      if (origin !== "manual" && origin !== "auto" && origin !== "unknown") {
+      if (!SPEAKER_MAPPING_ORIGINS.has(origin)) {
         throw new Error(
-          `setSpeakerMapping requires origin of manual, auto or unknown, got ${String(origin)}`
+          `setSpeakerMapping requires origin of ${[...SPEAKER_MAPPING_ORIGINS].join(", ")}, got ${String(origin)}`
         );
       }
       const confidence = origin === "auto" ? (provenance.confidence ?? null) : null;

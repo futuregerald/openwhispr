@@ -65,6 +65,12 @@ function applySuggestedSpeaker(segment, patch = {}) {
   return applySpeakerUpdate(segment, patch, SPEAKER_STATUS.SUGGESTED);
 }
 
+const USER_AUTHORED_ORIGINS = new Set(["manual", "agent"]);
+
+function isOriginUserAuthored(origin) {
+  return USER_AUTHORED_ORIGINS.has(origin);
+}
+
 module.exports = {
   SPEAKER_STATUS,
   canonicalizeSpeakerStatus,
@@ -73,4 +79,5 @@ module.exports = {
   applyProvisionalSpeaker,
   applyConfirmedSpeaker,
   applySuggestedSpeaker,
+  isOriginUserAuthored,
 };

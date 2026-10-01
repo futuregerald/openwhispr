@@ -185,3 +185,67 @@ test("merging profiles drops a confidence that no longer describes the name", ()
   assert.equal(row.confidence, null, "a similarity computed against another name survived a merge");
   assert.equal(row.origin, "auto", "origin should be inherited through a merge, not reset");
 });
+
+// --- Task 2 / Task 3: the `agent` origin ---------------------------------
+// An MCP rename is neither a user typing a name nor the matcher guessing one.
+// It needs its own value so a later audit can find what a model decided.
+
+test("setSpeakerMapping accepts an agent origin and stores no confidence", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+  // A confidence IS passed, or the assertion below holds for an
+  // implementation that simply never stores one for any origin.
+  db.setSpeakerMapping(noteId, "speaker_0", null, "Priya", {
+    origin: "agent",
+    confidence: 0.91,
+  });
+  const row = db.getSpeakerMappings(noteId).find((r) => r.speaker_id === "speaker_0");
+  assert.equal(row.origin, "agent");
+  assert.equal(row.confidence, null, "an agent rename carries no similarity score");
+});
+
+test("widening the allowlist for agent did not open it to anything else", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+  for (const origin of ["agents", "Agent", "AGENT", "", "guess", null, undefined, 0]) {
+    assert.throws(
+      () => db.setSpeakerMapping(noteId, "speaker_0", null, "Priya", { origin }),
+      /origin/i,
+      `origin ${JSON.stringify(origin)} should be refused`
+    );
+  }
+});
+
+test("live reconciliation leaves an agent name alone, exactly as it leaves a manual one", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+  db.setSpeakerMapping(noteId, "speaker_0", null, "Priya", { origin: "agent" });
+
+  reconcileHarness(db)._reconcileLiveSpeakerState(
+    { live_9: { displayName: "Someone Else", profileId: null, noteId, embedding: [1, 0] } },
+    { speaker_0: [1, 0] },
+    []
+  );
+
+  const row = db.getSpeakerMappings(noteId).find((r) => r.speaker_id === "speaker_0");
+  assert.equal(row.display_name, "Priya", "an agent rename was overwritten by a guess");
+  assert.equal(row.origin, "agent", "origin was downgraded to auto");
+});
+
+test("live reconciliation still overwrites an auto name, so the guard is not blanket", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+  db.setSpeakerMapping(noteId, "speaker_0", null, "Guessed", {
+    origin: "auto",
+    confidence: 0.7,
+  });
+
+  reconcileHarness(db)._reconcileLiveSpeakerState(
+    { live_9: { displayName: "Someone Else", profileId: null, noteId, embedding: [1, 0] } },
+    { speaker_0: [1, 0] },
+    []
+  );
+
+  const row = db.getSpeakerMappings(noteId).find((r) => r.speaker_id === "speaker_0");
+  assert.equal(row.display_name, "Someone Else", "an auto row should still be re-scorable");
+});
