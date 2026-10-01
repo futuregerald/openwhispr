@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, ChevronDown, ChevronRight, Loader2, Plug } from "lucide-react";
 import { CopyableCommand } from "./ui/CopyableCommand";
+import { mcpConfigVariant } from "../helpers/mcpConfigVariant";
 import { LogoTile } from "./ui/LogoTile";
 import logo from "../assets/logo.svg";
 
@@ -13,14 +14,23 @@ type McpCommands = {
   remove: string;
 };
 
+type McpClientConfigs = {
+  read: string;
+  readWrite: string;
+  fallbackRead: string;
+  fallbackReadWrite: string;
+};
+
 const INDEX_POLL_MS = 5000;
 
 export default function McpIntegrationCard() {
   const { t } = useTranslation();
   const [commands, setCommands] = useState<McpCommands | null>(null);
+  const [clientConfigs, setClientConfigs] = useState<McpClientConfigs | null>(null);
   const [loading, setLoading] = useState(true);
   const [showWrite, setShowWrite] = useState(false);
   const [showFallback, setShowFallback] = useState(false);
+  const [showManual, setShowManual] = useState(false);
   const [pendingNotes, setPendingNotes] = useState(0);
 
   useEffect(() => {
@@ -30,6 +40,7 @@ export default function McpIntegrationCard() {
       .then((config) => {
         if (cancelled) return;
         setCommands(config?.commands ?? null);
+        setClientConfigs(config?.clientConfigs ?? null);
       })
       .catch(() => {})
       .finally(() => {
@@ -154,6 +165,39 @@ export default function McpIntegrationCard() {
               </div>
               <CopyableCommand command={showFallback ? commands.fallbackReadWrite : commands.readWrite} />
             </div>
+          )}
+
+          {clientConfigs && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowManual((open) => !open)}
+                className="flex items-center gap-1 text-xs text-muted-foreground/70 hover:text-foreground transition-colors mb-2"
+              >
+                {showManual ? (
+                  <ChevronDown className="h-3 w-3" />
+                ) : (
+                  <ChevronRight className="h-3 w-3" />
+                )}
+                {t("integrations.mcp.manualToggle")}
+              </button>
+
+              {showManual && (
+                <div className="mb-3">
+                  <p className="text-[11px] text-muted-foreground/60 mb-1.5 leading-relaxed">
+                    {t("integrations.mcp.manualDescription")}
+                  </p>
+                  <CopyableCommand
+                    block
+                    command={
+                      clientConfigs[
+                        mcpConfigVariant({ fallback: showFallback, write: showWrite })
+                      ]
+                    }
+                  />
+                </div>
+              )}
+            </>
           )}
 
           <div className="mt-4">
