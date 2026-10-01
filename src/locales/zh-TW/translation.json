@@ -2391,6 +2391,8 @@
       "noNodeDescription": "這種形式使用 OpenWhispr 自帶的執行環境啟動伺服器。",
       "writeToggle": "允許代理寫入筆記",
       "writeWarning": "寫入模式允許代理建立和覆寫筆記。沒有版本歷史，而且筆記可能被藏在逐字稿中的指示覆寫。非必要請保持關閉。",
+      "manualToggle": "使用其他代理程式？",
+      "manualDescription": "大多數 MCP 用戶端會從 JSON 設定檔讀取伺服器 —— Claude Desktop、Cursor、Windsurf 等。將此項目貼到你的設定檔並重新啟動用戶端。它會依照上面選擇的選項。",
       "removeLabel": "移除伺服器",
       "indexBuilding_one": "正在建立逐字稿索引 — 還剩 {{count}} 篇筆記",
       "indexBuilding_other": "正在建立逐字稿索引 — 還剩 {{count}} 篇筆記",

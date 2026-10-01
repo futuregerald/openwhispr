@@ -2391,6 +2391,8 @@
       "noNodeDescription": "Diese Variante startet den Server mit der Laufzeitumgebung von OpenWhispr.",
       "writeToggle": "Agent darf Notizen schreiben",
       "writeWarning": "Im Schreibmodus kann ein Agent Notizen anlegen und überschreiben. Es gibt keine Versionshistorie, und eine Notiz kann durch Anweisungen überschrieben werden, die in einem Transkript versteckt sind. Lass ihn aus, wenn du ihn nicht brauchst.",
+      "manualToggle": "Ein anderer Agent?",
+      "manualDescription": "Die meisten MCP-Clients lesen ihre Server aus einer JSON-Konfigurationsdatei – Claude Desktop, Cursor, Windsurf und andere. Füge diesen Eintrag in deine Datei ein und starte den Client neu. Er folgt den oben gewählten Optionen.",
       "removeLabel": "Server entfernen",
       "indexBuilding_one": "Transkript-Index wird erstellt — noch {{count}} Notiz",
       "indexBuilding_other": "Transkript-Index wird erstellt — noch {{count}} Notizen",

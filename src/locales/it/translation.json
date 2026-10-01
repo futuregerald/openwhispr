@@ -2391,6 +2391,8 @@
       "noNodeDescription": "Questa variante avvia il server con l'ambiente di OpenWhispr.",
       "writeToggle": "Consenti all'agente di scrivere note",
       "writeWarning": "La modalità di scrittura consente a un agente di creare e sovrascrivere note. Non esiste una cronologia delle versioni e una nota può essere sovrascritta da istruzioni nascoste in una trascrizione. Lasciala disattivata se non serve.",
+      "manualToggle": "Usi un altro agente?",
+      "manualDescription": "La maggior parte dei client MCP legge i server da un file di configurazione JSON: Claude Desktop, Cursor, Windsurf e altri. Incolla questa voce nel tuo e riavvia il client. Rispecchia le opzioni scelte sopra.",
       "removeLabel": "Rimuovi il server",
       "indexBuilding_one": "Creazione dell'indice delle trascrizioni — {{count}} nota rimanente",
       "indexBuilding_other": "Creazione dell'indice delle trascrizioni — {{count}} note rimanenti",
