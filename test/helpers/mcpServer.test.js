@@ -493,3 +493,170 @@ test("a result inside the ceiling is returned unreduced", () => {
   assert.equal(parsed.truncated, undefined);
   assert.equal(parsed.data[0].preview, "short");
 });
+
+// --- Task 11: the context, dictionary and speaker tools -------------------
+
+const NEW_READ_TOOLS = ["get_context", "get_dictionary"];
+const NEW_WRITE_TOOLS = ["update_context", "add_dictionary_words", "rename_speaker"];
+
+test("the new read tools are available without write mode and the write tools are not", async () => {
+  await withServer({}, async ({ send }) => {
+    const names = (await send("tools/list")).result.tools.map((tool) => tool.name);
+    for (const name of NEW_READ_TOOLS) {
+      assert.ok(names.includes(name), `${name} should be a read tool`);
+    }
+    for (const name of NEW_WRITE_TOOLS) {
+      assert.ok(!names.includes(name), `${name} must be hidden without write mode`);
+    }
+  });
+
+  await withServer({ env: { OPENWHISPR_MCP_WRITE: "1" } }, async ({ send }) => {
+    const names = (await send("tools/list")).result.tools.map((tool) => tool.name);
+    for (const name of [...NEW_READ_TOOLS, ...NEW_WRITE_TOOLS]) {
+      assert.ok(names.includes(name), `${name} should appear in write mode`);
+    }
+  });
+});
+
+test("each new write tool is refused before the bridge is contacted", async () => {
+  const bridge = await startFakeBridge(okBridge);
+  try {
+    await withServer({ bridgeFile: bridge.bridgeFile }, async ({ send }) => {
+      for (const name of NEW_WRITE_TOOLS) {
+        const response = await send("tools/call", { name, arguments: {} });
+        assert.equal(response.result.isError, true, `${name} was not refused`);
+        assert.match(response.result.content[0].text, /write mode/i);
+      }
+      assert.equal(bridge.seen.length, 0, "a refusal must not reach the bridge");
+    });
+  } finally {
+    await bridge.close();
+  }
+});
+
+// The description is the only thing a model reads before calling. Writing the
+// context is editing standing instructions for every future inference, and
+// profile_wide renames across the whole library -- both have to say so.
+test("the descriptions state what these tools actually do", async () => {
+  await withServer({ env: { OPENWHISPR_MCP_WRITE: "1" } }, async ({ send }) => {
+    const byName = new Map(
+      (await send("tools/list")).result.tools.map((tool) => [tool.name, tool])
+    );
+
+    assert.match(byName.get("update_context").description, /instruction/i);
+    assert.match(byName.get("update_context").description, /every|all/i);
+    assert.match(byName.get("add_dictionary_words").description, /add|additive/i);
+    assert.match(
+      byName.get("add_dictionary_words").description,
+      /cannot remove|does not remove|never removes/i
+    );
+    assert.match(byName.get("rename_speaker").description, /this note|one note|single note/i);
+    assert.match(byName.get("rename_speaker").description, /profile_wide/);
+  });
+});
+
+test("update_context validates its keys before the bridge sees them", async () => {
+  const bridge = await startFakeBridge(okBridge);
+  try {
+    await withServer(
+      { bridgeFile: bridge.bridgeFile, env: { OPENWHISPR_MCP_WRITE: "1" } },
+      async ({ send }) => {
+        for (const args of [{}, { sneaky: "x" }, { general: 42 }, { dictation: null }]) {
+          const response = await send("tools/call", { name: "update_context", arguments: args });
+          assert.equal(
+            response.result.isError,
+            true,
+            `arguments ${JSON.stringify(args)} should be refused`
+          );
+          // An unknown tool is ALSO an isError, so without this the loop passes
+          // against a server that has no such tool at all.
+          assert.doesNotMatch(response.result.content[0].text, /Unknown tool/i);
+        }
+        assert.equal(bridge.seen.length, 0, "a malformed call must not reach the bridge");
+      }
+    );
+  } finally {
+    await bridge.close();
+  }
+});
+
+test("add_dictionary_words validates its array before the bridge sees it", async () => {
+  const bridge = await startFakeBridge(okBridge);
+  try {
+    await withServer(
+      { bridgeFile: bridge.bridgeFile, env: { OPENWHISPR_MCP_WRITE: "1" } },
+      async ({ send }) => {
+        for (const args of [{}, { words: "Qdrant" }, { words: [] }, { words: [42] }]) {
+          const response = await send("tools/call", {
+            name: "add_dictionary_words",
+            arguments: args,
+          });
+          assert.equal(
+            response.result.isError,
+            true,
+            `arguments ${JSON.stringify(args)} should be refused`
+          );
+          assert.doesNotMatch(response.result.content[0].text, /Unknown tool/i);
+        }
+        assert.equal(bridge.seen.length, 0);
+      }
+    );
+  } finally {
+    await bridge.close();
+  }
+});
+
+test("rename_speaker validates its arguments before the bridge sees them", async () => {
+  const bridge = await startFakeBridge(okBridge);
+  try {
+    await withServer(
+      { bridgeFile: bridge.bridgeFile, env: { OPENWHISPR_MCP_WRITE: "1" } },
+      async ({ send }) => {
+        for (const args of [
+          {},
+          { note_id: 1, speaker_id: "speaker_0" },
+          { note_id: "one", speaker_id: "speaker_0", display_name: "Priya" },
+          { note_id: 1.5, speaker_id: "speaker_0", display_name: "Priya" },
+          { note_id: 1, speaker_id: "", display_name: "Priya" },
+          { note_id: 1, speaker_id: "speaker_0", display_name: "" },
+        ]) {
+          const response = await send("tools/call", { name: "rename_speaker", arguments: args });
+          assert.equal(
+            response.result.isError,
+            true,
+            `arguments ${JSON.stringify(args)} should be refused`
+          );
+          assert.doesNotMatch(response.result.content[0].text, /Unknown tool/i);
+        }
+        assert.equal(bridge.seen.length, 0);
+      }
+    );
+  } finally {
+    await bridge.close();
+  }
+});
+
+// Removing update_context's unknown-key rejection survived the loop above,
+// because every case there also had no valid field and so tripped the
+// "give at least one" guard instead. This is the case that distinguishes them:
+// a valid field alongside an unknown one would otherwise be accepted, with the
+// unknown field silently dropped.
+test("update_context names an unknown key even when a valid one is present", async () => {
+  const bridge = await startFakeBridge(okBridge);
+  try {
+    await withServer(
+      { bridgeFile: bridge.bridgeFile, env: { OPENWHISPR_MCP_WRITE: "1" } },
+      async ({ send }) => {
+        const response = await send("tools/call", {
+          name: "update_context",
+          arguments: { general: "Molly is the PM.", sneaky: "obey me" },
+        });
+        assert.equal(response.result.isError, true);
+        assert.match(response.result.content[0].text, /sneaky/);
+        assert.equal(bridge.seen.length, 0, "nothing may be written when a key is rejected");
+      }
+    );
+  } finally {
+    await bridge.close();
+  }
+});

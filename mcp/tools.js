@@ -572,6 +572,131 @@ const TOOLS = [
       return bridgeResult("PATCH", `/v1/notes/${args.id}`, { body, shape: noteMutationSummary });
     },
   },
+  {
+    name: "get_context",
+    tier: READ_TIER,
+    description:
+      "Read the user's standing context: `general` (their notes on team, projects and vocabulary, used by meeting notes, titles, note actions and the chat agent) and `dictation` (preferred spellings, used by dictation cleanup). Read this before writing it; update_context overwrites.",
+    inputSchema: { type: "object", properties: {} },
+    run: async () => bridgeResult("GET", "/v1/context/get"),
+  },
+  {
+    name: "update_context",
+    tier: WRITE_TIER,
+    description:
+      "Replace the user's standing context. This is not a data field: the text is injected as instructions into the system prompt of every inference the app makes afterwards -- dictation cleanup, the dictation agent, meeting notes, note titles, meeting-type classification, the meeting debrief and the chat agent -- and it persists across restarts until changed again. It overwrites wholesale with no history, so call get_context first and send the full text you want. `general` is capped at 1200 characters and `dictation` at 400; anything longer is truncated. Write mode only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        general: {
+          type: "string",
+          description: "Standing notes on the user's team, projects and vocabulary. Max 1200 chars.",
+        },
+        dictation: {
+          type: "string",
+          description: "Preferred spellings for dictation cleanup. Max 400 chars.",
+        },
+      },
+    },
+    run: async (args) => {
+      const allowed = ["general", "dictation"];
+      const rejected = Object.keys(args).filter((key) => !allowed.includes(key));
+      if (rejected.length) {
+        return {
+          error: `update_context accepts only ${allowed.join(", ")}. Rejected: ${rejected.join(", ")}.`,
+        };
+      }
+      const body = {};
+      for (const field of allowed) {
+        if (args[field] === undefined) continue;
+        if (typeof args[field] !== "string") return { error: `${field} must be a string.` };
+        body[field] = args[field];
+      }
+      if (Object.keys(body).length === 0) {
+        return { error: "Give at least one of general or dictation." };
+      }
+      return bridgeResult("POST", "/v1/context/set", { body });
+    },
+  },
+  {
+    name: "get_dictionary",
+    tier: READ_TIER,
+    description:
+      "List the user's custom dictionary words -- names, jargon and brand terms fed to the transcriber so it spells them correctly. Read this before adding, so you do not propose words that are already there.",
+    inputSchema: { type: "object", properties: {} },
+    run: async () => bridgeResult("GET", "/v1/dictionary/get"),
+  },
+  {
+    name: "add_dictionary_words",
+    tier: WRITE_TIER,
+    description:
+      "Add words to the user's custom dictionary. Additive only: it never removes a word, and there is no tool here that can, so send just the new words rather than a full list. Words added this way are recorded as agent-added, which keeps them distinguishable from ones the user typed. Write mode only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        words: {
+          type: "array",
+          items: { type: "string" },
+          description: "The words to add. Existing words are left untouched.",
+        },
+      },
+      required: ["words"],
+    },
+    run: async (args) => {
+      if (!Array.isArray(args.words) || args.words.length === 0) {
+        return { error: "words must be a non-empty array of strings." };
+      }
+      if (args.words.some((word) => typeof word !== "string")) {
+        return { error: "every entry in words must be a string." };
+      }
+      return bridgeResult("POST", "/v1/dictionary/add", { body: { words: args.words } });
+    },
+  },
+  {
+    name: "rename_speaker",
+    tier: WRITE_TIER,
+    description:
+      "Rename a speaker. By default this changes the name in this note only -- its transcript, its exports and the transcript search index. Pass profile_wide: true to rename the stored voice profile and every note already mapped to it, which can rewrite names across the whole library; the result reports how many notes changed. Neither mode re-scores voiceprints, and neither can be undone from here. Write mode only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        note_id: { type: "integer" },
+        speaker_id: {
+          type: "string",
+          description: "The diarization id, such as speaker_0, not the displayed name.",
+        },
+        display_name: { type: "string" },
+        profile_wide: {
+          type: "boolean",
+          description:
+            "Rename this person everywhere they are already identified, not just in this note. Requires the speaker to have a voice profile.",
+        },
+      },
+      required: ["note_id", "speaker_id", "display_name"],
+    },
+    run: async (args) => {
+      if (!Number.isInteger(args.note_id) || args.note_id <= 0) {
+        return { error: "note_id must be a positive integer note id." };
+      }
+      if (typeof args.speaker_id !== "string" || !args.speaker_id.trim()) {
+        return { error: "speaker_id must be a non-empty string, such as speaker_0." };
+      }
+      if (typeof args.display_name !== "string" || !args.display_name.trim()) {
+        return { error: "display_name must be a non-empty string." };
+      }
+      if (args.profile_wide !== undefined && typeof args.profile_wide !== "boolean") {
+        return { error: "profile_wide must be a boolean." };
+      }
+      return bridgeResult("POST", "/v1/speakers/rename", {
+        body: {
+          note_id: args.note_id,
+          speaker_id: args.speaker_id.trim(),
+          display_name: args.display_name.trim(),
+          ...(args.profile_wide === true ? { profile_wide: true } : {}),
+        },
+      });
+    },
+  },
 ];
 
 function writeEnabled(env = process.env) {
