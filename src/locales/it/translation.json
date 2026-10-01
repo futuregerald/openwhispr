@@ -47,6 +47,15 @@
         "action": "Apri le impostazioni",
         "dismiss": "Ignora"
       }
+    },
+    "semanticSearch": {
+      "notice": {
+        "title": "La ricerca funziona solo per parole chiave",
+        "description": "Il motore che trova le note per significato non risponde più, quindi il tuo agente ripiega sulla ricerca per parole chiave.",
+        "action": "Ripara",
+        "repairing": "Riparazione…",
+        "repairFailed": "La riparazione non ha funzionato. Riavviare OpenWhispr può aiutare; i dettagli sono nel file di log."
+      }
     }
   },
   "tray": {

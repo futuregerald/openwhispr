@@ -557,6 +557,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   setDebugLogging: (enabled) => ipcRenderer.invoke("set-debug-logging", enabled),
   openLogsFolder: () => ipcRenderer.invoke("open-logs-folder"),
   getMeetingDetectionHealth: () => ipcRenderer.invoke("get-meeting-detection-health"),
+  getQdrantHealth: () => ipcRenderer.invoke("get-qdrant-health"),
+  repairQdrant: () => ipcRenderer.invoke("repair-qdrant"),
 
   // System settings helpers for microphone/audio permissions
   requestMicrophoneAccess: () => ipcRenderer.invoke("request-microphone-access"),

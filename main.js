@@ -320,6 +320,7 @@ function initializeCoreManagers() {
     windowsLoopbackAudioManager,
     meetingAecManager,
     getTrayManager: () => trayManager,
+    getQdrantManager: () => qdrantManager,
   });
 }
 
@@ -615,21 +616,19 @@ async function startApp() {
   const QdrantManager = require("./src/helpers/qdrantManager");
   qdrantManager = new QdrantManager();
   sidecarRegistry.register("qdrant", () => qdrantManager.stop());
+  qdrantManager.onReady((port) => {
+    const vectorIndex = require("./src/helpers/vectorIndex");
+    vectorIndex.init(port);
+    vectorIndex.ensureCollection().catch((err) => {
+      debugLogger.debug("Qdrant collection setup error (non-fatal)", { error: err.message });
+    });
+  });
   if (qdrantManager.isAvailable()) {
-    qdrantManager
-      .start()
-      .then(() => {
-        if (qdrantManager.isReady()) {
-          const vectorIndex = require("./src/helpers/vectorIndex");
-          vectorIndex.init(qdrantManager.getPort());
-          vectorIndex.ensureCollection().catch((err) => {
-            debugLogger.debug("Qdrant collection setup error (non-fatal)", { error: err.message });
-          });
-        }
-      })
-      .catch((err) => {
-        debugLogger.debug("Qdrant startup error (non-fatal)", { error: err.message });
+    qdrantManager.start().catch((err) => {
+      debugLogger.warn("Qdrant startup failed; semantic search is unavailable", {
+        error: err.message,
       });
+    });
   }
 
   const localEmbeddings = require("./src/helpers/localEmbeddings");

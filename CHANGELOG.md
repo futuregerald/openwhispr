@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.32.0] - 2026-09-30
+
+### Fixed
+
+- If the local search engine stops running, OpenWhispr now starts it again by itself. Before, it
+  stayed down until you quit and reopened the app, and nothing told you — your agent quietly went
+  back to matching on keywords instead of meaning, and the results just got worse.
+- If it cannot be brought back, a notice appears with a **Repair** button, so there is something to
+  do about it besides restarting.
+- Search also used to break after the engine moved: it was told where to find it once, at launch,
+  and was never told again.
+
 ## [1.31.0] - 2026-09-29
 
 ### Fixed

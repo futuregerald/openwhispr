@@ -47,6 +47,15 @@
         "action": "Abrir configurações",
         "dismiss": "Dispensar"
       }
+    },
+    "semanticSearch": {
+      "notice": {
+        "title": "A busca está usando apenas palavras-chave",
+        "description": "O mecanismo que encontra notas por significado parou de responder, então o seu agente está recorrendo à busca por palavras-chave.",
+        "action": "Reparar",
+        "repairing": "Reparando…",
+        "repairFailed": "O reparo não funcionou. Reiniciar o OpenWhispr pode ajudar; o arquivo de log tem os detalhes."
+      }
     }
   },
   "tray": {

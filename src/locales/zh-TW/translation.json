@@ -47,6 +47,15 @@
         "action": "開啟設定",
         "dismiss": "忽略"
       }
+    },
+    "semanticSearch": {
+      "notice": {
+        "title": "搜尋僅使用關鍵字",
+        "description": "依語意尋找筆記的搜尋引擎已停止回應，因此代理正回退到關鍵字比對。",
+        "action": "修復",
+        "repairing": "修復中…",
+        "repairFailed": "修復未生效。重新啟動 OpenWhispr 可能有幫助；詳情請查看日誌檔案。"
+      }
     }
   },
   "tray": {

@@ -47,6 +47,15 @@
         "action": "打开设置",
         "dismiss": "忽略"
       }
+    },
+    "semanticSearch": {
+      "notice": {
+        "title": "搜索仅使用关键词",
+        "description": "按含义查找笔记的搜索引擎已停止响应，因此代理正回退到关键词匹配。",
+        "action": "修复",
+        "repairing": "修复中…",
+        "repairFailed": "修复未生效。重新启动 OpenWhispr 可能有帮助；详情请查看日志文件。"
+      }
     }
   },
   "tray": {

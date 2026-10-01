@@ -47,6 +47,15 @@
         "action": "Open settings",
         "dismiss": "Dismiss"
       }
+    },
+    "semanticSearch": {
+      "notice": {
+        "title": "Search is running on keywords only",
+        "description": "The search engine that finds notes by meaning has stopped responding, so your agent is falling back to keyword matching.",
+        "action": "Repair",
+        "repairing": "Repairing…",
+        "repairFailed": "Repair didn't work. Restarting OpenWhispr may help; the log file has the details."
+      }
     }
   },
   "tray": {

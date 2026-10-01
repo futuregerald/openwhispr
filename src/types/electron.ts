@@ -19,6 +19,16 @@ export interface MeetingDetectionDetector {
   lastEventAt: number | null;
 }
 
+export interface QdrantHealth {
+  available: boolean;
+  running: boolean;
+  ready?: boolean;
+  port?: number | null;
+  degraded: boolean;
+  lastSuccessAt?: number | null;
+  restartAttempts?: number;
+}
+
 export interface MeetingDetectionHealth {
   status: MeetingDetectionStatus;
   reason: string | null;
@@ -1191,6 +1201,8 @@ declare global {
       }>;
       openLogsFolder: () => Promise<{ success: boolean; error?: string }>;
       getMeetingDetectionHealth: () => Promise<MeetingDetectionHealth>;
+      getQdrantHealth: () => Promise<QdrantHealth>;
+      repairQdrant: () => Promise<{ success: boolean; error?: string; status?: QdrantHealth }>;
 
       // FFmpeg availability
       checkFFmpegAvailability: () => Promise<FFmpegAvailabilityResult>;

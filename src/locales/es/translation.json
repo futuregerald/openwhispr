@@ -47,6 +47,15 @@
         "action": "Abrir ajustes",
         "dismiss": "Descartar"
       }
+    },
+    "semanticSearch": {
+      "notice": {
+        "title": "La búsqueda solo funciona por palabras clave",
+        "description": "El motor que encuentra notas por significado ha dejado de responder, así que tu agente está recurriendo a la coincidencia por palabras clave.",
+        "action": "Reparar",
+        "repairing": "Reparando…",
+        "repairFailed": "La reparación no funcionó. Reiniciar OpenWhispr puede ayudar; el archivo de registro tiene los detalles."
+      }
     }
   },
   "tray": {

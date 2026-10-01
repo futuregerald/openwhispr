@@ -17,6 +17,15 @@ const STARTUP_TIMEOUT_MS = 30000;
 const STARTUP_POLL_INTERVAL_MS = 100;
 const HEALTH_CHECK_INTERVAL_MS = 5000;
 const HEALTH_CHECK_TIMEOUT_MS = 2000;
+const RESTART_BASE_MS = 2000;
+const RESTART_MAX_MS = 60 * 1000;
+const RESTART_MAX_ATTEMPTS = 5;
+// Not a failure count. Across 2,767 measured health-check failures the longest
+// consecutive run is 1 -- every failure is followed by a success on the next
+// tick -- so any threshold above 1 can never fire. Elapsed time since the last
+// success is correct regardless of tick rate. See issue #109 for why those
+// alternating failures happen, which is still unexplained.
+const DEGRADED_AFTER_MS = 30000;
 
 const STORAGE_DIR = path.join(os.homedir(), ".cache", "openwhispr", "qdrant-data");
 
@@ -28,6 +37,48 @@ class QdrantManager {
     this.startupPromise = null;
     this.healthCheckInterval = null;
     this.cachedBinaryPath = null;
+    this.stopping = false;
+    this.lastSuccessAt = null;
+    this.firstStartAt = null;
+    this._restartTimer = null;
+    this._restartAttempts = 0;
+    this._onReadyCallbacks = [];
+    this._restartBaseMs = RESTART_BASE_MS;
+    this._restartMaxMs = RESTART_MAX_MS;
+    this._healthIntervalMs = HEALTH_CHECK_INTERVAL_MS;
+    this._degradedAfterMs = DEGRADED_AFTER_MS;
+  }
+
+  _spawn(binaryPath, args, options) {
+    return spawn(binaryPath, args, options);
+  }
+
+  _writeConfig() {
+    fs.mkdirSync(STORAGE_DIR, { recursive: true });
+
+    const configPath = path.join(STORAGE_DIR, "config.yaml");
+    const storagePath = path.join(STORAGE_DIR, "storage");
+    const configContent = [
+      "storage:",
+      `  storage_path: ${storagePath}`,
+      "service:",
+      "  host: 127.0.0.1",
+      `  http_port: ${this.port}`,
+      `  grpc_port: ${this.port + 1}`,
+      "log_level: warn",
+      "",
+    ].join("\n");
+
+    fs.writeFileSync(configPath, configContent, "utf-8");
+    return { configPath, storagePath };
+  }
+
+  _findPort() {
+    return findAvailablePort(PORT_RANGE_START, PORT_RANGE_END);
+  }
+
+  onReady(fn) {
+    this._onReadyCallbacks.push(fn);
   }
 
   getBinaryPath() {
@@ -47,10 +98,12 @@ class QdrantManager {
   }
 
   async start() {
+    if (this.firstStartAt === null) this.firstStartAt = Date.now();
     if (this.startupPromise) return this.startupPromise;
     if (this.ready) return;
     if (this.process) await this.stop();
 
+    this.stopping = false;
     this.startupPromise = this._doStart();
     try {
       await this.startupPromise;
@@ -59,28 +112,22 @@ class QdrantManager {
     }
   }
 
+  _abortIfStopping() {
+    if (this.stopping) throw new Error("qdrant start aborted by shutdown");
+  }
+
   async _doStart() {
     const binaryPath = this.getBinaryPath();
     if (!binaryPath) throw new Error("qdrant binary not found");
 
-    this.port = await findAvailablePort(PORT_RANGE_START, PORT_RANGE_END);
+    this.port = await this._findPort();
+    // Re-checked after every await: a stop that lands while this is suspended
+    // would otherwise let the spawn below run anyway, and the child is detached,
+    // so it would outlive app.exit(0) holding the storage directory.
+    this._abortIfStopping();
 
-    fs.mkdirSync(STORAGE_DIR, { recursive: true });
-
-    const configPath = path.join(STORAGE_DIR, "config.yaml");
-    const storagePath = path.join(STORAGE_DIR, "storage");
-    const configContent = [
-      "storage:",
-      `  storage_path: ${storagePath}`,
-      "service:",
-      "  host: 127.0.0.1",
-      `  http_port: ${this.port}`,
-      `  grpc_port: ${this.port + 1}`,
-      "log_level: warn",
-      "",
-    ].join("\n");
-
-    fs.writeFileSync(configPath, configContent, "utf-8");
+    const { configPath, storagePath } = this._writeConfig();
+    this._abortIfStopping();
 
     debugLogger.debug("Starting qdrant", {
       port: this.port,
@@ -89,7 +136,7 @@ class QdrantManager {
       storagePath,
     });
 
-    this.process = spawn(binaryPath, ["--config-path", configPath], {
+    this.process = this._spawn(binaryPath, ["--config-path", configPath], {
       cwd: STORAGE_DIR,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -116,17 +163,32 @@ class QdrantManager {
 
     this.process.on("close", (code) => {
       exitCode = code;
-      debugLogger.debug("qdrant process exited", { code });
       this.ready = false;
       this.process = null;
       this._stopHealthCheck();
       sidecarPidFile.clear("qdrant");
+      if (this.stopping) {
+        debugLogger.debug("qdrant stopped", { code });
+        return;
+      }
+      debugLogger.warn("qdrant exited unexpectedly", { code });
+      this._scheduleRestart(`exit:${code}`);
     });
 
     await this._waitForReady(() => ({ stderr: stderrBuffer, exitCode }));
+    this._restartAttempts = 0;
+    this.lastSuccessAt = Date.now();
     this._startHealthCheck();
 
     debugLogger.info("qdrant started successfully", { port: this.port });
+
+    for (const fn of this._onReadyCallbacks) {
+      try {
+        fn(this.port);
+      } catch (err) {
+        debugLogger.warn("qdrant onReady callback failed", { error: err.message });
+      }
+    }
   }
 
   async _waitForReady(getProcessInfo) {
@@ -189,11 +251,14 @@ class QdrantManager {
         this._stopHealthCheck();
         return;
       }
-      if (!(await this._checkHealth())) {
+      if (await this._checkHealth()) {
+        this.ready = true;
+        this.lastSuccessAt = Date.now();
+      } else {
         debugLogger.warn("qdrant health check failed");
         this.ready = false;
       }
-    }, HEALTH_CHECK_INTERVAL_MS);
+    }, this._healthIntervalMs);
   }
 
   _stopHealthCheck() {
@@ -203,21 +268,65 @@ class QdrantManager {
     }
   }
 
-  async stop() {
-    this._stopHealthCheck();
+  _clearRestartTimer() {
+    if (this._restartTimer) {
+      clearTimeout(this._restartTimer);
+      this._restartTimer = null;
+    }
+  }
 
-    if (!this.process) {
-      this.ready = false;
+  _scheduleRestart(reason) {
+    if (this._restartTimer || this.stopping) return;
+
+    if (this._restartAttempts >= RESTART_MAX_ATTEMPTS) {
+      debugLogger.error("qdrant could not be restarted; giving up", {
+        attempts: this._restartAttempts,
+        reason,
+      });
       return;
     }
 
-    debugLogger.debug("Stopping qdrant");
+    this._restartAttempts += 1;
+    const delayMs = Math.min(
+      this._restartBaseMs * 2 ** (this._restartAttempts - 1),
+      this._restartMaxMs
+    );
+    debugLogger.notice("Scheduling qdrant restart", {
+      attempt: this._restartAttempts,
+      delayMs,
+      reason,
+    });
 
-    try {
-      await gracefulStopProcess(this.process);
-    } catch (error) {
-      debugLogger.error("Error stopping qdrant", { error: error.message });
+    this._restartTimer = setTimeout(() => {
+      this._restartTimer = null;
+      this.start().catch((err) => {
+        debugLogger.warn("qdrant restart attempt failed", { error: err.message });
+        this._scheduleRestart("restart-failed");
+      });
+    }, delayMs);
+  }
+
+  async stop() {
+    this.stopping = true;
+    this._clearRestartTimer();
+    this._stopHealthCheck();
+
+    const inflight = this.startupPromise;
+
+    if (this.process) {
+      debugLogger.debug("Stopping qdrant");
+      try {
+        await gracefulStopProcess(this.process);
+      } catch (error) {
+        debugLogger.error("Error stopping qdrant", { error: error.message });
+      }
     }
+
+    // A start still in flight must not outlive this call. Killing the child
+    // above makes _waitForReady give up promptly; awaiting here is what stops
+    // the repair path handing back the very start it just killed, and what
+    // stops a suspended _doStart spawning after shutdown has begun.
+    if (inflight) await inflight.catch(() => {});
 
     this.process = null;
     this.ready = false;
@@ -233,10 +342,21 @@ class QdrantManager {
   }
 
   getStatus() {
+    // Measured from firstStartAt when nothing has ever succeeded: lastSuccessAt
+    // is only set by a passing health check, so a qdrant that never came up
+    // would otherwise stay un-degraded forever and never surface a repair.
+    const reference = this.lastSuccessAt ?? this.firstStartAt;
+    const since = reference === null ? null : Date.now() - reference;
     return {
       available: this.isAvailable(),
-      running: this.ready && this.process !== null,
+      // Deliberately not `this.ready && ...`: a process that is up but failing
+      // its health check is exactly the state this snapshot exists to describe.
+      running: this.process !== null,
+      ready: this.ready,
       port: this.port,
+      degraded: since !== null && since > this._degradedAfterMs,
+      lastSuccessAt: this.lastSuccessAt,
+      restartAttempts: this._restartAttempts,
     };
   }
 }
