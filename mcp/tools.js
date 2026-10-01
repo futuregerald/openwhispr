@@ -590,7 +590,8 @@ const TOOLS = [
       properties: {
         general: {
           type: "string",
-          description: "Standing notes on the user's team, projects and vocabulary. Max 1200 chars.",
+          description:
+            "Standing notes on the user's team, projects and vocabulary. Max 1200 chars.",
         },
         dictation: {
           type: "string",
