@@ -39,6 +39,33 @@ function buildCommands({ serverPath, execPath }) {
   };
 }
 
+function buildClientConfigs({ serverPath, execPath }) {
+  const entry = ({ fallback, write }) => {
+    const env = {};
+    if (fallback) env.ELECTRON_RUN_AS_NODE = "1";
+    if (write) env[WRITE_ENV_VAR] = "1";
+
+    return {
+      mcpServers: {
+        [SERVER_NAME]: {
+          command: fallback ? execPath : "node",
+          args: [serverPath],
+          ...(Object.keys(env).length > 0 ? { env } : {}),
+        },
+      },
+    };
+  };
+
+  const render = (options) => JSON.stringify(entry(options), null, 2);
+
+  return {
+    read: render({ fallback: false, write: false }),
+    readWrite: render({ fallback: false, write: true }),
+    fallbackRead: render({ fallback: true, write: false }),
+    fallbackReadWrite: render({ fallback: true, write: true }),
+  };
+}
+
 function getMcpConfig({
   resourcesPath = process.resourcesPath,
   appPath = null,
@@ -64,4 +91,11 @@ function getMcpConfig({
   };
 }
 
-module.exports = { getMcpConfig, buildCommands, resolveServerPath, resolveExecPath, WRITE_ENV_VAR };
+module.exports = {
+  getMcpConfig,
+  buildCommands,
+  buildClientConfigs,
+  resolveServerPath,
+  resolveExecPath,
+  WRITE_ENV_VAR,
+};
