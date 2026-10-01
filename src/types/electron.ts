@@ -134,7 +134,7 @@ export interface NoteRepairSummary {
 export interface DictionaryEntryItem {
   id: number;
   word: string;
-  source: "manual" | "learned";
+  source: "manual" | "learned" | "agent";
   created_at: string;
   updated_at: string;
   client_dict_id: string;
@@ -523,6 +523,15 @@ declare global {
         modelId: string
       ) => Promise<{ contextSize: number | null; isGpuBackend: boolean; error?: string }>;
       onDictionaryUpdated?: (callback: (words: string[]) => void) => () => void;
+      onUserContextUpdated?: (
+        callback: (context: { general?: string; dictation?: string }) => void
+      ) => () => void;
+      onSpeakerMappingsUpdated?: (
+        callback: (payload: {
+          noteId: number;
+          mappings: { speaker_id: string; display_name: string; profile_id?: number | null }[];
+        }) => void
+      ) => () => void;
       getSnippets?: () => Promise<Array<{ trigger: string; replacement: string }>>;
       setSnippets?: (
         snippets: Array<{ trigger: string; replacement: string }>
@@ -1016,6 +1025,10 @@ declare global {
           fallbackRead: string;
           fallbackReadWrite: string;
           remove: string;
+        } | null;
+        clientConfigs: {
+          read: string;
+          readWrite: string;
         } | null;
       }>;
 
@@ -1548,7 +1561,7 @@ declare global {
             suggestedProfileId?: number;
             speakerStatus?: "provisional" | "confirmed" | "suggested" | "locked";
             speakerLocked?: boolean;
-            speakerLockSource?: "user" | "diarization" | "suggestion";
+            speakerLockSource?: "user" | "agent" | "diarization" | "suggestion";
           }>;
           speakerEmbeddings?: Record<string, number[]> | null;
         }) => void

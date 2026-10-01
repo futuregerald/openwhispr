@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.34.0] - 2026-10-01
+
+### Added
+
+- Settings → Integrations now gives you a ready-made JSON entry for any MCP
+  client, not just the Claude Code command. Expand "Using a different agent?",
+  copy the block and paste it into Claude Desktop, Cursor, Windsurf or whatever
+  you use — the paths are already filled in for your install. The entry runs the
+  server with OpenWhispr's own runtime, so it works even in a client that cannot
+  see Node, and it includes write access only if you opened "Allow the agent to
+  write notes".
+
+## [1.33.0] - 2026-09-30
+
+### Added
+
+- Claude and other MCP clients can now update your context, add words to your
+  custom dictionary and rename speakers, when you enable write mode. Editing
+  notes and enhanced notes already worked.
+- Renaming a speaker from an assistant renames them in that note's transcript,
+  its exports and search, not just the label in the editor. Ask for a
+  library-wide rename and it will tell you how many notes it changed.
+- Changes an assistant makes to your context or dictionary now appear
+  immediately in an open Settings window, and a speaker rename appears in the
+  note you are reading, instead of waiting for a restart.
+
+### Changed
+
+- Names and dictionary words added by an assistant are recorded separately from
+  the ones you typed, so you can tell them apart later. An assistant can no
+  longer have its rename quietly replaced by automatic speaker matching.
+- Adding dictionary words through an assistant can only add. It cannot remove
+  words you have saved.
+- If your assistant asks for something your installed version is too old for, it
+  now says which feature needs the update and keeps everything else working,
+  instead of reporting that OpenWhispr does not support assistants at all.
+
+### Fixed
+
+- A speaker renamed by an assistant no longer reverts the next time you rename
+  someone else in that note. The name held in the editor, but exports, search
+  and generated notes quietly went back to the old one.
+
 ## [1.32.0] - 2026-09-30
 
 ### Fixed

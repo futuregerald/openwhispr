@@ -2391,6 +2391,8 @@
       "noNodeDescription": "この形式では OpenWhispr 自身のランタイムでサーバーを起動します。",
       "writeToggle": "エージェントにノートの書き込みを許可",
       "writeWarning": "書き込みモードではエージェントがノートを作成・上書きできます。履歴は残らず、文字起こしに潜む指示でノートが上書きされるおそれもあります。必要ない限りオフのままにしてください。",
+      "manualToggle": "別のエージェントを使いますか？",
+      "manualDescription": "ほとんどの MCP クライアントは JSON 設定ファイルからサーバーを読み込みます（Claude Desktop、Cursor、Windsurf など）。この項目を自分の設定ファイルに貼り付けて、クライアントを再起動してください。OpenWhispr 自身のランタイムでサーバーを起動するため、クライアントが Node を見つける必要はありません。",
       "removeLabel": "サーバーを削除",
       "indexBuilding_one": "文字起こしの索引を作成中 — 残り {{count}} 件",
       "indexBuilding_other": "文字起こしの索引を作成中 — 残り {{count}} 件",

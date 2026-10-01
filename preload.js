@@ -92,6 +92,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("dictionary-updated", listener);
     return () => ipcRenderer.removeListener("dictionary-updated", listener);
   },
+  onUserContextUpdated: (callback) => {
+    const listener = (_event, context) => callback?.(context);
+    ipcRenderer.on("user-context-updated", listener);
+    return () => ipcRenderer.removeListener("user-context-updated", listener);
+  },
+  onSpeakerMappingsUpdated: (callback) => {
+    const listener = (_event, payload) => callback?.(payload);
+    ipcRenderer.on("speaker-mappings-updated", listener);
+    return () => ipcRenderer.removeListener("speaker-mappings-updated", listener);
+  },
   getSnippets: () => ipcRenderer.invoke("db-get-snippets"),
   setSnippets: (snippets) => ipcRenderer.invoke("db-set-snippets", snippets),
   setAutoLearnEnabled: (enabled) => ipcRenderer.send("auto-learn-changed", enabled),

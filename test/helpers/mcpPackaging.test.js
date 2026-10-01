@@ -5,11 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const repoRoot = path.join(__dirname, "../..");
-const {
-  getMcpConfig,
-  resolveExecPath,
-  WRITE_ENV_VAR,
-} = require("../../src/helpers/mcpConfig.js");
+const { getMcpConfig, resolveExecPath, WRITE_ENV_VAR } = require("../../src/helpers/mcpConfig.js");
 
 test("the mcp directory ships as extraResources, outside the asar", () => {
   const config = JSON.parse(fs.readFileSync(path.join(repoRoot, "electron-builder.json"), "utf8"));
@@ -83,13 +79,46 @@ test("the copyable commands carry -s user so the server works outside one direct
   });
 
   assert.match(config.commands.read, /^claude mcp add openwhispr -s user -- node /);
-  assert.ok(
-    !config.commands.read.includes(WRITE_ENV_VAR),
-    "the default command must be read-only"
-  );
+  assert.ok(!config.commands.read.includes(WRITE_ENV_VAR), "the default command must be read-only");
   assert.match(config.commands.readWrite, /-e OPENWHISPR_MCP_WRITE=1/);
   assert.match(config.commands.fallbackRead, /-e ELECTRON_RUN_AS_NODE=1/);
   assert.equal(config.commands.remove, "claude mcp remove openwhispr -s user");
+});
+
+test("the IPC payload carries a client config whenever it carries commands", () => {
+  const resourcesPath = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-resources-"));
+  fs.mkdirSync(path.join(resourcesPath, "mcp"));
+  fs.writeFileSync(path.join(resourcesPath, "mcp", "server.js"), "");
+
+  const found = getMcpConfig({
+    resourcesPath,
+    appPath: repoRoot,
+    isPackaged: true,
+    platform: "darwin",
+    execPath: "/Applications/OpenWhispr.app/Contents/MacOS/OpenWhispr",
+  });
+
+  assert.equal(
+    JSON.parse(found.clientConfigs.read).mcpServers.openwhispr.args[0],
+    found.serverPath,
+    "the entry a user copies must point at the same server the shell command does"
+  );
+
+  const missing = getMcpConfig({
+    resourcesPath: null,
+    appPath: null,
+    isPackaged: false,
+    platform: "darwin",
+    execPath: "/usr/local/bin/electron",
+  });
+
+  assert.equal(missing.serverPath, null);
+  assert.equal(missing.commands, null);
+  assert.equal(
+    missing.clientConfigs,
+    null,
+    "the card hides its instructions on a null commands; a non-null clientConfigs here would show an entry pointing nowhere"
+  );
 });
 
 test("paths are single-quoted so shell metacharacters in an install path cannot execute", () => {

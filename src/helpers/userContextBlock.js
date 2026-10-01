@@ -10,7 +10,6 @@ const HEADINGS = {
 };
 
 const CLOSE = "END OF USER CONTEXT.";
-const CLOSE_PATTERN = /END OF USER CONTEXT\./gi;
 export const CHARS_PER_TOKEN = 3.6;
 export const PROMPT_SHARE = 0.6;
 
@@ -45,7 +44,7 @@ export function normalizeUserContext(value, kind) {
 }
 
 export function formatUserContextBlock(value, kind) {
-  const text = normalizeUserContext(value, kind).replace(CLOSE_PATTERN, MARKER_REDACTION);
+  const text = neutraliseContextMarkers(normalizeUserContext(value, kind)).trim();
   if (!text) return "";
   return `\n\n${HEADINGS[kind] || HEADINGS.general}\n\n${text}\n\n${CLOSE}`;
 }
@@ -63,6 +62,20 @@ export function fitUserContextBlock(value, kind, { budgetTokens, reservedTokens 
   if (!Number.isFinite(budgetTokens) || !Number.isFinite(reservedTokens)) return "";
   const cost = Math.ceil(block.length / CHARS_PER_TOKEN);
   return reservedTokens + cost <= budgetTokens ? block : "";
+}
+
+export const USER_CONTEXT_STATE_KEYS = {
+  general: "generalContext",
+  dictation: "dictationContext",
+};
+
+export function userContextPatchToState(patch) {
+  const next = {};
+  for (const [field, stateKey] of Object.entries(USER_CONTEXT_STATE_KEYS)) {
+    if (patch?.[field] === undefined) continue;
+    next[stateKey] = normalizeUserContext(patch[field], field);
+  }
+  return next;
 }
 
 export function chooseStoredContext(dbValue, localValue) {

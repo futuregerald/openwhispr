@@ -19,9 +19,37 @@ const TIMED_OUT = "OpenWhispr did not respond in time. Try again.";
 // Without this check an older bridge answers /v1/notes/list through its
 // param("GET","/v1/notes/","","id") route, parses "list" as an id, and the agent is told
 // "Invalid note id" -- which reads as a broken tool rather than an out-of-date app.
-const REQUIRED_MCP_CAPABILITY = 2;
+// The capability the MCP route surface has always needed. An app at this level
+// serves notes, meetings, transcripts, people and stats correctly, so it must
+// keep working -- a single floor turned "one new feature needs an update" into
+// "MCP is unsupported", which is indistinguishable from a broken install.
+const BASE_MCP_CAPABILITY = 2;
+
+// Routes added after BASE_MCP_CAPABILITY, with the capability each needs and the
+// feature to name when the installed app is older. No prefix may be a prefix of
+// another, which is what makes a single match well defined; a test pins that.
+const ROUTE_CAPABILITIES = [
+  { prefix: "/v1/context/", capability: 3, feature: "Reading or updating your context" },
+  {
+    prefix: "/v1/dictionary/",
+    capability: 3,
+    feature: "Reading or updating your custom dictionary",
+  },
+  { prefix: "/v1/speakers/", capability: 3, feature: "Renaming a speaker" },
+];
+
 const TOO_OLD =
   "This version of OpenWhispr does not support the MCP server. Update OpenWhispr and try again.";
+
+const featureTooOld = (feature) =>
+  `${feature} needs a newer version of OpenWhispr. Update the app and try again. Everything else — your notes, meetings and transcripts — keeps working in the meantime.`;
+
+function routeRequirement(routePath) {
+  const match = ROUTE_CAPABILITIES.find((entry) =>
+    String(routePath || "").startsWith(entry.prefix)
+  );
+  return match || { capability: BASE_MCP_CAPABILITY, feature: null };
+}
 
 function bridgeFilePath() {
   return (
@@ -165,6 +193,7 @@ async function sendJson(method, routePath, options = {}) {
 // leave every tool failing for the rest of the session even after the app came up, which is
 // strictly worse than the error this check replaces.
 let verifiedBridge = null;
+let verifiedCapability = 0;
 let inFlightCheck = null;
 
 function currentBridgeKey() {
@@ -176,19 +205,23 @@ function skipVersionCheck() {
   return process.env.OPENWHISPR_MCP_SKIP_VERSION_CHECK === "1";
 }
 
-async function ensureSupportedBridge(timeoutMs) {
+// Resolves the bridge's advertised capability once per bridge. A route refused
+// for being too new must not invalidate that, or the next call re-probes.
+async function bridgeCapability(timeoutMs) {
   const key = currentBridgeKey();
-  if (key && verifiedBridge === key) return { ok: true };
+  if (key && verifiedBridge === key) return { ok: true, capability: verifiedCapability };
   if (inFlightCheck) return inFlightCheck;
 
   inFlightCheck = (async () => {
     const response = await sendJson("GET", "/v1/health", { timeoutMs });
     if (!response.ok) return response;
-    if (Number(response.data?.data?.mcp ?? 0) < REQUIRED_MCP_CAPABILITY) {
+    const capability = Number(response.data?.data?.mcp ?? 0);
+    if (capability < BASE_MCP_CAPABILITY) {
       return { ok: false, error: TOO_OLD };
     }
     verifiedBridge = key;
-    return { ok: true };
+    verifiedCapability = capability;
+    return { ok: true, capability };
   })();
 
   try {
@@ -202,8 +235,13 @@ async function requestJson(method, routePath, options = {}) {
   const { timeoutMs = DEFAULT_TIMEOUT_MS } = options;
 
   if (!skipVersionCheck()) {
-    const supported = await ensureSupportedBridge(timeoutMs);
+    const supported = await bridgeCapability(timeoutMs);
     if (!supported.ok) return supported;
+
+    const required = routeRequirement(routePath);
+    if (supported.capability < required.capability) {
+      return { ok: false, error: featureTooOld(required.feature) };
+    }
   }
 
   return sendJson(method, routePath, options);
@@ -214,6 +252,7 @@ function _resetVersionCacheForTests() {
     throw new Error("_resetVersionCacheForTests is for tests only; NODE_ENV is not 'test'");
   }
   verifiedBridge = null;
+  verifiedCapability = 0;
   inFlightCheck = null;
 }
 
@@ -222,5 +261,8 @@ module.exports = {
   _resetVersionCacheForTests,
   readBridgeFile,
   bridgeFilePath,
-  messages: { NOT_RUNNING, STALE_BRIDGE, RESTARTED, TIMED_OUT, TOO_OLD },
+  routeRequirement,
+  BASE_MCP_CAPABILITY,
+  ROUTE_CAPABILITIES,
+  messages: { NOT_RUNNING, STALE_BRIDGE, RESTARTED, TIMED_OUT, TOO_OLD, featureTooOld },
 };

@@ -52,6 +52,7 @@ const {
   applySuggestedSpeaker,
   canAutoRelabelSpeaker,
   isSpeakerLocked,
+  isOriginUserAuthored,
 } = require("./speakerAssignmentPolicy");
 const { classifyRetroactiveMatch } = require("./retroactiveSpeakerMatch");
 const { downsample24kTo16k, pcm16ToWav } = require("../utils/audioUtils");
@@ -406,6 +407,20 @@ class IPCHandlers {
       this._asyncMirrorWrite(result.note);
     }
     return result;
+  }
+
+  // The bridge's rename route needs the same live-identifier update the
+  // set-speaker-mapping handler does, without reaching for the module directly.
+  mapLiveSpeaker(speakerId, profileId, displayName, noteId) {
+    try {
+      liveSpeakerIdentifier.mapSpeaker(speakerId, profileId, displayName, noteId);
+    } catch (error) {
+      debugLogger.debug(
+        "Could not update the live speaker identifier after a rename",
+        { speakerId, noteId, error: error.message },
+        "speakers"
+      );
+    }
   }
 
   _asyncMirrorWrite(note) {
@@ -8125,7 +8140,7 @@ class IPCHandlers {
           const target = getMappingsForNote(bestEntry.noteId).find(
             (mapping) => mapping.speaker_id === mappedId
           );
-          if (target?.origin !== "manual") {
+          if (!isOriginUserAuthored(target?.origin)) {
             this.databaseManager.setSpeakerMapping(
               bestEntry.noteId,
               mappedId,

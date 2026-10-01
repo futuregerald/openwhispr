@@ -10,7 +10,11 @@ import type { GoogleCalendarAccount } from "../types/calendar";
 import { PROMPT_KIND_LIST, type PromptKind } from "../config/prompts/registry";
 import { deriveReasoningMode, buildReasoningScopePatches } from "../helpers/reasoningRouting";
 import { migrateLocalProviderField } from "./migrateLocalProviderField";
-import { normalizeUserContext, chooseStoredContext } from "../helpers/userContextBlock.js";
+import {
+  normalizeUserContext,
+  chooseStoredContext,
+  userContextPatchToState,
+} from "../helpers/userContextBlock.js";
 import {
   INFERENCE_SCOPES,
   type InferenceScope,
@@ -578,6 +582,7 @@ export interface SettingsState
   setCleanupCloudBaseUrl: (value: string) => void;
   setCustomDictionary: (words: string[]) => void;
   applyCustomDictionaryFromExternal: (words: string[]) => void;
+  applyUserContextFromExternal: (patch: { general?: string; dictation?: string }) => void;
   generalContext: string;
   dictationContext: string;
   setGeneralContext: (value: string) => void;
@@ -1286,6 +1291,15 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   applyCustomDictionaryFromExternal: (words: string[]) => {
     if (isBrowser) localStorage.setItem("customDictionary", JSON.stringify(words));
     set({ customDictionary: words });
+  },
+
+  applyUserContextFromExternal: (patch: { general?: string; dictation?: string }) => {
+    const next = userContextPatchToState(patch);
+    if (Object.keys(next).length === 0) return;
+    if (isBrowser) {
+      for (const [key, value] of Object.entries(next)) localStorage.setItem(key, value);
+    }
+    set(next);
   },
 
   setSnippets: (snippets: Snippet[]) => {

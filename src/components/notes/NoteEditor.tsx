@@ -48,6 +48,7 @@ import {
   lockTranscriptSpeaker,
   serializeTranscriptSegments,
 } from "../../helpers/transcriptSpeakerState";
+import { externalRenameUpdate } from "../../helpers/speakerMappingBroadcast";
 import { foldSpeakersInto } from "../../helpers/speakerFold";
 import NoteParticipants from "./NoteParticipants";
 import MeetingTypePicker from "./MeetingTypePicker";
@@ -192,7 +193,10 @@ export default function NoteEditor({
     }
     const result = await window.electronAPI?.retryPipelineStep?.(note.id, "retranscribe");
     if (result && result.success === false) {
-      toast({ title: t("notes.reprocess.failed", { error: result.error }), variant: "destructive" });
+      toast({
+        title: t("notes.reprocess.failed", { error: result.error }),
+        variant: "destructive",
+      });
     } else {
       toast({ title: t("notes.reprocess.started") });
     }
@@ -351,6 +355,8 @@ export default function NoteEditor({
     }
   }, [isRecording, note.id, note.title, scheduleUiUpdate]);
 
+  const autoMappingsRef = useRef<Record<string, string>>({});
+
   useEffect(() => {
     window.electronAPI?.getSpeakerMappings?.(note.id).then((mappings) => {
       const map: Record<string, string> = {};
@@ -359,6 +365,20 @@ export default function NoteEditor({
     });
     refreshSpeakerProfiles();
   }, [note.id, refreshSpeakerProfiles]);
+
+  // displayLabel reads the mapping before the segment, so a rename arriving from
+  // outside this window leaves a stale label until the mapping state catches up.
+  // The fetch above runs only when the note id changes.
+  useEffect(() => {
+    if (!window.electronAPI?.onSpeakerMappingsUpdated) return;
+    const unsubscribe = window.electronAPI.onSpeakerMappingsUpdated((payload) => {
+      const update = externalRenameUpdate(payload, note.id, autoMappingsRef.current);
+      if (!update) return;
+      setSpeakerMappings(update.mappings);
+      if (update.clearLocalSegments) setDiarizedSegments(null);
+    });
+    return unsubscribe;
+  }, [note.id]);
 
   useEffect(() => {
     if (
@@ -431,6 +451,7 @@ export default function NoteEditor({
       for (const s of enriched) {
         if (s.speakerName && s.speaker) autoMappings[s.speaker] = s.speakerName;
       }
+      autoMappingsRef.current = autoMappings;
       if (Object.keys(autoMappings).length > 0) {
         setSpeakerMappings((prev) => ({ ...autoMappings, ...prev }));
       }
@@ -669,9 +690,7 @@ export default function NoteEditor({
       <div className="flex-1 min-w-0 flex flex-col">
         {preservedTranscriptKey && (
           <div className="mx-5 mt-3 rounded-md border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-[11px] leading-relaxed text-foreground/70">
-            <span className="font-medium text-foreground/80">
-              {t("pipeline.preserved.title")}
-            </span>{" "}
+            <span className="font-medium text-foreground/80">{t("pipeline.preserved.title")}</span>{" "}
             {t(`pipeline.preserved.${preservedTranscriptKey}`)}
           </div>
         )}

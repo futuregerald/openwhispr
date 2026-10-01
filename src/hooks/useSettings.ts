@@ -102,8 +102,12 @@ export interface ChatAgentSettings {
 
 function useSettingsInternal() {
   const store = useSettingsStore();
-  const { setCustomDictionary, applyCustomDictionaryFromExternal, applySnippetsFromExternal } =
-    store;
+  const {
+    setCustomDictionary,
+    applyCustomDictionaryFromExternal,
+    applyUserContextFromExternal,
+    applySnippetsFromExternal,
+  } = store;
 
   // One-time initialization: sync API keys, dictation key, activation mode,
   // UI language, and dictionary from the main process / SQLite.
@@ -132,6 +136,21 @@ function useSettingsInternal() {
     });
     return unsubscribe;
   }, [applyCustomDictionaryFromExternal]);
+
+  // The context is mirrored in localStorage, and setGeneralContext writes both
+  // the mirror and SQLite. Without this, an MCP write while Settings is open
+  // leaves the panel stale and its next edit overwrites the agent's value.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.electronAPI?.onUserContextUpdated) return;
+    const unsubscribe = window.electronAPI.onUserContextUpdated(
+      (context: { general?: string; dictation?: string }) => {
+        if (context && typeof context === "object") {
+          applyUserContextFromExternal(context);
+        }
+      }
+    );
+    return unsubscribe;
+  }, [applyUserContextFromExternal]);
 
   // Auto-learn corrections from user edits in external apps
   const [autoLearnCorrections, setAutoLearnCorrectionsRaw] = useLocalStorage(

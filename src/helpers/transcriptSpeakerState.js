@@ -6,7 +6,7 @@
 /** @typedef {import("../stores/meetingRecordingStore").TranscriptSegment} TranscriptSegment */
 /** @typedef {Pick<TranscriptSegment, "speaker" | "speakerName" | "speakerIsPlaceholder" | "suggestedName" | "suggestedProfileId" | "speakerStatus" | "speakerLocked" | "speakerLockSource">} SpeakerStateFields */
 /** @typedef {"provisional" | "confirmed" | "suggested" | "locked"} TranscriptSpeakerStatus */
-/** @typedef {"user" | "diarization" | "suggestion"} TranscriptSpeakerLockSource */
+/** @typedef {"user" | "agent" | "diarization" | "suggestion"} TranscriptSpeakerLockSource */
 
 const SPEAKER_STATE_FIELDS = [
   "speaker",
@@ -115,14 +115,15 @@ export const applyTranscriptSpeakerPatch = (segment, patch) =>
 /**
  * @param {TranscriptSegment} segment
  * @param {Partial<SpeakerStateFields>} [patch]
+ * @param {TranscriptSpeakerLockSource} [lockSource]
  */
-export const lockTranscriptSpeaker = (segment, patch = {}) =>
+export const lockTranscriptSpeaker = (segment, patch = {}, lockSource = "user") =>
   normalizeTranscriptSegment({
     ...segment,
     ...patch,
     speakerLocked: true,
     speakerStatus: "locked",
-    speakerLockSource: "user",
+    speakerLockSource: lockSource,
   });
 
 /**

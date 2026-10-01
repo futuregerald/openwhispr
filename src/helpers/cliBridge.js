@@ -5,8 +5,20 @@ const path = require("path");
 const crypto = require("crypto");
 const debugLogger = require("./debugLogger");
 const { isPortAvailable } = require("../utils/serverUtils");
+const { CONTEXT_BLOCK_MARKERS } = require("./userContextBlock.js");
+
+const ANNOUNCE_BATCH = 5;
 
 const MAX_NOTE_FIELD_CHARS = 100000;
+
+const USER_CONTEXT_KEYS = ["general", "dictation"];
+
+const MAX_SPEAKER_NAME_CHARS = 200;
+// A speaker name is emitted as the label of every one of that speaker's lines in
+// the text fed to the notes, title and debrief prompts, so a name carrying a
+// newline or a block marker can forge structure there. Same threat class as a
+// forged context fence, on the adjacent write surface.
+const SPEAKER_NAME_CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
 
 const PORT_RANGE_START = 8200;
 const PORT_RANGE_END = 8219;
@@ -303,7 +315,7 @@ class CliBridge {
         // `version` is frozen at 1 for the out-of-repo CLI, which may assert on it.
         // `mcp` advertises the MCP route surface so the MCP server can tell an app that
         // has those routes from one that answers /v1/notes/list as a note id lookup.
-        data: { ok: true, version: 1, mcp: 2 },
+        data: { ok: true, version: 1, mcp: 3 },
       })),
       exact("GET", "/v1/notes/list", ({ query }) => {
         const noteType = query.get("note_type") || null;
@@ -524,6 +536,154 @@ class CliBridge {
         const result = ipc.deleteTranscriptionInternal(id);
         requireSuccess(result, `Transcription ${id} not found`);
         return NO_CONTENT;
+      }),
+      exact("GET", "/v1/context/get", () => ({ data: db.getUserContext() })),
+      exact("POST", "/v1/context/set", ({ body }) => {
+        const patch = {};
+        const rejected = Object.keys(body || {}).filter((key) => !USER_CONTEXT_KEYS.includes(key));
+        if (rejected.length) {
+          throw validationError(
+            `/v1/context/set accepts only ${USER_CONTEXT_KEYS.join(", ")}. Rejected: ${rejected.join(", ")}.`
+          );
+        }
+        for (const key of USER_CONTEXT_KEYS) {
+          if (body?.[key] === undefined) continue;
+          if (typeof body[key] !== "string") {
+            throw validationError(`${key} must be a string`);
+          }
+          patch[key] = body[key];
+        }
+        if (Object.keys(patch).length === 0) {
+          throw validationError(`Give at least one of ${USER_CONTEXT_KEYS.join(", ")}`);
+        }
+        const previous = db.getUserContext();
+        const context = db.setUserContext(patch);
+        // Standing instructions for every later inference, overwritten with no
+        // history. Returning what was replaced is the only way the caller can
+        // tell the user what it changed, or put it back.
+        debugLogger.notice(
+          "User context replaced over the MCP bridge",
+          {
+            fields: Object.keys(patch),
+            replacedLengths: Object.fromEntries(
+              Object.keys(patch).map((key) => [key, (previous[key] || "").length])
+            ),
+            newLengths: Object.fromEntries(
+              Object.keys(patch).map((key) => [key, (context[key] || "").length])
+            ),
+          },
+          "cli-bridge"
+        );
+        setImmediate(() => ipc.broadcastToWindows("user-context-updated", context));
+        return { data: { ...context, previous } };
+      }),
+      exact("POST", "/v1/speakers/rename", ({ body }) => {
+        const noteId = Number.isInteger(body?.note_id) ? body.note_id : null;
+        if (noteId == null || noteId <= 0) {
+          throw validationError("note_id must be a positive integer");
+        }
+        const speakerId = typeof body.speaker_id === "string" ? body.speaker_id.trim() : "";
+        if (!speakerId) throw validationError("speaker_id must be a non-empty string");
+        const displayName = typeof body.display_name === "string" ? body.display_name.trim() : "";
+        if (!displayName) throw validationError("display_name must be a non-empty string");
+        if (displayName.length > MAX_SPEAKER_NAME_CHARS) {
+          throw validationError(
+            `display_name must be at most ${MAX_SPEAKER_NAME_CHARS} characters`
+          );
+        }
+        if (SPEAKER_NAME_CONTROL_CHARS.test(displayName)) {
+          throw validationError("display_name must be a single line with no control characters");
+        }
+        if (
+          CONTEXT_BLOCK_MARKERS.some((marker) => new RegExp(marker.source, "i").test(displayName))
+        ) {
+          throw validationError("display_name must not contain prompt block markers");
+        }
+
+        const note = db.getNote(noteId);
+        if (!note || note.deleted_at) {
+          const err = new Error(`Note ${noteId} not found`);
+          err.code = "NOT_FOUND";
+          throw err;
+        }
+
+        const announce = (id) => {
+          const updated = db.getNote(id);
+          if (updated) {
+            ipc.broadcastToWindows("note-updated", updated);
+            // The rename rewrote the transcript, so the vector and the on-disk
+            // mirror are both stale -- exactly as they would be after a PATCH.
+            ipc._asyncVectorUpsert(updated);
+            ipc._asyncMirrorWrite(updated);
+          }
+          ipc.broadcastToWindows("speaker-mappings-updated", {
+            noteId: id,
+            mappings: db.getSpeakerMappings(id),
+          });
+        };
+
+        // Each note-updated carries the whole row, transcript and
+        // enhanced_content included. A library-wide rename over hundreds of
+        // notes would serialise every body to every window in one tick.
+        const announceAll = (ids) => {
+          const queue = [...ids];
+          const drain = () => {
+            for (const id of queue.splice(0, ANNOUNCE_BATCH)) announce(id);
+            if (queue.length) setImmediate(drain);
+          };
+          setImmediate(drain);
+        };
+
+        if (body.profile_wide === true) {
+          const mapping = db.getSpeakerMappings(noteId).find((row) => row.speaker_id === speakerId);
+          const profileId = mapping?.profile_id ?? null;
+          if (profileId == null) {
+            throw validationError(
+              `${speakerId} has no voice profile in note ${noteId}, so there is nothing to rename library-wide. Rename it in this note instead by omitting profile_wide.`
+            );
+          }
+          const result = db.renameSpeakerProfileEverywhere(profileId, displayName);
+          announceAll(result.noteIds || []);
+          return {
+            data: {
+              scope: "profile",
+              profile_id: profileId,
+              display_name: displayName,
+              notes_changed: result.notesChanged,
+            },
+          };
+        }
+
+        const result = db.renameNoteSpeaker(noteId, speakerId, displayName);
+        const mapping = db.getSpeakerMappings(noteId).find((row) => row.speaker_id === speakerId);
+        // The UI rename tells the live identifier, so subsequent live segments
+        // carry the new name. Without this an in-progress recording would keep
+        // re-applying the old one.
+        ipc.mapLiveSpeaker?.(speakerId, mapping?.profile_id ?? null, displayName, noteId);
+        setImmediate(() => announce(noteId));
+        return {
+          data: {
+            scope: "note",
+            note_id: noteId,
+            speaker_id: speakerId,
+            display_name: displayName,
+            notes_changed: 1,
+            transcript_rewritten: result.segmentsChanged === true,
+          },
+        };
+      }),
+      exact("GET", "/v1/dictionary/get", () => ({ data: { words: db.getDictionary() } })),
+      exact("POST", "/v1/dictionary/add", ({ body }) => {
+        const words = body?.words;
+        if (!Array.isArray(words) || words.length === 0) {
+          throw validationError("words must be a non-empty array of strings");
+        }
+        if (words.some((word) => typeof word !== "string")) {
+          throw validationError("every entry in words must be a string");
+        }
+        const stored = db.addDictionaryWords(words);
+        setImmediate(() => ipc.broadcastToWindows("dictionary-updated", stored));
+        return { data: { words: stored } };
       }),
       param("DELETE", "/v1/transcriptions/", "/audio", "id", ({ params }) => {
         const id = requireId(params, "transcription");

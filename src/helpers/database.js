@@ -4,6 +4,7 @@ const fs = require("fs");
 const { randomUUID } = require("crypto");
 const debugLogger = require("./debugLogger");
 const { normalizeUserContext } = require("./userContextBlock.js");
+const { lockTranscriptSpeaker } = require("./transcriptSpeakerState.js");
 const { buildNoteSearchQuery } = require("./noteSearch");
 const peopleResolver = require("./peopleResolver");
 const { resolveDateRange } = require("./searchDateRange");
@@ -22,6 +23,8 @@ const USER_CONTEXT_DDL = `
 `;
 
 const TRANSCRIPT_ORIGIN_SOURCES = new Set(["audio:system", "first-segment", "unanchored"]);
+
+const SPEAKER_MAPPING_ORIGINS = new Set(["manual", "auto", "unknown", "agent"]);
 
 const MAX_NOTE_SUMMARY_LIMIT = 50;
 const NOTE_PREVIEW_CHARS = 400;
@@ -1223,8 +1226,29 @@ class DatabaseManager {
     }
   }
 
+  addDictionaryWords(words) {
+    if (!Array.isArray(words)) {
+      throw new Error("words must be an array");
+    }
+    const existing = this.getDictionary();
+    const seen = new Set(existing.map((word) => word.toLowerCase()));
+    const union = [...existing];
+    for (const raw of words) {
+      if (typeof raw !== "string") continue;
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      const lower = trimmed.toLowerCase();
+      if (seen.has(lower)) continue;
+      seen.add(lower);
+      union.push(trimmed);
+    }
+    this.setDictionary(union, "agent");
+    return this.getDictionary();
+  }
+
   // Diff-based update so unchanged rows keep their source and created_at.
-  // `sourceForNewWords` tags additions ('manual' for user-typed, 'learned' for auto-learn).
+  // `sourceForNewWords` tags additions ('manual' for user-typed, 'learned' for auto-learn,
+  // 'agent' for an MCP client).
   setDictionary(words, sourceForNewWords = "manual") {
     try {
       if (!this.db) {
@@ -3376,9 +3400,9 @@ class DatabaseManager {
     try {
       if (!this.db) throw new Error("Database not initialized");
       const origin = provenance?.origin;
-      if (origin !== "manual" && origin !== "auto" && origin !== "unknown") {
+      if (!SPEAKER_MAPPING_ORIGINS.has(origin)) {
         throw new Error(
-          `setSpeakerMapping requires origin of manual, auto or unknown, got ${String(origin)}`
+          `setSpeakerMapping requires origin of ${[...SPEAKER_MAPPING_ORIGINS].join(", ")}, got ${String(origin)}`
         );
       }
       const confidence = origin === "auto" ? (provenance.confidence ?? null) : null;
@@ -3391,6 +3415,155 @@ class DatabaseManager {
       return { success: true };
     } catch (error) {
       debugLogger.error("Error setting speaker mapping", { error: error.message }, "database");
+      throw error;
+    }
+  }
+
+  // The dirty-note queue drains 3 notes every 5 seconds, so an agent verifying
+  // its own rename read the old speaker_name back for up to 5s -- and ~5*N/3
+  // seconds after a profile-wide rename over N notes.
+  _reindexTranscriptNow(noteId) {
+    this._markTranscriptDirty(noteId);
+    try {
+      const { reshredNote } = require("./transcriptSegmentIndex.js");
+      reshredNote(this.db, noteId);
+      this._dirtyTranscriptNotes.delete(Number(noteId));
+    } catch (error) {
+      debugLogger.warn(
+        "Could not refresh the transcript index after a rename; the background drain will retry",
+        { noteId, error: error.message },
+        "database"
+      );
+    }
+  }
+
+  _renameSpeakerInTranscript(noteId, speakerId, displayName) {
+    const note = this.getNote(noteId);
+    if (!note?.transcript) return false;
+    let segments;
+    try {
+      segments = JSON.parse(note.transcript);
+    } catch {
+      return false;
+    }
+    if (!Array.isArray(segments)) return false;
+
+    let changed = false;
+    const next = segments.map((segment) => {
+      if (segment?.speaker !== speakerId) return segment;
+      changed = true;
+      return lockTranscriptSpeaker(
+        segment,
+        {
+          speakerName: displayName,
+          speakerIsPlaceholder: false,
+          suggestedName: undefined,
+          suggestedProfileId: undefined,
+        },
+        "agent"
+      );
+    });
+    if (!changed) return false;
+
+    this.updateNoteTranscriptKeepingUpdatedAt(noteId, JSON.stringify(next));
+    return true;
+  }
+
+  // A speaker the note has never seen is a hallucinated or stale id, not a
+  // rename. Writing the mapping row anyway reported success, left a row nothing
+  // referenced, and perturbed computeTranscriptHash into a pointless reshred.
+  _noteHasSpeaker(noteId, speakerId) {
+    const inEmbeddings = this.db
+      .prepare("SELECT 1 FROM note_speaker_embeddings WHERE note_id = ? AND speaker_id = ? LIMIT 1")
+      .get(noteId, speakerId);
+    if (inEmbeddings) return true;
+    const inMappings = this.db
+      .prepare("SELECT 1 FROM speaker_mappings WHERE note_id = ? AND speaker_id = ? LIMIT 1")
+      .get(noteId, speakerId);
+    if (inMappings) return true;
+
+    const note = this.getNote(noteId);
+    if (!note?.transcript) return false;
+    try {
+      const segments = JSON.parse(note.transcript);
+      return Array.isArray(segments) && segments.some((seg) => seg?.speaker === speakerId);
+    } catch {
+      return false;
+    }
+  }
+
+  renameNoteSpeaker(noteId, speakerId, displayName) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      if (!this._noteHasSpeaker(noteId, speakerId)) {
+        throw new Error(`Note ${noteId} has no speaker ${speakerId}`);
+      }
+      const existing = this.getSpeakerMappings(noteId).find((m) => m.speaker_id === speakerId);
+      const segmentsChanged = this.db.transaction(() => {
+        this.setSpeakerMapping(noteId, speakerId, existing?.profile_id ?? null, displayName, {
+          origin: "agent",
+        });
+        return this._renameSpeakerInTranscript(noteId, speakerId, displayName);
+      })();
+      this._reindexTranscriptNow(noteId);
+      return { success: true, noteId, segmentsChanged };
+    } catch (error) {
+      debugLogger.error(
+        "Error renaming a note speaker",
+        { noteId, speakerId, error: error.message },
+        "database"
+      );
+      throw error;
+    }
+  }
+
+  renameSpeakerProfileEverywhere(profileId, displayName) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      // A note in the trash must not be rewritten, nor counted in the figure
+      // the caller reports back to the user.
+      const targets = this.db
+        .prepare(
+          `SELECT sm.note_id, sm.speaker_id
+             FROM speaker_mappings sm
+             JOIN notes n ON n.id = sm.note_id
+            WHERE sm.profile_id = ? AND n.deleted_at IS NULL`
+        )
+        .all(profileId);
+
+      // One transaction: a failure part-way used to leave the profile and every
+      // mapping row renamed with an arbitrary prefix of transcripts not.
+      const noteIds = this.db.transaction(() => {
+        this.db
+          .prepare(
+            "UPDATE speaker_profiles SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+          )
+          .run(displayName, profileId);
+        this.db
+          .prepare(
+            `UPDATE speaker_mappings SET display_name = ?, origin = 'agent', confidence = NULL
+              WHERE profile_id = ?
+                AND note_id IN (SELECT id FROM notes WHERE deleted_at IS NULL)`
+          )
+          .run(displayName, profileId);
+
+        const touched = new Set();
+        for (const target of targets) {
+          this._renameSpeakerInTranscript(target.note_id, target.speaker_id, displayName);
+          touched.add(target.note_id);
+        }
+        return [...touched];
+      })();
+
+      for (const noteId of noteIds) this._reindexTranscriptNow(noteId);
+
+      return { success: true, notesChanged: noteIds.length, noteIds };
+    } catch (error) {
+      debugLogger.error(
+        "Error renaming a speaker profile",
+        { profileId, error: error.message },
+        "database"
+      );
       throw error;
     }
   }
