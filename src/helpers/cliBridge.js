@@ -5,10 +5,20 @@ const path = require("path");
 const crypto = require("crypto");
 const debugLogger = require("./debugLogger");
 const { isPortAvailable } = require("../utils/serverUtils");
+const { CONTEXT_BLOCK_MARKERS } = require("./userContextBlock.js");
+
+const ANNOUNCE_BATCH = 5;
 
 const MAX_NOTE_FIELD_CHARS = 100000;
 
 const USER_CONTEXT_KEYS = ["general", "dictation"];
+
+const MAX_SPEAKER_NAME_CHARS = 200;
+// A speaker name is emitted as the label of every one of that speaker's lines in
+// the text fed to the notes, title and debrief prompts, so a name carrying a
+// newline or a block marker can forge structure there. Same threat class as a
+// forged context fence, on the adjacent write surface.
+const SPEAKER_NAME_CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
 
 const PORT_RANGE_START = 8200;
 const PORT_RANGE_END = 8219;
@@ -546,9 +556,26 @@ class CliBridge {
         if (Object.keys(patch).length === 0) {
           throw validationError(`Give at least one of ${USER_CONTEXT_KEYS.join(", ")}`);
         }
+        const previous = db.getUserContext();
         const context = db.setUserContext(patch);
+        // Standing instructions for every later inference, overwritten with no
+        // history. Returning what was replaced is the only way the caller can
+        // tell the user what it changed, or put it back.
+        debugLogger.notice(
+          "User context replaced over the MCP bridge",
+          {
+            fields: Object.keys(patch),
+            replacedLengths: Object.fromEntries(
+              Object.keys(patch).map((key) => [key, (previous[key] || "").length])
+            ),
+            newLengths: Object.fromEntries(
+              Object.keys(patch).map((key) => [key, (context[key] || "").length])
+            ),
+          },
+          "cli-bridge"
+        );
         setImmediate(() => ipc.broadcastToWindows("user-context-updated", context));
-        return { data: context };
+        return { data: { ...context, previous } };
       }),
       exact("POST", "/v1/speakers/rename", ({ body }) => {
         const noteId = Number.isInteger(body?.note_id) ? body.note_id : null;
@@ -559,6 +586,17 @@ class CliBridge {
         if (!speakerId) throw validationError("speaker_id must be a non-empty string");
         const displayName = typeof body.display_name === "string" ? body.display_name.trim() : "";
         if (!displayName) throw validationError("display_name must be a non-empty string");
+        if (displayName.length > MAX_SPEAKER_NAME_CHARS) {
+          throw validationError(
+            `display_name must be at most ${MAX_SPEAKER_NAME_CHARS} characters`
+          );
+        }
+        if (SPEAKER_NAME_CONTROL_CHARS.test(displayName)) {
+          throw validationError("display_name must be a single line with no control characters");
+        }
+        if (CONTEXT_BLOCK_MARKERS.some((marker) => new RegExp(marker.source, "i").test(displayName))) {
+          throw validationError("display_name must not contain prompt block markers");
+        }
 
         const note = db.getNote(noteId);
         if (!note || note.deleted_at) {
@@ -569,11 +607,29 @@ class CliBridge {
 
         const announce = (id) => {
           const updated = db.getNote(id);
-          if (updated) ipc.broadcastToWindows("note-updated", updated);
+          if (updated) {
+            ipc.broadcastToWindows("note-updated", updated);
+            // The rename rewrote the transcript, so the vector and the on-disk
+            // mirror are both stale -- exactly as they would be after a PATCH.
+            ipc._asyncVectorUpsert(updated);
+            ipc._asyncMirrorWrite(updated);
+          }
           ipc.broadcastToWindows("speaker-mappings-updated", {
             noteId: id,
             mappings: db.getSpeakerMappings(id),
           });
+        };
+
+        // Each note-updated carries the whole row, transcript and
+        // enhanced_content included. A library-wide rename over hundreds of
+        // notes would serialise every body to every window in one tick.
+        const announceAll = (ids) => {
+          const queue = [...ids];
+          const drain = () => {
+            for (const id of queue.splice(0, ANNOUNCE_BATCH)) announce(id);
+            if (queue.length) setImmediate(drain);
+          };
+          setImmediate(drain);
         };
 
         if (body.profile_wide === true) {
@@ -585,9 +641,7 @@ class CliBridge {
             );
           }
           const result = db.renameSpeakerProfileEverywhere(profileId, displayName);
-          setImmediate(() => {
-            for (const id of result.noteIds || []) announce(id);
-          });
+          announceAll(result.noteIds || []);
           return {
             data: {
               scope: "profile",
@@ -599,6 +653,11 @@ class CliBridge {
         }
 
         const result = db.renameNoteSpeaker(noteId, speakerId, displayName);
+        const mapping = db.getSpeakerMappings(noteId).find((row) => row.speaker_id === speakerId);
+        // The UI rename tells the live identifier, so subsequent live segments
+        // carry the new name. Without this an in-progress recording would keep
+        // re-applying the old one.
+        ipc.mapLiveSpeaker?.(speakerId, mapping?.profile_id ?? null, displayName, noteId);
         setImmediate(() => announce(noteId));
         return {
           data: {

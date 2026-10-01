@@ -11,3 +11,9 @@ export function speakerMappingsForBroadcast(
   payload: SpeakerMappingBroadcast | null | undefined,
   noteId: number | undefined
 ): Record<string, string> | null;
+
+export function externalRenameUpdate(
+  payload: SpeakerMappingBroadcast | null | undefined,
+  noteId: number | undefined,
+  autoMappings?: Record<string, string>
+): { mappings: Record<string, string>; clearLocalSegments: boolean } | null;

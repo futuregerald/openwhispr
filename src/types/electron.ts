@@ -134,7 +134,7 @@ export interface NoteRepairSummary {
 export interface DictionaryEntryItem {
   id: number;
   word: string;
-  source: "manual" | "learned";
+  source: "manual" | "learned" | "agent";
   created_at: string;
   updated_at: string;
   client_dict_id: string;
@@ -1557,7 +1557,7 @@ declare global {
             suggestedProfileId?: number;
             speakerStatus?: "provisional" | "confirmed" | "suggested" | "locked";
             speakerLocked?: boolean;
-            speakerLockSource?: "user" | "diarization" | "suggestion";
+            speakerLockSource?: "user" | "agent" | "diarization" | "suggestion";
           }>;
           speakerEmbeddings?: Record<string, number[]> | null;
         }) => void

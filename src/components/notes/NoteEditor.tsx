@@ -48,7 +48,7 @@ import {
   lockTranscriptSpeaker,
   serializeTranscriptSegments,
 } from "../../helpers/transcriptSpeakerState";
-import { speakerMappingsForBroadcast } from "../../helpers/speakerMappingBroadcast";
+import { externalRenameUpdate } from "../../helpers/speakerMappingBroadcast";
 import { foldSpeakersInto } from "../../helpers/speakerFold";
 import NoteParticipants from "./NoteParticipants";
 import MeetingTypePicker from "./MeetingTypePicker";
@@ -355,6 +355,8 @@ export default function NoteEditor({
     }
   }, [isRecording, note.id, note.title, scheduleUiUpdate]);
 
+  const autoMappingsRef = useRef<Record<string, string>>({});
+
   useEffect(() => {
     window.electronAPI?.getSpeakerMappings?.(note.id).then((mappings) => {
       const map: Record<string, string> = {};
@@ -370,8 +372,10 @@ export default function NoteEditor({
   useEffect(() => {
     if (!window.electronAPI?.onSpeakerMappingsUpdated) return;
     const unsubscribe = window.electronAPI.onSpeakerMappingsUpdated((payload) => {
-      const map = speakerMappingsForBroadcast(payload, note.id);
-      if (map) setSpeakerMappings(map);
+      const update = externalRenameUpdate(payload, note.id, autoMappingsRef.current);
+      if (!update) return;
+      setSpeakerMappings(update.mappings);
+      if (update.clearLocalSegments) setDiarizedSegments(null);
     });
     return unsubscribe;
   }, [note.id]);
@@ -447,6 +451,7 @@ export default function NoteEditor({
       for (const s of enriched) {
         if (s.speakerName && s.speaker) autoMappings[s.speaker] = s.speakerName;
       }
+      autoMappingsRef.current = autoMappings;
       if (Object.keys(autoMappings).length > 0) {
         setSpeakerMappings((prev) => ({ ...autoMappings, ...prev }));
       }

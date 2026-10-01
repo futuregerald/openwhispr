@@ -64,6 +64,20 @@ export function fitUserContextBlock(value, kind, { budgetTokens, reservedTokens 
   return reservedTokens + cost <= budgetTokens ? block : "";
 }
 
+export const USER_CONTEXT_STATE_KEYS = {
+  general: "generalContext",
+  dictation: "dictationContext",
+};
+
+export function userContextPatchToState(patch) {
+  const next = {};
+  for (const [field, stateKey] of Object.entries(USER_CONTEXT_STATE_KEYS)) {
+    if (patch?.[field] === undefined) continue;
+    next[stateKey] = normalizeUserContext(patch[field], field);
+  }
+  return next;
+}
+
 export function chooseStoredContext(dbValue, localValue) {
   const db = String(dbValue ?? "").trim();
   const local = String(localValue ?? "").trim();

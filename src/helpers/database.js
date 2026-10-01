@@ -3419,6 +3419,24 @@ class DatabaseManager {
     }
   }
 
+  // The dirty-note queue drains 3 notes every 5 seconds, so an agent verifying
+  // its own rename read the old speaker_name back for up to 5s -- and ~5*N/3
+  // seconds after a profile-wide rename over N notes.
+  _reindexTranscriptNow(noteId) {
+    this._markTranscriptDirty(noteId);
+    try {
+      const { reshredNote } = require("./transcriptSegmentIndex.js");
+      reshredNote(this.db, noteId);
+      this._dirtyTranscriptNotes.delete(Number(noteId));
+    } catch (error) {
+      debugLogger.warn(
+        "Could not refresh the transcript index after a rename; the background drain will retry",
+        { noteId, error: error.message },
+        "database"
+      );
+    }
+  }
+
   _renameSpeakerInTranscript(noteId, speakerId, displayName) {
     const note = this.getNote(noteId);
     if (!note?.transcript) return false;
@@ -3434,12 +3452,16 @@ class DatabaseManager {
     const next = segments.map((segment) => {
       if (segment?.speaker !== speakerId) return segment;
       changed = true;
-      return lockTranscriptSpeaker(segment, {
-        speakerName: displayName,
-        speakerIsPlaceholder: false,
-        suggestedName: undefined,
-        suggestedProfileId: undefined,
-      });
+      return lockTranscriptSpeaker(
+        segment,
+        {
+          speakerName: displayName,
+          speakerIsPlaceholder: false,
+          suggestedName: undefined,
+          suggestedProfileId: undefined,
+        },
+        "agent"
+      );
     });
     if (!changed) return false;
 
@@ -3447,14 +3469,43 @@ class DatabaseManager {
     return true;
   }
 
+  // A speaker the note has never seen is a hallucinated or stale id, not a
+  // rename. Writing the mapping row anyway reported success, left a row nothing
+  // referenced, and perturbed computeTranscriptHash into a pointless reshred.
+  _noteHasSpeaker(noteId, speakerId) {
+    const inEmbeddings = this.db
+      .prepare("SELECT 1 FROM note_speaker_embeddings WHERE note_id = ? AND speaker_id = ? LIMIT 1")
+      .get(noteId, speakerId);
+    if (inEmbeddings) return true;
+    const inMappings = this.db
+      .prepare("SELECT 1 FROM speaker_mappings WHERE note_id = ? AND speaker_id = ? LIMIT 1")
+      .get(noteId, speakerId);
+    if (inMappings) return true;
+
+    const note = this.getNote(noteId);
+    if (!note?.transcript) return false;
+    try {
+      const segments = JSON.parse(note.transcript);
+      return Array.isArray(segments) && segments.some((seg) => seg?.speaker === speakerId);
+    } catch {
+      return false;
+    }
+  }
+
   renameNoteSpeaker(noteId, speakerId, displayName) {
     try {
       if (!this.db) throw new Error("Database not initialized");
+      if (!this._noteHasSpeaker(noteId, speakerId)) {
+        throw new Error(`Note ${noteId} has no speaker ${speakerId}`);
+      }
       const existing = this.getSpeakerMappings(noteId).find((m) => m.speaker_id === speakerId);
-      this.setSpeakerMapping(noteId, speakerId, existing?.profile_id ?? null, displayName, {
-        origin: "agent",
-      });
-      const segmentsChanged = this._renameSpeakerInTranscript(noteId, speakerId, displayName);
+      const segmentsChanged = this.db.transaction(() => {
+        this.setSpeakerMapping(noteId, speakerId, existing?.profile_id ?? null, displayName, {
+          origin: "agent",
+        });
+        return this._renameSpeakerInTranscript(noteId, speakerId, displayName);
+      })();
+      this._reindexTranscriptNow(noteId);
       return { success: true, noteId, segmentsChanged };
     } catch (error) {
       debugLogger.error(
@@ -3469,29 +3520,44 @@ class DatabaseManager {
   renameSpeakerProfileEverywhere(profileId, displayName) {
     try {
       if (!this.db) throw new Error("Database not initialized");
+      // A note in the trash must not be rewritten, nor counted in the figure
+      // the caller reports back to the user.
       const targets = this.db
-        .prepare("SELECT note_id, speaker_id FROM speaker_mappings WHERE profile_id = ?")
+        .prepare(
+          `SELECT sm.note_id, sm.speaker_id
+             FROM speaker_mappings sm
+             JOIN notes n ON n.id = sm.note_id
+            WHERE sm.profile_id = ? AND n.deleted_at IS NULL`
+        )
         .all(profileId);
 
-      this.db
-        .prepare(
-          "UPDATE speaker_profiles SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-        )
-        .run(displayName, profileId);
-      this.db
-        .prepare(
-          "UPDATE speaker_mappings SET display_name = ?, origin = 'agent', confidence = NULL WHERE profile_id = ?"
-        )
-        .run(displayName, profileId);
+      // One transaction: a failure part-way used to leave the profile and every
+      // mapping row renamed with an arbitrary prefix of transcripts not.
+      const noteIds = this.db.transaction(() => {
+        this.db
+          .prepare(
+            "UPDATE speaker_profiles SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+          )
+          .run(displayName, profileId);
+        this.db
+          .prepare(
+            `UPDATE speaker_mappings SET display_name = ?, origin = 'agent', confidence = NULL
+              WHERE profile_id = ?
+                AND note_id IN (SELECT id FROM notes WHERE deleted_at IS NULL)`
+          )
+          .run(displayName, profileId);
 
-      const noteIds = new Set();
-      for (const target of targets) {
-        this._renameSpeakerInTranscript(target.note_id, target.speaker_id, displayName);
-        this._markTranscriptDirty(target.note_id);
-        noteIds.add(target.note_id);
-      }
+        const touched = new Set();
+        for (const target of targets) {
+          this._renameSpeakerInTranscript(target.note_id, target.speaker_id, displayName);
+          touched.add(target.note_id);
+        }
+        return [...touched];
+      })();
 
-      return { success: true, notesChanged: noteIds.size, noteIds: [...noteIds] };
+      for (const noteId of noteIds) this._reindexTranscriptNow(noteId);
+
+      return { success: true, notesChanged: noteIds.length, noteIds };
     } catch (error) {
       debugLogger.error(
         "Error renaming a speaker profile",

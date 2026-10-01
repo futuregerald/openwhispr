@@ -159,17 +159,6 @@ test("a note-only rename carries the existing profile id rather than orphaning t
   assert.equal(row.origin, "agent", "origin must record that an agent made this change");
 });
 
-test("a rename of a speaker absent from the transcript changes nothing", () => {
-  const db = freshDatabase();
-  const noteId = insertNote(db);
-  const before = db.getNote(noteId).transcript;
-
-  const result = db.renameNoteSpeaker(noteId, "speaker_9", "Nobody");
-
-  assert.equal(result.segmentsChanged, false);
-  assert.equal(db.getNote(noteId).transcript, before);
-});
-
 // --- profile-wide ---------------------------------------------------------
 // The sweep provably cannot reach a note where the person is already named:
 // getNotesWithUnmappedSpeakers only returns notes with an UNMAPPED speaker, and
@@ -250,4 +239,166 @@ test("a profile-wide rename of an unknown profile reports nothing changed", () =
   twoMappedNotes(db);
   const result = db.renameSpeakerProfileEverywhere(999999, "Nobody");
   assert.equal(result.notesChanged, 0);
+});
+
+// --- review findings I3, I5, I7, I9 ---------------------------------------
+
+// I3: the mapping row was written before the transcript was consulted, so a
+// hallucinated or stale speaker id returned success and left a junk row that
+// perturbs computeTranscriptHash and forces a pointless reshred.
+test("renaming a speaker that is not in the note writes nothing and says so", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+
+  assert.throws(() => db.renameNoteSpeaker(noteId, "speaker_42", "Ghost"), /speaker_42/);
+
+  assert.deepEqual(db.getSpeakerMappings(noteId), [], "a junk mapping row was left behind");
+  assert.equal(exportedName(db, noteId, "speaker_0"), "Priyanka");
+});
+
+// A speaker can legitimately exist in note_speaker_embeddings without appearing
+// in the stored transcript yet, so that counts as present.
+test("a speaker known only from its embedding can still be renamed", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db, []);
+  db.db
+    .prepare(
+      "INSERT INTO note_speaker_embeddings (note_id, speaker_id, embedding) VALUES (?, ?, ?)"
+    )
+    .run(noteId, "speaker_3", Buffer.from(Float32Array.from([1, 0]).buffer));
+
+  const result = db.renameNoteSpeaker(noteId, "speaker_3", "Priya");
+
+  assert.equal(result.success, true);
+  const row = db.getSpeakerMappings(noteId).find((m) => m.speaker_id === "speaker_3");
+  assert.equal(row.display_name, "Priya");
+});
+
+test("a speaker that already has a mapping row but no segments can be renamed", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db, []);
+  db.setSpeakerMapping(noteId, "speaker_5", null, "Old", { origin: "manual" });
+
+  const result = db.renameNoteSpeaker(noteId, "speaker_5", "Priya");
+
+  assert.equal(result.success, true);
+  assert.equal(
+    db.getSpeakerMappings(noteId).find((m) => m.speaker_id === "speaker_5").display_name,
+    "Priya"
+  );
+});
+
+// I5: the transcript index was only refreshed by a 5s background timer draining
+// 3 notes a tick, so an agent verifying its own write read the old name back --
+// up to ~5*N/3 seconds after a profile-wide rename.
+test("the search index is current the moment the rename returns", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+  // The note must ALREADY be indexed, or segmentRowsForNote computes live from
+  // the transcript and the staleness this test exists for cannot appear.
+  reshredNote(db.db, noteId);
+  assert.ok(
+    segmentRowsForNote(db.db, noteId).some((row) => row.speaker_name === "Priyanka"),
+    "precondition: the stored index holds the old name"
+  );
+
+  db.renameNoteSpeaker(noteId, "speaker_0", "Priya");
+
+  // No reshredNote() call here, deliberately: the previous version of this test
+  // reshredded by hand and so could not see the staleness.
+  const names = segmentRowsForNote(db.db, noteId).map((row) => row.speaker_name);
+  assert.ok(names.includes("Priya"), `read back ${JSON.stringify(names)}`);
+  assert.ok(!names.includes("Priyanka"));
+});
+
+test("a profile-wide rename leaves every affected note's index current", () => {
+  const db = freshDatabase();
+  const { profile, first, second } = twoMappedNotes(db);
+  for (const noteId of [first, second]) reshredNote(db.db, noteId);
+  assert.ok(
+    segmentRowsForNote(db.db, first).some((row) => row.speaker_name === "Priyanka"),
+    "precondition: the stored index holds the old name"
+  );
+
+  db.renameSpeakerProfileEverywhere(profile.id, "Priya");
+
+  for (const noteId of [first, second]) {
+    const names = segmentRowsForNote(db.db, noteId).map((row) => row.speaker_name);
+    assert.ok(names.includes("Priya"), `note ${noteId} read back ${JSON.stringify(names)}`);
+    assert.ok(!names.includes("Priyanka"), `note ${noteId} kept the old name in the index`);
+  }
+});
+
+// I7: the profile UPDATE, the mappings UPDATE and the N transcript rewrites were
+// three separate statements, so a failure part-way left the names renamed and an
+// arbitrary prefix of transcripts not.
+test("a profile-wide rename that fails part-way leaves nothing renamed", () => {
+  const db = freshDatabase();
+  const { profile, first, second } = twoMappedNotes(db);
+  const realUpdate = db.updateNoteTranscriptKeepingUpdatedAt.bind(db);
+  let calls = 0;
+  db.updateNoteTranscriptKeepingUpdatedAt = (...args) => {
+    calls += 1;
+    if (calls === 2) throw new Error("disk full");
+    return realUpdate(...args);
+  };
+
+  assert.throws(() => db.renameSpeakerProfileEverywhere(profile.id, "Priya"), /disk full/);
+  db.updateNoteTranscriptKeepingUpdatedAt = realUpdate;
+
+  assert.equal(
+    db.db.prepare("SELECT display_name FROM speaker_profiles WHERE id = ?").get(profile.id)
+      .display_name,
+    "Priyanka",
+    "the profile was renamed even though the transcripts were not"
+  );
+  for (const noteId of [first, second]) {
+    assert.equal(
+      db.getSpeakerMappings(noteId).find((m) => m.speaker_id === "speaker_0").display_name,
+      "Priyanka",
+      `note ${noteId}'s mapping row was renamed without its transcript`
+    );
+    assert.equal(exportedName(db, noteId, "speaker_0"), "Priyanka");
+  }
+});
+
+// M12: soft-deleted notes were rewritten, counted in the figure reported to the
+// user, and announced.
+test("a profile-wide rename skips notes in the trash", () => {
+  const db = freshDatabase();
+  const { profile, second } = twoMappedNotes(db);
+  db.db.prepare("UPDATE notes SET deleted_at = datetime('now') WHERE id = ?").run(second);
+
+  const result = db.renameSpeakerProfileEverywhere(profile.id, "Priya");
+
+  assert.equal(result.notesChanged, 1, "a trashed note was counted in the reported total");
+  assert.ok(!result.noteIds.includes(second));
+});
+
+// M10: the segment layer recorded an agent edit as speakerLockSource "user",
+// disagreeing with the mapping row's origin "agent" and making the changelog's
+// "recorded separately from the ones you typed" only half true.
+test("a rename records the segment lock as the agent's, not the user's", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+
+  db.renameNoteSpeaker(noteId, "speaker_0", "Priya");
+
+  const seg = segmentsOf(db, noteId).find((s) => s.speaker === "speaker_0");
+  assert.equal(seg.speakerLockSource, "agent");
+  // Still locked, so every auto-relabel path skips it: isSpeakerLocked reads
+  // speakerLocked, not the source.
+  assert.equal(seg.speakerLocked, true);
+  assert.equal(seg.speakerStatus, "locked");
+});
+
+test("a profile-wide rename records the same agent lock source", () => {
+  const db = freshDatabase();
+  const { profile, first } = twoMappedNotes(db);
+
+  db.renameSpeakerProfileEverywhere(profile.id, "Priya");
+
+  const seg = segmentsOf(db, first).find((s) => s.speaker === "speaker_0");
+  assert.equal(seg.speakerLockSource, "agent");
+  assert.equal(seg.speakerLocked, true);
 });

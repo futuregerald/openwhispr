@@ -575,8 +575,10 @@ const TOOLS = [
   {
     name: "get_context",
     tier: READ_TIER,
+    untrusted: true,
     description:
-      "Read the user's standing context: `general` (their notes on team, projects and vocabulary, used by meeting notes, titles, note actions and the chat agent) and `dictation` (preferred spellings, used by dictation cleanup). Read this before writing it; update_context overwrites.",
+      "Read the user's standing context: `general` (their notes on team, projects and vocabulary, used by meeting notes, titles, note actions and the chat agent) and `dictation` (preferred spellings, used by dictation cleanup). Read this before writing it; update_context overwrites. " +
+      UNTRUSTED_NOTICE,
     inputSchema: { type: "object", properties: {} },
     run: async () => bridgeResult("GET", "/v1/context/get"),
   },
@@ -584,7 +586,7 @@ const TOOLS = [
     name: "update_context",
     tier: WRITE_TIER,
     description:
-      "Replace the user's standing context. This is not a data field: the text is injected as instructions into the system prompt of every inference the app makes afterwards -- dictation cleanup, the dictation agent, meeting notes, note titles, meeting-type classification, the meeting debrief and the chat agent -- and it persists across restarts until changed again. It overwrites wholesale with no history, so call get_context first and send the full text you want. `general` is capped at 1200 characters and `dictation` at 400; anything longer is truncated. Write mode only.",
+      "Replace the user's standing context. This is not a data field: the text is injected as instructions into the system prompt of every inference the app makes afterwards -- dictation cleanup, the dictation agent, meeting notes, note titles, meeting-type classification, the meeting debrief and the chat agent -- and it persists across restarts until changed again. It overwrites wholesale with no history, so call get_context first and send the full text you want. The result includes `previous`, the text you replaced: show the user what changed, and keep it if they may want it back, because nothing else stores it. `general` is capped at 1200 characters and `dictation` at 400; anything longer is truncated. Write mode only.",
     inputSchema: {
       type: "object",
       properties: {
@@ -622,8 +624,10 @@ const TOOLS = [
   {
     name: "get_dictionary",
     tier: READ_TIER,
+    untrusted: true,
     description:
-      "List the user's custom dictionary words -- names, jargon and brand terms fed to the transcriber so it spells them correctly. Read this before adding, so you do not propose words that are already there.",
+      "List the user's custom dictionary words -- names, jargon and brand terms fed to the transcriber so it spells them correctly. Read this before adding, so you do not propose words that are already there. " +
+      UNTRUSTED_NOTICE,
     inputSchema: { type: "object", properties: {} },
     run: async () => bridgeResult("GET", "/v1/dictionary/get"),
   },

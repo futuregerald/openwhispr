@@ -63,62 +63,6 @@ test("every new preload listener returns a disposer", () => {
   }
 });
 
-// The implementation, not the interface declaration above it. Anchoring on the
-// bare name matched the `: (patch: ...) => void;` interface line and silently
-// asserted against the wrong text.
-function storeFunctionBody(name) {
-  const store = read("src/stores/settingsStore.ts");
-  const marker = `${name}: (patch: { general?: string; dictation?: string }) => {`;
-  const start = store.indexOf(marker);
-  assert.ok(start > 0, `${name} implementation not found`);
-  return store.slice(start, store.indexOf("\n  },", start));
-}
-
-test("applyUserContextFromExternal updates the mirror without writing back", () => {
-  const body = storeFunctionBody("applyUserContextFromExternal");
-  assert.ok(body.includes("localStorage.setItem"), "the localStorage mirror is not updated");
-  assert.match(body, /\bset\(/, "the store state is not updated");
-  assert.ok(
-    !body.includes("setUserContext"),
-    "writing back to SQLite from an external apply would loop: the write re-broadcasts"
-  );
-  assert.ok(
-    body.includes("normalizeUserContext"),
-    "an externally supplied value must be normalised, not trusted to be within the cap"
-  );
-});
-
-test("a partial context patch cannot blank the field it omits", () => {
-  const body = storeFunctionBody("applyUserContextFromExternal");
-  for (const field of ["general", "dictation"]) {
-    assert.match(
-      body,
-      new RegExp(`patch\\?\\.${field} !== undefined`),
-      `${field} is not guarded, so a patch carrying only the other field clears it`
-    );
-  }
-  assert.ok(
-    !/const \{ general.*\} = patch/.test(body),
-    "destructuring with defaults would turn an absent field into an empty string"
-  );
-});
-
-test("the context subscription is registered and disposed in useSettings", () => {
-  const hook = read("src/hooks/useSettings.ts");
-  const start = hook.indexOf("onUserContextUpdated");
-  assert.ok(start > 0, "the hook never subscribes");
-  const effect = hook.slice(start, hook.indexOf("}, [", start) + 40);
-  assert.ok(
-    effect.includes("applyUserContextFromExternal"),
-    "the hook subscribes but applies nothing"
-  );
-  assert.ok(effect.includes("return unsubscribe"), "the subscription is never disposed");
-  assert.ok(
-    effect.includes("[applyUserContextFromExternal]"),
-    "the effect must depend on the applier, as the dictionary effect does"
-  );
-});
-
 // --- the noteId guard, driven rather than text-matched ---------------------
 // A text assertion that the guard EXISTS survived deleting it, because the
 // assertion matched the wiring and not the behaviour. This drives it.
@@ -174,32 +118,6 @@ test("a malformed mapping row is skipped rather than writing undefined on screen
   assert.deepEqual(map, { speaker_2: "Priya" });
 });
 
-// --- per-field assertions, so one surviving call cannot satisfy the gate ---
-test("each context field is normalised on its own, not just one of them", () => {
-  const body = storeFunctionBody("applyUserContextFromExternal");
-  for (const [field, kind] of [
-    ["general", "general"],
-    ["dictation", "dictation"],
-  ]) {
-    assert.match(
-      body,
-      new RegExp(`normalizeUserContext\\(patch\\.${field}, "${kind}"\\)`),
-      `${field} is stored without normalising, so an over-cap external value is trusted`
-    );
-  }
-});
-
-test("each context field writes its own localStorage mirror", () => {
-  const body = storeFunctionBody("applyUserContextFromExternal");
-  for (const key of ["generalContext", "dictationContext"]) {
-    assert.match(
-      body,
-      new RegExp(`localStorage\\.setItem\\("${key}"`),
-      `${key} is not mirrored, so a reload loses the external write`
-    );
-  }
-});
-
 test("the NoteEditor mapping subscription is disposed", () => {
   const editor = read("src/components/notes/NoteEditor.tsx");
   const start = editor.indexOf("onSpeakerMappingsUpdated");
@@ -208,5 +126,158 @@ test("the NoteEditor mapping subscription is disposed", () => {
   assert.ok(
     effect.includes("return unsubscribe"),
     "the listener leaks on every note switch, and stale listeners relabel the wrong note"
+  );
+});
+
+// Anchors on the implementation, not the `=> void;` interface declaration -- the
+// bare name matched that first and silently asserted against the wrong text.
+function storeFunctionBody(name) {
+  const store = read("src/stores/settingsStore.ts");
+  const marker = `${name}: (patch: { general?: string; dictation?: string }) => {`;
+  const start = store.indexOf(marker);
+  assert.ok(start > 0, `${name} implementation not found`);
+  return store.slice(start, store.indexOf("\n  },", start));
+}
+
+// --- the context patch, driven -------------------------------------------
+// Review proved the previous versions of these could not fail: `set(next)` ->
+// `set({})`, writing the dictation value into the generalContext mirror, and a
+// hook that subscribed but applied nothing all passed 13/13. They were
+// body-wide substring matches on source text. The logic now lives in a pure
+// function and is driven.
+const {
+  userContextPatchToState,
+  USER_CONTEXT_STATE_KEYS,
+  GENERAL_CONTEXT_MAX_CHARS: GEN_CAP,
+  DICTATION_CONTEXT_MAX_CHARS: DICT_CAP,
+} = require("../../src/helpers/userContextBlock.js");
+
+test("each context field maps to its own state key", () => {
+  assert.deepEqual(userContextPatchToState({ general: "a", dictation: "b" }), {
+    generalContext: "a",
+    dictationContext: "b",
+  });
+});
+
+test("a partial patch yields only that field, so the other cannot be blanked", () => {
+  assert.deepEqual(userContextPatchToState({ general: "a" }), { generalContext: "a" });
+  assert.deepEqual(userContextPatchToState({ dictation: "b" }), { dictationContext: "b" });
+});
+
+test("an empty or nullish patch yields nothing to apply", () => {
+  for (const patch of [{}, null, undefined, { sneaky: "x" }]) {
+    assert.deepEqual(userContextPatchToState(patch), {}, `patch ${JSON.stringify(patch)}`);
+  }
+});
+
+// An external writer is not necessarily the user, and the bridge caps on the way
+// in -- but the renderer must not depend on that.
+test("each field is capped at its own limit, not the other's", () => {
+  const long = "x".repeat(9000);
+  const next = userContextPatchToState({ general: long, dictation: long });
+  assert.equal(next.generalContext.length, GEN_CAP);
+  assert.equal(next.dictationContext.length, DICT_CAP);
+  assert.notEqual(GEN_CAP, DICT_CAP);
+});
+
+test("an explicitly empty value clears the field rather than being ignored", () => {
+  assert.deepEqual(userContextPatchToState({ general: "" }), { generalContext: "" });
+});
+
+test("the state keys are also the localStorage keys the store mirrors", () => {
+  assert.deepEqual(USER_CONTEXT_STATE_KEYS, {
+    general: "generalContext",
+    dictation: "dictationContext",
+  });
+});
+
+// --- the rename refresh, driven -------------------------------------------
+const { externalRenameUpdate } = require("../../src/helpers/speakerMappingBroadcast.js");
+
+// The CRITICAL from review: displaySegments prefers the local diarizedSegments
+// array over note.transcript, and any in-editor speaker edit populates it for
+// the rest of the session. An external rename rewrote the transcript, so the
+// local array is stale -- and the next in-editor edit writes it back over the
+// rename, reverting exports and the search index while the label still reads
+// the new name.
+test("an external rename for this note drops the stale local segment array", () => {
+  const update = externalRenameUpdate(
+    { noteId: 3, mappings: [{ speaker_id: "speaker_0", display_name: "Priya" }] },
+    3
+  );
+  assert.deepEqual(update.mappings, { speaker_0: "Priya" });
+  assert.equal(
+    update.clearLocalSegments,
+    true,
+    "without this the next in-editor edit writes the pre-rename transcript back"
+  );
+});
+
+test("an external rename for another note changes nothing at all", () => {
+  assert.equal(externalRenameUpdate({ noteId: 7, mappings: [] }, 3), null);
+  assert.equal(externalRenameUpdate(null, 3), null);
+});
+
+// --- the irreducible glue -------------------------------------------------
+// There is no renderer test harness in this repo, so these call sites can only
+// be pinned by their exact form. Each assertion below was checked against the
+// mutation it is meant to catch.
+test("the store applies the pure result to both the mirror and the state", () => {
+  const body = storeFunctionBody("applyUserContextFromExternal");
+  assert.match(body, /const next = userContextPatchToState\(patch\)/);
+  assert.match(body, /localStorage\.setItem\(key, value\)/, "the mirror is not derived from next");
+  assert.match(body, /\bset\(next\)/, "set({}) would leave the store state untouched");
+  assert.ok(!body.includes("setUserContext"), "writing back to SQLite would loop");
+});
+
+test("NoteEditor passes its own note id, not the payload's", () => {
+  const editor = read("src/components/notes/NoteEditor.tsx");
+  assert.match(
+    editor,
+    /externalRenameUpdate\(payload, note\.id, autoMappingsRef\.current\)/,
+    "passing payload.noteId makes every rename anywhere relabel the open note"
+  );
+  assert.match(
+    editor,
+    /if \(update\.clearLocalSegments\) setDiarizedSegments\(null\)/,
+    "the stale local segment array is never cleared"
+  );
+});
+
+test("the useSettings effect applies the patch rather than only subscribing", () => {
+  const hook = read("src/hooks/useSettings.ts");
+  assert.match(
+    hook,
+    /applyUserContextFromExternal\(context\)/,
+    "the dependency array alone satisfied the previous assertion"
+  );
+});
+
+// The route calls ipc.mapLiveSpeaker?.(...) with optional chaining, so a missing
+// method is a silent no-op forever -- the repair-qdrant lesson, where a handler
+// with no counterpart was unreachable and nothing failed.
+test("the methods the bridge calls on IPCHandlers actually exist on it", () => {
+  const handlers = read("src/helpers/ipcHandlers.js");
+  for (const method of ["mapLiveSpeaker", "_asyncVectorUpsert", "_asyncMirrorWrite"]) {
+    assert.match(
+      handlers,
+      new RegExp(`^  ${method}\\(`, "m"),
+      `cliBridge calls ipc.${method}, but IPCHandlers does not define it`
+    );
+  }
+});
+
+// M13: diarization-derived names are never persisted, so a broadcast carrying
+// only stored rows must not discard them.
+test("an external rename keeps diarization-derived names for other speakers", () => {
+  const update = externalRenameUpdate(
+    { noteId: 3, mappings: [{ speaker_id: "speaker_0", display_name: "Priya" }] },
+    3,
+    { speaker_0: "Priyanka", speaker_1: "Dana" }
+  );
+  assert.deepEqual(
+    update.mappings,
+    { speaker_0: "Priya", speaker_1: "Dana" },
+    "the stored row must win, and the auto name for the other speaker must survive"
   );
 });

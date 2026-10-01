@@ -409,6 +409,20 @@ class IPCHandlers {
     return result;
   }
 
+  // The bridge's rename route needs the same live-identifier update the
+  // set-speaker-mapping handler does, without reaching for the module directly.
+  mapLiveSpeaker(speakerId, profileId, displayName, noteId) {
+    try {
+      liveSpeakerIdentifier.mapSpeaker(speakerId, profileId, displayName, noteId);
+    } catch (error) {
+      debugLogger.debug(
+        "Could not update the live speaker identifier after a rename",
+        { speakerId, noteId, error: error.message },
+        "speakers"
+      );
+    }
+  }
+
   _asyncMirrorWrite(note) {
     if (!this._noteFilesEnabled) {
       debugLogger.debug(
