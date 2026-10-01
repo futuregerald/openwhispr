@@ -1026,6 +1026,12 @@ declare global {
           fallbackReadWrite: string;
           remove: string;
         } | null;
+        clientConfigs: {
+          read: string;
+          readWrite: string;
+          fallbackRead: string;
+          fallbackReadWrite: string;
+        } | null;
       }>;
 
       getSearchIndexStatus: () => Promise<{

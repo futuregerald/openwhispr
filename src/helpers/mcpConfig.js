@@ -88,6 +88,9 @@ function getMcpConfig({
     platform,
     writeEnvVar: WRITE_ENV_VAR,
     commands: serverPath ? buildCommands({ serverPath, execPath: resolvedExecPath }) : null,
+    clientConfigs: serverPath
+      ? buildClientConfigs({ serverPath, execPath: resolvedExecPath })
+      : null,
   };
 }
 
