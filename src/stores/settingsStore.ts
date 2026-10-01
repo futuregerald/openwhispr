@@ -578,6 +578,7 @@ export interface SettingsState
   setCleanupCloudBaseUrl: (value: string) => void;
   setCustomDictionary: (words: string[]) => void;
   applyCustomDictionaryFromExternal: (words: string[]) => void;
+  applyUserContextFromExternal: (patch: { general?: string; dictation?: string }) => void;
   generalContext: string;
   dictationContext: string;
   setGeneralContext: (value: string) => void;
@@ -1286,6 +1287,20 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   applyCustomDictionaryFromExternal: (words: string[]) => {
     if (isBrowser) localStorage.setItem("customDictionary", JSON.stringify(words));
     set({ customDictionary: words });
+  },
+
+  applyUserContextFromExternal: (patch: { general?: string; dictation?: string }) => {
+    const next: { generalContext?: string; dictationContext?: string } = {};
+    if (patch?.general !== undefined) {
+      next.generalContext = normalizeUserContext(patch.general, "general");
+      if (isBrowser) localStorage.setItem("generalContext", next.generalContext);
+    }
+    if (patch?.dictation !== undefined) {
+      next.dictationContext = normalizeUserContext(patch.dictation, "dictation");
+      if (isBrowser) localStorage.setItem("dictationContext", next.dictationContext);
+    }
+    if (Object.keys(next).length === 0) return;
+    set(next);
   },
 
   setSnippets: (snippets: Snippet[]) => {

@@ -523,6 +523,15 @@ declare global {
         modelId: string
       ) => Promise<{ contextSize: number | null; isGpuBackend: boolean; error?: string }>;
       onDictionaryUpdated?: (callback: (words: string[]) => void) => () => void;
+      onUserContextUpdated?: (
+        callback: (context: { general?: string; dictation?: string }) => void
+      ) => () => void;
+      onSpeakerMappingsUpdated?: (
+        callback: (payload: {
+          noteId: number;
+          mappings: { speaker_id: string; display_name: string; profile_id?: number | null }[];
+        }) => void
+      ) => () => void;
       getSnippets?: () => Promise<Array<{ trigger: string; replacement: string }>>;
       setSnippets?: (
         snippets: Array<{ trigger: string; replacement: string }>

@@ -48,6 +48,7 @@ import {
   lockTranscriptSpeaker,
   serializeTranscriptSegments,
 } from "../../helpers/transcriptSpeakerState";
+import { speakerMappingsForBroadcast } from "../../helpers/speakerMappingBroadcast";
 import { foldSpeakersInto } from "../../helpers/speakerFold";
 import NoteParticipants from "./NoteParticipants";
 import MeetingTypePicker from "./MeetingTypePicker";
@@ -359,6 +360,18 @@ export default function NoteEditor({
     });
     refreshSpeakerProfiles();
   }, [note.id, refreshSpeakerProfiles]);
+
+  // displayLabel reads the mapping before the segment, so a rename arriving from
+  // outside this window leaves a stale label until the mapping state catches up.
+  // The fetch above runs only when the note id changes.
+  useEffect(() => {
+    if (!window.electronAPI?.onSpeakerMappingsUpdated) return;
+    const unsubscribe = window.electronAPI.onSpeakerMappingsUpdated((payload) => {
+      const map = speakerMappingsForBroadcast(payload, note.id);
+      if (map) setSpeakerMappings(map);
+    });
+    return unsubscribe;
+  }, [note.id]);
 
   useEffect(() => {
     if (
