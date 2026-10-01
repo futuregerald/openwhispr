@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.34.0] - 2026-10-01
+
+### Added
+
+- Settings → Integrations now gives you a ready-made JSON entry for any MCP
+  client, not just the Claude Code command. Expand "Using a different agent?",
+  copy the block and paste it into Claude Desktop, Cursor, Windsurf or whatever
+  you use — the path is already filled in for your install, and the block
+  follows the no-Node and write-mode options you picked above it.
+
 ## [1.33.0] - 2026-09-30
 
 ### Added
