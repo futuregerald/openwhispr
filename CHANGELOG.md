@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.33.0] - 2026-09-30
+
+### Added
+
+- Claude and other MCP clients can now update your context, add words to your
+  custom dictionary and rename speakers, when you enable write mode. Editing
+  notes and enhanced notes already worked.
+- Renaming a speaker from an assistant renames them in that note's transcript,
+  its exports and search, not just the label in the editor. Ask for a
+  library-wide rename and it will tell you how many notes it changed.
+- Changes an assistant makes to your context or dictionary now appear
+  immediately in an open Settings window, and a speaker rename appears in the
+  note you are reading, instead of waiting for a restart.
+
+### Changed
+
+- Names and dictionary words added by an assistant are recorded separately from
+  the ones you typed, so you can tell them apart later. An assistant can no
+  longer have its rename quietly replaced by automatic speaker matching.
+- Adding dictionary words through an assistant can only add. It cannot remove
+  words you have saved.
+
 ## [1.32.0] - 2026-09-30
 
 ### Fixed
