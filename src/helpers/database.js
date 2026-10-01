@@ -4,6 +4,7 @@ const fs = require("fs");
 const { randomUUID } = require("crypto");
 const debugLogger = require("./debugLogger");
 const { normalizeUserContext } = require("./userContextBlock.js");
+const { lockTranscriptSpeaker } = require("./transcriptSpeakerState.js");
 const { buildNoteSearchQuery } = require("./noteSearch");
 const peopleResolver = require("./peopleResolver");
 const { resolveDateRange } = require("./searchDateRange");
@@ -3414,6 +3415,89 @@ class DatabaseManager {
       return { success: true };
     } catch (error) {
       debugLogger.error("Error setting speaker mapping", { error: error.message }, "database");
+      throw error;
+    }
+  }
+
+  _renameSpeakerInTranscript(noteId, speakerId, displayName) {
+    const note = this.getNote(noteId);
+    if (!note?.transcript) return false;
+    let segments;
+    try {
+      segments = JSON.parse(note.transcript);
+    } catch {
+      return false;
+    }
+    if (!Array.isArray(segments)) return false;
+
+    let changed = false;
+    const next = segments.map((segment) => {
+      if (segment?.speaker !== speakerId) return segment;
+      changed = true;
+      return lockTranscriptSpeaker(segment, {
+        speakerName: displayName,
+        speakerIsPlaceholder: false,
+        suggestedName: undefined,
+        suggestedProfileId: undefined,
+      });
+    });
+    if (!changed) return false;
+
+    this.updateNoteTranscriptKeepingUpdatedAt(noteId, JSON.stringify(next));
+    return true;
+  }
+
+  renameNoteSpeaker(noteId, speakerId, displayName) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      const existing = this.getSpeakerMappings(noteId).find((m) => m.speaker_id === speakerId);
+      this.setSpeakerMapping(noteId, speakerId, existing?.profile_id ?? null, displayName, {
+        origin: "agent",
+      });
+      const segmentsChanged = this._renameSpeakerInTranscript(noteId, speakerId, displayName);
+      return { success: true, noteId, segmentsChanged };
+    } catch (error) {
+      debugLogger.error(
+        "Error renaming a note speaker",
+        { noteId, speakerId, error: error.message },
+        "database"
+      );
+      throw error;
+    }
+  }
+
+  renameSpeakerProfileEverywhere(profileId, displayName) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      const targets = this.db
+        .prepare("SELECT note_id, speaker_id FROM speaker_mappings WHERE profile_id = ?")
+        .all(profileId);
+
+      this.db
+        .prepare(
+          "UPDATE speaker_profiles SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+        )
+        .run(displayName, profileId);
+      this.db
+        .prepare(
+          "UPDATE speaker_mappings SET display_name = ?, origin = 'agent', confidence = NULL WHERE profile_id = ?"
+        )
+        .run(displayName, profileId);
+
+      const noteIds = new Set();
+      for (const target of targets) {
+        this._renameSpeakerInTranscript(target.note_id, target.speaker_id, displayName);
+        this._markTranscriptDirty(target.note_id);
+        noteIds.add(target.note_id);
+      }
+
+      return { success: true, notesChanged: noteIds.size, noteIds: [...noteIds] };
+    } catch (error) {
+      debugLogger.error(
+        "Error renaming a speaker profile",
+        { profileId, error: error.message },
+        "database"
+      );
       throw error;
     }
   }

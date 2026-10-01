@@ -113,7 +113,7 @@ test("a bridge without the mcp capability is reported as too old, not as a route
 
 test("a bridge that advertises the capability is used normally", async () => {
   withHandshake();
-  await withServer(healthAwareHandler(2, okHandler), async ({ port, seen }) => {
+  await withServer(healthAwareHandler(3, okHandler), async ({ port, seen }) => {
     writeBridgeFile(port, "tok");
     const first = await bridgeClient.requestJson("GET", "/v1/notes/list");
     assert.equal(first.ok, true);
@@ -131,7 +131,7 @@ test("a bridge that advertises the capability is used normally", async () => {
 
 test("concurrent first calls share one handshake probe", async () => {
   withHandshake();
-  await withServer(healthAwareHandler(2, okHandler), async ({ port, seen }) => {
+  await withServer(healthAwareHandler(3, okHandler), async ({ port, seen }) => {
     writeBridgeFile(port, "tok");
     const results = await Promise.all(
       Array.from({ length: 5 }, () => bridgeClient.requestJson("GET", "/v1/notes/list"))
@@ -165,7 +165,7 @@ test("an unreachable bridge is never cached, so a later attempt recovers", async
           return;
         }
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ data: { ok: true, version: 1, mcp: 2 } }));
+        res.end(JSON.stringify({ data: { ok: true, version: 1, mcp: 3 } }));
         return;
       }
       okHandler(req, res);
@@ -191,7 +191,7 @@ test("a version mismatch is never cached, so upgrading mid-session recovers", as
       if (req.url === "/v1/health") {
         healthCalls += 1;
         const body = { ok: true, version: 1 };
-        if (healthCalls > 1) body.mcp = 2;
+        if (healthCalls > 1) body.mcp = 3;
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ data: body }));
         return;
@@ -398,4 +398,38 @@ test("a POST body is sent with its content length", async () => {
       assert.deepEqual(result.data.data.echoed, { title: "From MCP" });
     }
   );
+});
+
+// Task 6: the context, dictionary and speaker routes are capability 3. An app
+// that only advertises 2 has none of them, and would answer /v1/context/get
+// with a bare 404 -- true but useless. Refuse it with the upgrade message.
+test("a bridge at the previous capability level is refused, not probed for routes it lacks", async () => {
+  withHandshake();
+  await withServer(
+    healthAwareHandler(2, (req, res) => {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "Not found" } }));
+    }),
+    async ({ port, seen }) => {
+      writeBridgeFile(port, "tok");
+      const result = await bridgeClient.requestJson("GET", "/v1/context/get");
+      assert.equal(result.ok, false);
+      assert.match(result.error, /update OpenWhispr/i);
+      assert.doesNotMatch(result.error, /Not found/);
+      assert.equal(
+        seen.filter((entry) => entry.url === "/v1/context/get").length,
+        0,
+        "the route must not be attempted against a bridge known to lack it"
+      );
+    }
+  );
+});
+
+test("a capability above the floor is accepted, so a newer app is not locked out", async () => {
+  withHandshake();
+  await withServer(healthAwareHandler(4, okHandler), async ({ port }) => {
+    writeBridgeFile(port, "tok");
+    const result = await bridgeClient.requestJson("GET", "/v1/context/get");
+    assert.equal(result.ok, true);
+  });
 });

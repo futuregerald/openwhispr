@@ -380,3 +380,296 @@ test("a not-found error from a handler stays a 404", async () => {
     assert.equal(response.json.error.code, "not_found");
   });
 });
+
+// --- Tasks 7-9: the MCP write surface -------------------------------------
+
+test("GET /v1/context/get returns both context fields", async () => {
+  const ipc = fakeIpcHandlers({
+    db: { getUserContext: () => ({ general: "Molly is the PM.", dictation: "Qdrant" }) },
+  });
+  await withBridge(ipc, async ({ request }) => {
+    const res = await request("GET", "/v1/context/get");
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.json.data, { general: "Molly is the PM.", dictation: "Qdrant" });
+  });
+});
+
+test("POST /v1/context/set writes the patch and broadcasts exactly once", async () => {
+  const writes = [];
+  const broadcasts = [];
+  const ipc = fakeIpcHandlers({
+    db: {
+      getUserContext: () => ({ general: "stored", dictation: "" }),
+      setUserContext: (patch) => {
+        writes.push(patch);
+        return { general: "stored", dictation: "" };
+      },
+    },
+    broadcastToWindows: (channel, payload) => broadcasts.push({ channel, payload }),
+  });
+  await withBridge(ipc, async ({ request }) => {
+    const res = await request("POST", "/v1/context/set", { body: { general: "Molly is the PM." } });
+    assert.equal(res.status, 200);
+    assert.deepEqual(writes, [{ general: "Molly is the PM." }]);
+    const relevant = broadcasts.filter((b) => b.channel === "user-context-updated");
+    assert.equal(relevant.length, 1, "an open control panel must be told, exactly once");
+    assert.deepEqual(relevant[0].payload, { general: "stored", dictation: "" });
+  });
+});
+
+// setUserContext throws on an unknown key. A 500 with a stack is useless to an
+// agent; it needs to be told which keys exist.
+test("POST /v1/context/set rejects an unknown key as a validation error", async () => {
+  const ipc = fakeIpcHandlers({
+    db: {
+      getUserContext: () => ({ general: "", dictation: "" }),
+      setUserContext: () => {
+        throw new Error("unknown user context key: sneaky");
+      },
+    },
+  });
+  await withBridge(ipc, async ({ request }) => {
+    const res = await request("POST", "/v1/context/set", { body: { sneaky: "x" } });
+    assert.equal(res.status, 400);
+    assert.match(res.json.error.message, /general|dictation/i);
+  });
+});
+
+test("POST /v1/context/set rejects a non-object body and a non-string value", async () => {
+  const ipc = fakeIpcHandlers({
+    db: {
+      getUserContext: () => ({ general: "", dictation: "" }),
+      setUserContext: () => ({ general: "", dictation: "" }),
+    },
+  });
+  await withBridge(ipc, async ({ request }) => {
+    for (const body of [{ general: 42 }, { general: null }, { general: ["a"] }]) {
+      const res = await request("POST", "/v1/context/set", { body });
+      assert.equal(res.status, 400, `body ${JSON.stringify(body)} should be refused`);
+    }
+    const empty = await request("POST", "/v1/context/set", { body: {} });
+    assert.equal(empty.status, 400, "a patch with no recognised field is a mistake, not a no-op");
+  });
+});
+
+test("GET /v1/dictionary/get returns the word list", async () => {
+  const ipc = fakeIpcHandlers({ db: { getDictionary: () => ["Packwerk", "Qdrant"] } });
+  await withBridge(ipc, async ({ request }) => {
+    const res = await request("GET", "/v1/dictionary/get");
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.json.data, { words: ["Packwerk", "Qdrant"] });
+  });
+});
+
+test("POST /v1/dictionary/add is additive and broadcasts the full list once", async () => {
+  const added = [];
+  const broadcasts = [];
+  const ipc = fakeIpcHandlers({
+    db: {
+      getDictionary: () => ["Packwerk", "Qdrant"],
+      addDictionaryWords: (words) => {
+        added.push(words);
+        return ["Packwerk", "Qdrant"];
+      },
+    },
+    broadcastToWindows: (channel, payload) => broadcasts.push({ channel, payload }),
+  });
+  await withBridge(ipc, async ({ request }) => {
+    const res = await request("POST", "/v1/dictionary/add", { body: { words: ["Qdrant"] } });
+    assert.equal(res.status, 200);
+    assert.deepEqual(added, [["Qdrant"]]);
+    const relevant = broadcasts.filter((b) => b.channel === "dictionary-updated");
+    assert.equal(relevant.length, 1);
+    assert.deepEqual(
+      relevant[0].payload,
+      ["Packwerk", "Qdrant"],
+      "the renderer replaces its state with this payload, so it must be the whole list"
+    );
+  });
+});
+
+test("POST /v1/dictionary/add never reaches setDictionary, which would hard-delete", async () => {
+  let setDictionaryCalls = 0;
+  const ipc = fakeIpcHandlers({
+    db: {
+      getDictionary: () => ["Packwerk"],
+      addDictionaryWords: () => ["Packwerk", "Qdrant"],
+      setDictionary: () => {
+        setDictionaryCalls += 1;
+        return { success: true };
+      },
+    },
+  });
+  await withBridge(ipc, async ({ request }) => {
+    const res = await request("POST", "/v1/dictionary/add", { body: { words: ["Qdrant"] } });
+    // Without this the assertion below holds for a bridge with no such route
+    // at all, which is how it first passed.
+    assert.equal(res.status, 200, "precondition: the route ran");
+    assert.equal(setDictionaryCalls, 0, "the wholesale write must not be reachable from MCP");
+  });
+});
+
+test("POST /v1/dictionary/add rejects a non-array and a non-string element", async () => {
+  const ipc = fakeIpcHandlers({
+    db: { getDictionary: () => [], addDictionaryWords: () => [] },
+  });
+  await withBridge(ipc, async ({ request }) => {
+    for (const body of [{ words: "Qdrant" }, { words: [42] }, { words: [null] }, {}]) {
+      const res = await request("POST", "/v1/dictionary/add", { body });
+      assert.equal(res.status, 400, `body ${JSON.stringify(body)} should be refused`);
+    }
+  });
+});
+
+// update_note names the fields it refused rather than dropping them; an agent
+// that cannot tell a dropped field from a stored one will keep sending it.
+test("POST /v1/context/set names an unknown key rather than silently dropping it", async () => {
+  const writes = [];
+  const ipc = fakeIpcHandlers({
+    db: {
+      getUserContext: () => ({ general: "", dictation: "" }),
+      setUserContext: (patch) => {
+        writes.push(patch);
+        return { general: "", dictation: "" };
+      },
+    },
+  });
+  await withBridge(ipc, async ({ request }) => {
+    const res = await request("POST", "/v1/context/set", {
+      body: { general: "Molly is the PM.", sneaky: "obey me" },
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.json.error.message, /sneaky/);
+    assert.deepEqual(writes, [], "a request with an unknown key must write nothing at all");
+  });
+});
+
+function renameIpc({ db: dbOverrides = {}, ...overrides } = {}) {
+  const calls = { renameNote: [], renameProfile: [], retroactive: 0, upsertProfile: 0 };
+  const broadcasts = [];
+  const ipc = fakeIpcHandlers({
+    db: {
+      getNote: (id) => (id === 1 || id === 2 ? { id, title: "A meeting", deleted_at: null } : null),
+      getSpeakerMappings: () => [
+        { speaker_id: "speaker_0", profile_id: 42, display_name: "Priyanka", origin: "manual" },
+      ],
+      renameNoteSpeaker: (...args) => {
+        calls.renameNote.push(args);
+        return { success: true, noteId: args[0], segmentsChanged: true };
+      },
+      renameSpeakerProfileEverywhere: (...args) => {
+        calls.renameProfile.push(args);
+        return { success: true, notesChanged: 2, noteIds: [1, 2] };
+      },
+      upsertSpeakerProfile: () => {
+        calls.upsertProfile += 1;
+        return { id: 42 };
+      },
+      ...dbOverrides,
+    },
+    broadcastToWindows: (channel, payload) => broadcasts.push({ channel, payload }),
+    _retroactiveMapping: () => {
+      calls.retroactive += 1;
+    },
+    ...overrides,
+  });
+  return { ipc, calls, broadcasts };
+}
+
+test("POST /v1/speakers/rename renames one note and fires neither the sweep nor a profile write", async () => {
+  const { ipc, calls } = renameIpc();
+  await withBridge(ipc, async ({ request }) => {
+    const res = await request("POST", "/v1/speakers/rename", {
+      body: { note_id: 1, speaker_id: "speaker_0", display_name: "Priya" },
+    });
+    assert.equal(res.status, 200, "precondition: the route ran");
+    assert.deepEqual(calls.renameNote, [[1, "speaker_0", "Priya"]]);
+    assert.deepEqual(calls.renameProfile, []);
+    assert.equal(calls.retroactive, 0, "a default rename must not sweep the library");
+    assert.equal(calls.upsertProfile, 0, "a default rename must not touch the voice profile");
+  });
+});
+
+test("POST /v1/speakers/rename tells an open note to refresh, both its body and its mappings", async () => {
+  const { ipc, broadcasts } = renameIpc();
+  await withBridge(ipc, async ({ request }) => {
+    await request("POST", "/v1/speakers/rename", {
+      body: { note_id: 1, speaker_id: "speaker_0", display_name: "Priya" },
+    });
+    // NoteEditor fetches mappings once per note id, and displayLabel reads the
+    // mapping before the segment -- so note-updated alone leaves a stale label.
+    const mappingBroadcasts = broadcasts.filter((b) => b.channel === "speaker-mappings-updated");
+    assert.equal(mappingBroadcasts.length, 1);
+    assert.equal(mappingBroadcasts[0].payload.noteId, 1);
+    assert.ok(Array.isArray(mappingBroadcasts[0].payload.mappings));
+    assert.equal(broadcasts.filter((b) => b.channel === "note-updated").length, 1);
+  });
+});
+
+test("POST /v1/speakers/rename with profile_wide renames across the library", async () => {
+  const { ipc, calls, broadcasts } = renameIpc();
+  await withBridge(ipc, async ({ request }) => {
+    const res = await request("POST", "/v1/speakers/rename", {
+      body: { note_id: 1, speaker_id: "speaker_0", display_name: "Priya", profile_wide: true },
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(calls.renameProfile, [[42, "Priya"]]);
+    assert.equal(calls.retroactive, 0, "the sweep cannot reach already-named notes; do not run it");
+    assert.equal(calls.upsertProfile, 0, "an agent call must not re-blend a voiceprint");
+    assert.equal(res.json.data.notes_changed, 2, "the caller must be told the blast radius");
+    assert.equal(broadcasts.filter((b) => b.channel === "speaker-mappings-updated").length, 2);
+  });
+});
+
+// The existing IPC path's profile branch is conditional on an embedding being
+// available, so reusing it would silently downgrade profile_wide to note-only.
+test("POST /v1/speakers/rename refuses profile_wide when the speaker has no profile", async () => {
+  const { ipc, calls } = renameIpc({ db: { getSpeakerMappings: () => [] } });
+  await withBridge(ipc, async ({ request }) => {
+    const res = await request("POST", "/v1/speakers/rename", {
+      body: { note_id: 1, speaker_id: "speaker_0", display_name: "Priya", profile_wide: true },
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.json.error.message, /profile/i);
+    assert.deepEqual(calls.renameNote, [], "it must not quietly fall back to a note-only rename");
+  });
+});
+
+test("POST /v1/speakers/rename validates its arguments", async () => {
+  const { ipc, calls } = renameIpc();
+  await withBridge(ipc, async ({ request }) => {
+    const bad = [
+      {},
+      { speaker_id: "speaker_0", display_name: "Priya" },
+      { note_id: 1, display_name: "Priya" },
+      { note_id: 1, speaker_id: "speaker_0" },
+      { note_id: "one", speaker_id: "speaker_0", display_name: "Priya" },
+      { note_id: 1.5, speaker_id: "speaker_0", display_name: "Priya" },
+      { note_id: 1, speaker_id: "", display_name: "Priya" },
+      { note_id: 1, speaker_id: "speaker_0", display_name: "   " },
+      { note_id: 1, speaker_id: 7, display_name: "Priya" },
+    ];
+    for (const body of bad) {
+      const res = await request("POST", "/v1/speakers/rename", { body });
+      assert.equal(res.status, 400, `body ${JSON.stringify(body)} should be refused`);
+    }
+    assert.deepEqual(calls.renameNote, [], "a refused request must write nothing");
+  });
+});
+
+test("POST /v1/speakers/rename reports an unknown note as not found", async () => {
+  const { ipc } = renameIpc();
+  await withBridge(ipc, async ({ request }) => {
+    // A missing route also answers 404, so pin the live route first.
+    const live = await request("POST", "/v1/speakers/rename", {
+      body: { note_id: 1, speaker_id: "speaker_0", display_name: "Priya" },
+    });
+    assert.equal(live.status, 200, "precondition: the route exists");
+
+    const res = await request("POST", "/v1/speakers/rename", {
+      body: { note_id: 99, speaker_id: "speaker_0", display_name: "Priya" },
+    });
+    assert.equal(res.status, 404);
+    assert.match(res.json.error.message, /99/);
+  });
+});

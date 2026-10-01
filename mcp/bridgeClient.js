@@ -19,7 +19,7 @@ const TIMED_OUT = "OpenWhispr did not respond in time. Try again.";
 // Without this check an older bridge answers /v1/notes/list through its
 // param("GET","/v1/notes/","","id") route, parses "list" as an id, and the agent is told
 // "Invalid note id" -- which reads as a broken tool rather than an out-of-date app.
-const REQUIRED_MCP_CAPABILITY = 2;
+const REQUIRED_MCP_CAPABILITY = 3;
 const TOO_OLD =
   "This version of OpenWhispr does not support the MCP server. Update OpenWhispr and try again.";
 

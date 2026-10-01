@@ -20,7 +20,7 @@ function startFakeBridge(handler) {
       // The handshake itself is covered in mcpBridgeClient.test.js.
       if (req.url === "/v1/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ data: { ok: true, version: 1, mcp: 2 } }));
+        res.end(JSON.stringify({ data: { ok: true, version: 1, mcp: 3 } }));
         return;
       }
       seen.push({ url: req.url, method: req.method });
