@@ -712,7 +712,12 @@ test("POST /v1/speakers/rename refuses a display_name that could forge prompt st
 test("POST /v1/speakers/rename accepts an ordinary name with punctuation and accents", async () => {
   const { ipc, calls } = renameIpc();
   await withBridge(ipc, async ({ request }) => {
-    for (const display_name of ["Priya", "Paul Lucian Ursache", "José O'Brien-Smith", "Dr. Chayan"]) {
+    for (const display_name of [
+      "Priya",
+      "Paul Lucian Ursache",
+      "José O'Brien-Smith",
+      "Dr. Chayan",
+    ]) {
       const res = await request("POST", "/v1/speakers/rename", {
         body: { note_id: 1, speaker_id: "speaker_0", display_name },
       });

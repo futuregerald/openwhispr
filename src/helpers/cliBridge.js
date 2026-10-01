@@ -594,7 +594,9 @@ class CliBridge {
         if (SPEAKER_NAME_CONTROL_CHARS.test(displayName)) {
           throw validationError("display_name must be a single line with no control characters");
         }
-        if (CONTEXT_BLOCK_MARKERS.some((marker) => new RegExp(marker.source, "i").test(displayName))) {
+        if (
+          CONTEXT_BLOCK_MARKERS.some((marker) => new RegExp(marker.source, "i").test(displayName))
+        ) {
           throw validationError("display_name must not contain prompt block markers");
         }
 
