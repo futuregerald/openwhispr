@@ -530,9 +530,7 @@ class CliBridge {
       exact("GET", "/v1/context/get", () => ({ data: db.getUserContext() })),
       exact("POST", "/v1/context/set", ({ body }) => {
         const patch = {};
-        const rejected = Object.keys(body || {}).filter(
-          (key) => !USER_CONTEXT_KEYS.includes(key)
-        );
+        const rejected = Object.keys(body || {}).filter((key) => !USER_CONTEXT_KEYS.includes(key));
         if (rejected.length) {
           throw validationError(
             `/v1/context/set accepts only ${USER_CONTEXT_KEYS.join(", ")}. Rejected: ${rejected.join(", ")}.`
@@ -579,9 +577,7 @@ class CliBridge {
         };
 
         if (body.profile_wide === true) {
-          const mapping = db
-            .getSpeakerMappings(noteId)
-            .find((row) => row.speaker_id === speakerId);
+          const mapping = db.getSpeakerMappings(noteId).find((row) => row.speaker_id === speakerId);
           const profileId = mapping?.profile_id ?? null;
           if (profileId == null) {
             throw validationError(

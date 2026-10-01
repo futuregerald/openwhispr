@@ -179,7 +179,10 @@ test("context still cannot close its own fence", () => {
     "general"
   );
   assert.equal(block.match(/END OF USER CONTEXT\./g).length, 1);
-  assert.ok(block.trimEnd().endsWith("END OF USER CONTEXT."), "the real fence must close the block");
+  assert.ok(
+    block.trimEnd().endsWith("END OF USER CONTEXT."),
+    "the real fence must close the block"
+  );
 });
 
 // The trap: neutralising the ASSEMBLED block would eat the function's own

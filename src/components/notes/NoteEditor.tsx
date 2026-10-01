@@ -193,7 +193,10 @@ export default function NoteEditor({
     }
     const result = await window.electronAPI?.retryPipelineStep?.(note.id, "retranscribe");
     if (result && result.success === false) {
-      toast({ title: t("notes.reprocess.failed", { error: result.error }), variant: "destructive" });
+      toast({
+        title: t("notes.reprocess.failed", { error: result.error }),
+        variant: "destructive",
+      });
     } else {
       toast({ title: t("notes.reprocess.started") });
     }
@@ -682,9 +685,7 @@ export default function NoteEditor({
       <div className="flex-1 min-w-0 flex flex-col">
         {preservedTranscriptKey && (
           <div className="mx-5 mt-3 rounded-md border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-[11px] leading-relaxed text-foreground/70">
-            <span className="font-medium text-foreground/80">
-              {t("pipeline.preserved.title")}
-            </span>{" "}
+            <span className="font-medium text-foreground/80">{t("pipeline.preserved.title")}</span>{" "}
             {t(`pipeline.preserved.${preservedTranscriptKey}`)}
           </div>
         )}

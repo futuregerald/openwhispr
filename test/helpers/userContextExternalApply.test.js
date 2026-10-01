@@ -122,9 +122,7 @@ test("the context subscription is registered and disposed in useSettings", () =>
 // --- the noteId guard, driven rather than text-matched ---------------------
 // A text assertion that the guard EXISTS survived deleting it, because the
 // assertion matched the wiring and not the behaviour. This drives it.
-const {
-  speakerMappingsForBroadcast,
-} = require("../../src/helpers/speakerMappingBroadcast.js");
+const { speakerMappingsForBroadcast } = require("../../src/helpers/speakerMappingBroadcast.js");
 
 test("a mapping broadcast for a different note is ignored", () => {
   const payload = { noteId: 7, mappings: [{ speaker_id: "speaker_0", display_name: "Priya" }] };

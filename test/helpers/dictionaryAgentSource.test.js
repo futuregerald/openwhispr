@@ -49,12 +49,7 @@ test("adding words deletes none of the existing ones", () => {
 
   db.addDictionaryWords(["Qdrant"]);
 
-  assert.deepEqual([...db.getDictionary()].sort(), [
-    "Kubernetes",
-    "Packwerk",
-    "Pundit",
-    "Qdrant",
-  ]);
+  assert.deepEqual([...db.getDictionary()].sort(), ["Kubernetes", "Packwerk", "Pundit", "Qdrant"]);
 });
 
 test("a word the agent adds is recorded as agent, not as something the user typed", () => {

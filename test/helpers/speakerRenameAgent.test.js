@@ -25,11 +25,11 @@ Module._load = function patchedLoad(request, parent, isMain) {
 process.env.NODE_ENV = "test";
 
 const DatabaseManager = require("../../src/helpers/database.js");
-const { resolveSpeaker, buildSpeakerMappings } = require("../../src/helpers/transcriptFormatter.js");
 const {
-  reshredNote,
-  segmentRowsForNote,
-} = require("../../src/helpers/transcriptSegmentIndex.js");
+  resolveSpeaker,
+  buildSpeakerMappings,
+} = require("../../src/helpers/transcriptFormatter.js");
+const { reshredNote, segmentRowsForNote } = require("../../src/helpers/transcriptSegmentIndex.js");
 
 function freshDatabase() {
   requireSqlite();
@@ -182,7 +182,10 @@ function twoMappedNotes(db) {
   const first = insertNote(db, NAMED_SEGMENTS, "Standup");
   const second = insertNote(db, NAMED_SEGMENTS, "Planning");
   db.setSpeakerMapping(first, "speaker_0", profile.id, "Priyanka", { origin: "manual" });
-  db.setSpeakerMapping(second, "speaker_0", profile.id, "Priyanka", { origin: "auto", confidence: 0.8 });
+  db.setSpeakerMapping(second, "speaker_0", profile.id, "Priyanka", {
+    origin: "auto",
+    confidence: 0.8,
+  });
   return { profile, first, second };
 }
 
@@ -194,7 +197,11 @@ test("a profile-wide rename reaches a note that already had the old name", () =>
 
   assert.equal(result.notesChanged, 2);
   for (const noteId of [first, second]) {
-    assert.equal(exportedName(db, noteId, "speaker_0"), "Priya", `note ${noteId} kept the old name`);
+    assert.equal(
+      exportedName(db, noteId, "speaker_0"),
+      "Priya",
+      `note ${noteId} kept the old name`
+    );
     const row = db.getSpeakerMappings(noteId).find((m) => m.speaker_id === "speaker_0");
     assert.equal(row.display_name, "Priya");
     assert.equal(row.origin, "agent");
