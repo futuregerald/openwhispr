@@ -338,3 +338,23 @@ test("nothing is persisted once the timer has already fired", () => {
   assert.equal(scheduler.persistPendingForNextLaunch(), 0, "the enqueue already happened");
   assert.equal(inserted.length, 0);
 });
+
+test("a refused insert at teardown is not counted as persisted", () => {
+  const clock = createFakeTimers();
+  const scheduler = new NotesRegenerationScheduler({
+    db: { getNote: () => generatedNote(7) },
+    backgroundJobQueue: { enqueueKind: () => true },
+    hashOf,
+    delayMs: DELAY_MS,
+    timers: clock.timers,
+    jobStore: { insert: () => null },
+  });
+
+  scheduler.schedule(7);
+
+  assert.equal(
+    scheduler.persistPendingForNextLaunch(),
+    0,
+    "a key already queued is refused; counting it would make the log claim a write that never happened"
+  );
+});

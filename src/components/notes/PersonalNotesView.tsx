@@ -391,7 +391,7 @@ export default function PersonalNotesView({
       setLocalContent("");
       setLocalEnhancedContent(null);
     }
-  }, [activeNote]);
+  }, [activeNote, flushPendingEnhancedSave]);
 
   const debouncedSave = useCallback((noteId: number, title: string, content: string) => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
@@ -411,9 +411,9 @@ export default function PersonalNotesView({
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-      if (enhancedSaveTimeoutRef.current) clearTimeout(enhancedSaveTimeoutRef.current);
+      flushPendingEnhancedSave();
     };
-  }, []);
+  }, [flushPendingEnhancedSave]);
 
   const handleTitleChange = useCallback(
     (title: string) => {

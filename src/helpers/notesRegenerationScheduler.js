@@ -56,8 +56,12 @@ class NotesRegenerationScheduler {
     for (const noteId of this._timerByNoteId.keys()) {
       try {
         if (!this._decide(noteId).regenerate) continue;
-        this._jobStore.insert(`regenerate-notes-${noteId}`, JOB_KINDS.REGENERATE_NOTES, { noteId });
-        persisted += 1;
+        const row = this._jobStore.insert(
+          `regenerate-notes-${noteId}`,
+          JOB_KINDS.REGENERATE_NOTES,
+          { noteId }
+        );
+        if (row) persisted += 1;
       } catch (error) {
         debugLogger.error("Could not persist a pending notes regeneration", {
           noteId,

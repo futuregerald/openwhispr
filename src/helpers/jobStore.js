@@ -77,6 +77,10 @@ class JobStore {
    * payload, so changing the row would promise something the run will not do.
    * Returns true when a row was widened.
    */
+  get(id) {
+    return this.db.prepare("SELECT * FROM jobs WHERE id = ?").get(id);
+  }
+
   widenPendingPayload(jobKey, extraPayload) {
     const existing = this.db
       .prepare(`SELECT * FROM jobs WHERE job_key = ? AND status = '${PENDING}'`)
@@ -91,7 +95,7 @@ class JobStore {
     }
 
     this.db
-      .prepare("UPDATE jobs SET payload = ? WHERE id = ?")
+      .prepare("UPDATE jobs SET payload = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
       .run(JSON.stringify({ ...payload, ...extraPayload }), existing.id);
     return true;
   }

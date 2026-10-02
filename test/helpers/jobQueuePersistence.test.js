@@ -41,8 +41,8 @@ function queueWith(store, run) {
         calls.push({ method: "run", noteId, ...options });
         if (run) await run(noteId, options);
       },
-      runSingleStep: async (noteId, step) => {
-        calls.push({ method: "runSingleStep", noteId, step });
+      runSingleStep: async (noteId, step, options) => {
+        calls.push({ method: "runSingleStep", noteId, step, options });
         if (run) await run(noteId, { step });
       },
     },
@@ -291,7 +291,7 @@ test("fromStep travels with the job", async () => {
 
   assert.deepEqual(calls, [
     { method: "run", noteId: 70, fromStep: "notes" },
-    { method: "runSingleStep", noteId: 71, step: "notes" },
+    { method: "runSingleStep", noteId: 71, step: "notes", options: { allowOverwrite: false } },
   ]);
 });
 
@@ -408,4 +408,53 @@ test("widening a key with no pending row reports that it did nothing", () => {
   const store = new JobStore(db);
 
   assert.equal(store.widenPendingPayload("regenerate-notes-7", { allowOverwrite: true }), false);
+});
+
+// The widen only matters if the job reads its payload when it RUNS. A closure
+// that captured the payload at enqueue time would run the narrower request and
+// nothing would say so: the row in the database would look correct, the user
+// would be told the overwrite started, and their notes would be left untouched.
+// So drive it through the real queue, not through JobStore alone.
+test("a job widened while it waits runs with the widened payload", async () => {
+  const db = new Database(":memory:");
+  db.exec(JOBS_DDL);
+  const store = new JobStore(db);
+  const { queue, calls } = queueWith(store);
+
+  let releaseFirstJob;
+  const firstJobBlocking = new Promise((resolve) => {
+    releaseFirstJob = resolve;
+  });
+  queue.enqueue("something-else", () => firstJobBlocking);
+
+  queue.enqueueKind("regenerate-notes-7", JOB_KINDS.REGENERATE_NOTES, { noteId: 7 });
+  assert.equal(
+    store.widenPendingPayload("regenerate-notes-7", { allowOverwrite: true }),
+    true,
+    "the row must still be pending while the queue is busy"
+  );
+
+  releaseFirstJob();
+  await queue.drain();
+
+  const regeneration = calls.find((call) => call.method === "runSingleStep");
+  assert.ok(regeneration, "the regeneration never ran");
+  assert.equal(
+    regeneration.options?.allowOverwrite,
+    true,
+    "the confirmed overwrite was dropped: the job ran with the payload captured at enqueue time"
+  );
+});
+
+test("a job nobody widened still runs with the payload it was queued with", async () => {
+  const db = new Database(":memory:");
+  db.exec(JOBS_DDL);
+  const store = new JobStore(db);
+  const { queue, calls } = queueWith(store);
+
+  queue.enqueueKind("regenerate-notes-7", JOB_KINDS.REGENERATE_NOTES, { noteId: 7 });
+  await queue.drain();
+
+  const regeneration = calls.find((call) => call.method === "runSingleStep");
+  assert.equal(regeneration.options?.allowOverwrite, false);
 });
