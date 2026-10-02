@@ -47,10 +47,7 @@ import ActionPicker from "./ActionPicker";
 import ActionManagerDialog from "./ActionManagerDialog";
 import AddNotesToFolderDialog from "./AddNotesToFolderDialog";
 import { useActionProcessing } from "../../hooks/useActionProcessing";
-import {
-  useSettingsStore,
-  selectResolvedNoteFormatting,
-} from "../../stores/settingsStore";
+import { useSettingsStore, selectResolvedNoteFormatting } from "../../stores/settingsStore";
 import { useFolderManagement } from "../../hooks/useFolderManagement";
 import { useNoteDragAndDrop } from "../../hooks/useNoteDragAndDrop";
 import { cn } from "../lib/utils";
@@ -216,9 +213,7 @@ export default function PersonalNotesView({
         const count = result?.count ?? 0;
         toast({
           title:
-            count > 0
-              ? t("notes.reprocessAll.queued", { count })
-              : t("notes.reprocessAll.none"),
+            count > 0 ? t("notes.reprocessAll.queued", { count }) : t("notes.reprocessAll.none"),
         });
       },
     });
@@ -325,6 +320,16 @@ export default function PersonalNotesView({
     await storeStopRecording();
   }, []);
 
+  const flushPendingEnhancedSave = useCallback(() => {
+    if (!enhancedSaveTimeoutRef.current) return;
+    clearTimeout(enhancedSaveTimeoutRef.current);
+    enhancedSaveTimeoutRef.current = null;
+    const noteId = activeNoteRef.current;
+    const content = localEnhancedContentRef.current;
+    if (noteId == null || content == null) return;
+    void window.electronAPI?.updateNote?.(noteId, { enhanced_content: content });
+  }, []);
+
   useEffect(() => {
     if (activeNote && activeNote.id !== activeNoteRef.current) {
       // --- Switching notes ---
@@ -370,7 +375,13 @@ export default function PersonalNotesView({
       if (activeNote.title !== localTitleRef.current) setLocalTitle(activeNote.title);
       if (activeNote.content !== localContentRef.current) setLocalContent(activeNote.content);
       if ((activeNote.enhanced_content ?? null) !== localEnhancedContentRef.current) {
-        setLocalEnhancedContent(activeNote.enhanced_content ?? null);
+        // An unflushed edit to the notes is the user's; adopting an external value here
+        // would put it in the editor and the next keystroke would persist it over them.
+        if (enhancedSaveTimeoutRef.current) {
+          flushPendingEnhancedSave();
+        } else {
+          setLocalEnhancedContent(activeNote.enhanced_content ?? null);
+        }
       }
     } else if (!activeNote) {
       if (saveTimeoutRef.current) {

@@ -3,6 +3,7 @@ const { JOB_KINDS } = require("./jobDispatch");
 const { shouldRegenerateNotes } = require("./notesRegenerationPolicy.js");
 
 const NOTES_REGENERATION_DELAY_MS = 60000;
+const MAX_REARMS = 10;
 
 class NotesRegenerationScheduler {
   constructor({
@@ -20,6 +21,7 @@ class NotesRegenerationScheduler {
     this._delayMs = delayMs;
     this._timers = timers;
     this._timerByNoteId = new Map();
+    this._rearmsByNoteId = new Map();
   }
 
   get pendingCount() {
@@ -27,12 +29,15 @@ class NotesRegenerationScheduler {
   }
 
   schedule(noteId) {
+    const rearms = this._rearmsByNoteId.get(noteId) ?? 0;
     this.cancel(noteId);
+    if (rearms > 0) this._rearmsByNoteId.set(noteId, rearms);
     const timer = this._timers.setTimeout(() => this._fire(noteId), this._delayMs);
     this._timerByNoteId.set(noteId, timer);
   }
 
   cancel(noteId) {
+    this._rearmsByNoteId.delete(noteId);
     const timer = this._timerByNoteId.get(noteId);
     if (timer === undefined) return;
     this._timers.clearTimeout(timer);
@@ -44,6 +49,7 @@ class NotesRegenerationScheduler {
       this._timers.clearTimeout(timer);
     }
     this._timerByNoteId.clear();
+    this._rearmsByNoteId.clear();
   }
 
   _fire(noteId) {
@@ -83,7 +89,7 @@ class NotesRegenerationScheduler {
       queued = this._backgroundJobQueue.enqueueKind(
         `regenerate-notes-${noteId}`,
         JOB_KINDS.REGENERATE_NOTES,
-        { noteId, onlyIfGeneratedHash: generatedHash }
+        { noteId }
       );
     } catch (error) {
       debugLogger.error("Could not enqueue notes regeneration", {
@@ -93,14 +99,26 @@ class NotesRegenerationScheduler {
       return;
     }
 
-    if (queued) return;
+    if (queued) {
+      this._rearmsByNoteId.delete(noteId);
+      return;
+    }
+
+    const rearms = (this._rearmsByNoteId.get(noteId) ?? 0) + 1;
+    if (rearms > MAX_REARMS) {
+      this._rearmsByNoteId.delete(noteId);
+      debugLogger.warn("Giving up re-arming notes regeneration", { noteId, rearms: MAX_REARMS });
+      return;
+    }
 
     debugLogger.info("Notes regeneration already in flight; re-arming", {
       noteId,
       delayMs: this._delayMs,
+      rearms,
     });
+    this._rearmsByNoteId.set(noteId, rearms);
     this.schedule(noteId);
   }
 }
 
-module.exports = { NotesRegenerationScheduler, NOTES_REGENERATION_DELAY_MS };
+module.exports = { NotesRegenerationScheduler, NOTES_REGENERATION_DELAY_MS, MAX_REARMS };

@@ -1,5 +1,5 @@
 const fs = require("fs");
-const crypto = require("crypto");
+const { digestGeneratedNotes } = require("./generatedNotesDigest");
 const debugLogger = require("./debugLogger");
 const { computeTranscriptDiff } = require("./transcriptDiff");
 const { retranscribeNoteTranscript } = require("./retranscribeNoteTranscript");
@@ -209,6 +209,7 @@ class PostCallPipelineManager {
     inference,
     convertToWav,
     resolveModelContext = null,
+    notesRegenerationScheduler = null,
   }) {
     this._broadcast = broadcast;
     this._db = databaseManager;
@@ -216,6 +217,7 @@ class PostCallPipelineManager {
     this._diarization = diarizationManager;
     this._inference = inference;
     this._convertToWav = convertToWav;
+    this._notesRegenerationScheduler = notesRegenerationScheduler;
     // Absent in the tests that construct this manager directly, and absent for
     // any caller with no local model available; both fall back to one call.
     this._resolveModelContext = resolveModelContext;
@@ -284,13 +286,15 @@ class PostCallPipelineManager {
 
     // Step 4: Generate notes
     if (fromIndex <= 3) {
+      const transcriptGeneratedFrom = this._transcriptAsOfNow(noteId, transcript);
       const notesResult = await this._runStep(noteId, "notes", () =>
-        this._generateNotes(noteId, this._transcriptAsOfNow(noteId, transcript))
+        this._generateNotes(noteId, transcriptGeneratedFrom)
       );
       if (notesResult.error) return;
       if (notesResult.value) {
         this._db.updateNote(noteId, this._generatedNotesUpdate(notesResult.value));
         this._broadcastNoteUpdate(noteId);
+        this._rescheduleIfTranscriptMovedOn(noteId, transcriptGeneratedFrom);
       }
     }
 
@@ -313,7 +317,7 @@ class PostCallPipelineManager {
       if (
         !result.error &&
         result.value &&
-        this._storedNotesStillMatch(noteId, options.onlyIfGeneratedHash)
+        this._storedNotesAreStillMachineGenerated(noteId, options.allowOverwrite !== true)
       ) {
         this._db.updateNote(noteId, this._generatedNotesUpdate(result.value));
         this._broadcastNoteUpdate(noteId);
@@ -369,27 +373,50 @@ class PostCallPipelineManager {
     }
   }
 
-  _digestGeneratedNotes(value) {
-    return crypto.createHash("sha256").update(value).digest("hex");
+  setNotesRegenerationScheduler(scheduler) {
+    this._notesRegenerationScheduler = scheduler;
+  }
+
+  _rescheduleIfTranscriptMovedOn(noteId, transcriptGeneratedFrom) {
+    if (!this._notesRegenerationScheduler) return;
+    try {
+      if (this._transcriptAsOfNow(noteId, transcriptGeneratedFrom) === transcriptGeneratedFrom) {
+        return;
+      }
+      debugLogger.info(
+        "Pipeline: the transcript changed while notes were generating, scheduling a regeneration",
+        { noteId },
+        "meeting"
+      );
+      this._notesRegenerationScheduler.schedule(noteId);
+    } catch (err) {
+      debugLogger.warn(
+        "Pipeline: could not compare the transcript after generating notes",
+        { noteId, error: err.message },
+        "meeting"
+      );
+    }
   }
 
   _generatedNotesUpdate(value) {
     return {
       enhanced_content: value,
-      enhanced_generated_hash: this._digestGeneratedNotes(value),
+      enhanced_generated_hash: digestGeneratedNotes(value),
     };
   }
 
-  _storedNotesStillMatch(noteId, onlyIfGeneratedHash) {
-    if (!onlyIfGeneratedHash) return true;
+  _storedNotesAreStillMachineGenerated(noteId, requireMachineGenerated) {
+    if (!requireMachineGenerated) return true;
     try {
-      const stored = this._db.getNote(noteId)?.enhanced_content;
-      if (stored && this._digestGeneratedNotes(stored) === onlyIfGeneratedHash) {
+      const stored = this._db.getNote(noteId);
+      const content = stored?.enhanced_content;
+      if (!content) return true;
+      if (digestGeneratedNotes(content) === stored.enhanced_generated_hash) {
         return true;
       }
       debugLogger.info(
-        "Pipeline: keeping the stored notes, they changed while the model was running",
-        { noteId, reason: "user-edited-during-generation" },
+        "Pipeline: keeping the stored notes, they are not the ones this app generated",
+        { noteId, reason: "notes-not-machine-generated" },
         "meeting"
       );
       return false;

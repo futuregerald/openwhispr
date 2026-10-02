@@ -484,7 +484,7 @@ declare global {
       regenerateNotes?: (
         noteId: number,
         meetingTypeId?: number | null
-      ) => Promise<{ success: boolean }>;
+      ) => Promise<{ success: boolean; queued?: boolean }>;
       scheduleNotesRegeneration?: (noteId: number) => Promise<{ success: boolean }>;
       checkWhisperModelDownloaded?: (model: string) => Promise<{ downloaded: boolean }>;
       retryTranscription: (

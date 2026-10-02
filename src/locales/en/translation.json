@@ -30,7 +30,7 @@
       "autoProcess": "Auto-process meetings",
       "autoProcessDescription": "Automatically re-transcribe, generate title, and create notes after each meeting ends",
       "autoRegenerateNotes": "Auto-regenerate notes after renaming speakers",
-      "autoRegenerateNotesDescription": "Regenerate a meeting's notes 60 seconds after the last speaker rename. Notes you have edited by hand are left alone."
+      "autoRegenerateNotesDescription": "Regenerate a meeting's notes 60 seconds after the last speaker rename. Only notes OpenWhispr generated are replaced — anything you have edited by hand is left alone."
     },
     "meetingDetection": {
       "title": "Meeting detection",
@@ -2144,6 +2144,8 @@
     },
     "regenerateNotes": {
       "label": "Regenerate notes",
+      "confirm": "Overwrite notes?",
+      "alreadyRunning": "Notes are already being regenerated.",
       "title": "Regenerate notes from the current transcript",
       "started": "Regenerating notes — it runs in the background."
     },

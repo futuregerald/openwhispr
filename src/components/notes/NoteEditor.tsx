@@ -203,10 +203,26 @@ export default function NoteEditor({
     }
   }, [note.id, t, toast]);
 
-  const handleRegenerateNotesClick = useCallback(async () => {
-    await window.electronAPI?.regenerateNotes?.(note.id);
-    toast({ title: t("notes.regenerateNotes.started") });
+  const [pendingRegenerateNotes, setPendingRegenerateNotes] = useState(false);
+
+  const startRegenerateNotes = useCallback(async () => {
+    setPendingRegenerateNotes(false);
+    const result = await window.electronAPI?.regenerateNotes?.(note.id);
+    toast({
+      title:
+        result?.queued === false
+          ? t("notes.regenerateNotes.alreadyRunning")
+          : t("notes.regenerateNotes.started"),
+    });
   }, [note.id, t, toast]);
+
+  const handleRegenerateNotesClick = useCallback(() => {
+    if (note.enhanced_content && !pendingRegenerateNotes) {
+      setPendingRegenerateNotes(true);
+      return;
+    }
+    void startRegenerateNotes();
+  }, [note.enhanced_content, pendingRegenerateNotes, startRegenerateNotes]);
 
   const handleReprocessClick = useCallback(() => {
     if (note.enhanced_content && !pendingReprocess) {
@@ -925,11 +941,15 @@ export default function NoteEditor({
               {note.note_type === "meeting" && !isRecording && (
                 <button
                   className="shrink-0 h-6 flex items-center gap-1 px-1.5 rounded-md bg-foreground/4 dark:bg-white/5 text-foreground/50 dark:text-foreground/40 hover:text-foreground/70 hover:bg-foreground/8 dark:hover:text-foreground/60 dark:hover:bg-white/8 transition-colors duration-150 text-[11px] disabled:opacity-40 disabled:pointer-events-none"
-                  onClick={() => void handleRegenerateNotesClick()}
+                  onClick={handleRegenerateNotesClick}
+                  onBlur={() => setPendingRegenerateNotes(false)}
+                  disabled={isReprocessing}
                   title={t("notes.regenerateNotes.title")}
                 >
                   <RefreshCw size={11} />
-                  {t("notes.regenerateNotes.label")}
+                  {pendingRegenerateNotes
+                    ? t("notes.regenerateNotes.confirm")
+                    : t("notes.regenerateNotes.label")}
                 </button>
               )}
               {note.note_type === "meeting" &&

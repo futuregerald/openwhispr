@@ -29,7 +29,7 @@ const HANDLERS = {
 
   [JOB_KINDS.REGENERATE_NOTES]: ({ postCallPipelineManager }, payload) =>
     postCallPipelineManager.runSingleStep(payload.noteId, "notes", {
-      onlyIfGeneratedHash: payload.onlyIfGeneratedHash,
+      allowOverwrite: payload.allowOverwrite === true,
     }),
 
   [JOB_KINDS.REPAIR_NOTE_ATTRIBUTION]: ({ ipcHandlers }, payload) =>

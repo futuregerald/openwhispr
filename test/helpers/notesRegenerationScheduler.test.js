@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   NotesRegenerationScheduler,
   NOTES_REGENERATION_DELAY_MS,
+  MAX_REARMS,
 } = require("../../src/helpers/notesRegenerationScheduler.js");
 
 const DELAY_MS = NOTES_REGENERATION_DELAY_MS;
@@ -80,7 +81,7 @@ const createHarness = ({ notes = {}, enqueueResults = [], throwOnEnqueue = false
   return { scheduler, clock, enqueued };
 };
 
-test("one rename enqueues one regeneration carrying the hash it matched", () => {
+test("one rename enqueues one regeneration, with no waiver of the provenance check", () => {
   const { scheduler, clock, enqueued } = createHarness({ notes: { 7: generatedNote(7) } });
 
   assert.equal(NOTES_REGENERATION_DELAY_MS, 60000, "the debounce Gerald asked for");
@@ -92,7 +93,7 @@ test("one rename enqueues one regeneration carrying the hash it matched", () => 
   assert.deepEqual(enqueued[0], {
     jobKey: "regenerate-notes-7",
     kind: "regenerate-notes",
-    payload: { noteId: 7, onlyIfGeneratedHash: hashOf("notes for 7") },
+    payload: { noteId: 7 },
   });
 });
 
@@ -236,4 +237,38 @@ test("the setting being off stops the fire-time enqueue", () => {
 
   assert.equal(enqueued.length, 0);
   assert.equal(scheduler.pendingCount, 0);
+});
+
+test("re-arming gives up rather than looping forever behind a stuck job", () => {
+  const { scheduler, clock, enqueued } = createHarness({
+    notes: { 7: generatedNote(7) },
+    enqueueResults: Array(MAX_REARMS + 5).fill(false),
+  });
+
+  scheduler.schedule(7);
+  for (let i = 0; i < MAX_REARMS + 5; i += 1) clock.tick(DELAY_MS);
+
+  assert.equal(enqueued.length, MAX_REARMS + 1, "one first attempt plus MAX_REARMS retries");
+  assert.equal(scheduler.pendingCount, 0, "a permanently stuck job must not keep a timer alive");
+});
+
+test("an accepted enqueue clears the re-arm count, so a later rename gets its full allowance", () => {
+  const { scheduler, clock, enqueued } = createHarness({
+    notes: { 7: generatedNote(7) },
+    enqueueResults: [false, true, ...Array(MAX_REARMS + 2).fill(false)],
+  });
+
+  scheduler.schedule(7);
+  clock.tick(DELAY_MS);
+  clock.tick(DELAY_MS);
+  assert.equal(enqueued.length, 2, "re-armed once, then accepted");
+
+  scheduler.schedule(7);
+  for (let i = 0; i < MAX_REARMS + 2; i += 1) clock.tick(DELAY_MS);
+
+  assert.equal(
+    enqueued.length,
+    2 + MAX_REARMS + 1,
+    "the earlier refusal must not eat into a later rename's retries"
+  );
 });

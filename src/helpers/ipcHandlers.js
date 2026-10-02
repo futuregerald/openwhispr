@@ -3924,13 +3924,15 @@ class IPCHandlers {
         require("./modelManagerBridge").default.resolveModelContext(modelId),
     });
 
+    const { digestGeneratedNotes } = require("./generatedNotesDigest");
     const { NotesRegenerationScheduler } = require("./notesRegenerationScheduler");
     this.notesRegenerationScheduler = new NotesRegenerationScheduler({
       db: this.databaseManager,
       backgroundJobQueue: this.backgroundJobQueue,
-      hashOf: (value) => this.postCallPipelineManager._digestGeneratedNotes(value),
+      hashOf: digestGeneratedNotes,
       isEnabled: () => process.env.AUTO_REGENERATE_NOTES !== "false",
     });
+    this.postCallPipelineManager.setNotesRegenerationScheduler(this.notesRegenerationScheduler);
 
     this.backgroundJobQueue.usePersistence(this._jobStore, {
       postCallPipelineManager: this.postCallPipelineManager,
@@ -7477,12 +7479,12 @@ class IPCHandlers {
       if (meetingTypeId !== undefined) {
         this.databaseManager.updateNote(noteId, { meeting_type_id: meetingTypeId });
       }
-      this.backgroundJobQueue.enqueueKind(
+      const queued = this.backgroundJobQueue.enqueueKind(
         `regenerate-notes-${noteId}`,
         JOB_KINDS.REGENERATE_NOTES,
-        { noteId }
+        { noteId, allowOverwrite: true }
       );
-      return { success: true };
+      return { success: true, queued };
     });
 
     ipcMain.handle("schedule-notes-regeneration", async (_event, noteId) => {
