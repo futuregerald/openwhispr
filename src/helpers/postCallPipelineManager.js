@@ -1,4 +1,5 @@
 const fs = require("fs");
+const crypto = require("crypto");
 const debugLogger = require("./debugLogger");
 const { computeTranscriptDiff } = require("./transcriptDiff");
 const { retranscribeNoteTranscript } = require("./retranscribeNoteTranscript");
@@ -288,7 +289,7 @@ class PostCallPipelineManager {
       );
       if (notesResult.error) return;
       if (notesResult.value) {
-        this._db.updateNote(noteId, { enhanced_content: notesResult.value });
+        this._db.updateNote(noteId, this._generatedNotesUpdate(notesResult.value));
         this._broadcastNoteUpdate(noteId);
       }
     }
@@ -296,7 +297,7 @@ class PostCallPipelineManager {
     this._emitStatus(noteId, "pipeline", "complete");
   }
 
-  async runSingleStep(noteId, step) {
+  async runSingleStep(noteId, step, options = {}) {
     const note = this._db.getNote(noteId);
     if (!note) {
       this._emitStatus(noteId, step, "error", "Note not found");
@@ -309,8 +310,12 @@ class PostCallPipelineManager {
       const result = await this._runStep(noteId, "notes", () =>
         this._generateNotes(noteId, transcript)
       );
-      if (!result.error && result.value) {
-        this._db.updateNote(noteId, { enhanced_content: result.value });
+      if (
+        !result.error &&
+        result.value &&
+        this._storedNotesStillMatch(noteId, options.onlyIfGeneratedHash)
+      ) {
+        this._db.updateNote(noteId, this._generatedNotesUpdate(result.value));
         this._broadcastNoteUpdate(noteId);
       }
     } else if (step === "classify") {
@@ -357,6 +362,40 @@ class PostCallPipelineManager {
     } catch (err) {
       debugLogger.warn(
         "Pipeline: title guard could not read the note, keeping the existing title",
+        { noteId, error: err.message },
+        "meeting"
+      );
+      return false;
+    }
+  }
+
+  _digestGeneratedNotes(value) {
+    return crypto.createHash("sha256").update(value).digest("hex");
+  }
+
+  _generatedNotesUpdate(value) {
+    return {
+      enhanced_content: value,
+      enhanced_generated_hash: this._digestGeneratedNotes(value),
+    };
+  }
+
+  _storedNotesStillMatch(noteId, onlyIfGeneratedHash) {
+    if (!onlyIfGeneratedHash) return true;
+    try {
+      const stored = this._db.getNote(noteId)?.enhanced_content;
+      if (stored && this._digestGeneratedNotes(stored) === onlyIfGeneratedHash) {
+        return true;
+      }
+      debugLogger.info(
+        "Pipeline: keeping the stored notes, they changed while the model was running",
+        { noteId, reason: "user-edited-during-generation" },
+        "meeting"
+      );
+      return false;
+    } catch (err) {
+      debugLogger.warn(
+        "Pipeline: could not re-read the notes before writing, keeping the stored ones",
         { noteId, error: err.message },
         "meeting"
       );

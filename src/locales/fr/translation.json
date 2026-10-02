@@ -28,7 +28,9 @@
     },
     "pipeline": {
       "autoProcess": "Traitement automatique des réunions",
-      "autoProcessDescription": "Re-transcrire automatiquement, générer un titre et créer des notes après chaque réunion"
+      "autoProcessDescription": "Re-transcrire automatiquement, générer un titre et créer des notes après chaque réunion",
+      "autoRegenerateNotes": "Régénérer les notes automatiquement après le renommage des intervenants",
+      "autoRegenerateNotesDescription": "Régénère les notes d'une réunion 60 secondes après le dernier renommage d'intervenant. Les notes que vous avez modifiées à la main ne sont pas touchées."
     },
     "meetingDetection": {
       "title": "Détection des réunions",
@@ -2101,6 +2103,11 @@
         "othersInCall_one": "{{count}} autre dans l'appel",
         "othersInCall_other": "{{count}} autres dans l'appel"
       }
+    },
+    "regenerateNotes": {
+      "label": "Régénérer les notes",
+      "title": "Régénérer les notes à partir de la transcription actuelle",
+      "started": "Régénération des notes — elle s'exécute en arrière-plan."
     },
     "reprocess": {
       "title": "Retraiter la réunion — régénérer les notes à partir de l'enregistrement",

@@ -15,6 +15,7 @@ import {
   Check,
   Share2,
   RotateCcw,
+  RefreshCw,
 } from "lucide-react";
 import { useToast } from "../ui/useToast";
 import {
@@ -200,6 +201,11 @@ export default function NoteEditor({
     } else {
       toast({ title: t("notes.reprocess.started") });
     }
+  }, [note.id, t, toast]);
+
+  const handleRegenerateNotesClick = useCallback(async () => {
+    await window.electronAPI?.regenerateNotes?.(note.id);
+    toast({ title: t("notes.regenerateNotes.started") });
   }, [note.id, t, toast]);
 
   const handleReprocessClick = useCallback(() => {
@@ -492,8 +498,16 @@ export default function NoteEditor({
         return next;
       });
       await persistDisplaySegments(nextSegments, !!diarizedSegments || !isRecording);
+      await window.electronAPI?.scheduleNotesRegeneration?.(note.id);
     },
-    [diarizedSegments, displaySegments, isRecording, persistDisplaySegments, speakerMappings]
+    [
+      diarizedSegments,
+      displaySegments,
+      isRecording,
+      note.id,
+      persistDisplaySegments,
+      speakerMappings,
+    ]
   );
 
   const handleMapSpeaker = useCallback(
@@ -733,7 +747,7 @@ export default function NoteEditor({
                   (window as any).electronAPI?.setNoteMeetingType?.(note.id, typeId);
                 }}
                 onRegenerateNotes={(typeId) => {
-                  (window as any).electronAPI?.regenerateNotes?.(note.id, typeId);
+                  window.electronAPI?.regenerateNotes?.(note.id, typeId);
                 }}
                 onCreateNew={() => setShowTypeEditor(true)}
               />
@@ -907,6 +921,16 @@ export default function NoteEditor({
                     </button>
                   )}
                 </div>
+              )}
+              {note.note_type === "meeting" && !isRecording && (
+                <button
+                  className="shrink-0 h-6 flex items-center gap-1 px-1.5 rounded-md bg-foreground/4 dark:bg-white/5 text-foreground/50 dark:text-foreground/40 hover:text-foreground/70 hover:bg-foreground/8 dark:hover:text-foreground/60 dark:hover:bg-white/8 transition-colors duration-150 text-[11px] disabled:opacity-40 disabled:pointer-events-none"
+                  onClick={() => void handleRegenerateNotesClick()}
+                  title={t("notes.regenerateNotes.title")}
+                >
+                  <RefreshCw size={11} />
+                  {t("notes.regenerateNotes.label")}
+                </button>
               )}
               {note.note_type === "meeting" &&
                 !isRecording &&

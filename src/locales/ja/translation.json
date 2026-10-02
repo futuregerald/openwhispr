@@ -28,7 +28,9 @@
     },
     "pipeline": {
       "autoProcess": "会議の自動処理",
-      "autoProcessDescription": "各会議終了後に自動的に再文字起こし、タイトル生成、ノート作成を行います"
+      "autoProcessDescription": "各会議終了後に自動的に再文字起こし、タイトル生成、ノート作成を行います",
+      "autoRegenerateNotes": "話者名の変更後にノートを自動で再生成",
+      "autoRegenerateNotesDescription": "最後に話者名を変更した60秒後に、その会議のノートを再生成します。手動で編集したノートはそのまま残します。"
     },
     "meetingDetection": {
       "title": "会議の検出",
@@ -2061,6 +2063,11 @@
       "addContact": "連絡先を追加",
       "save": "保存",
       "cancel": "キャンセル"
+    },
+    "regenerateNotes": {
+      "label": "ノートを再生成",
+      "title": "現在の文字起こしからノートを再生成します",
+      "started": "ノートを再生成しています — バックグラウンドで実行されます。"
     },
     "reprocess": {
       "title": "会議を再処理 — 録音からメモを再生成",

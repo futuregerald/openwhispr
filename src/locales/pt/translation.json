@@ -28,7 +28,9 @@
     },
     "pipeline": {
       "autoProcess": "Processar reuniões automaticamente",
-      "autoProcessDescription": "Re-transcrever automaticamente, gerar título e criar notas após cada reunião"
+      "autoProcessDescription": "Re-transcrever automaticamente, gerar título e criar notas após cada reunião",
+      "autoRegenerateNotes": "Regenerar as notas automaticamente após renomear participantes",
+      "autoRegenerateNotesDescription": "Regenera as notas de uma reunião 60 segundos após a última renomeação de participante. As notas que você editou à mão não são alteradas."
     },
     "meetingDetection": {
       "title": "Detecção de reuniões",
@@ -2061,6 +2063,11 @@
         "othersInCall_one": "{{count}} outra pessoa na chamada",
         "othersInCall_other": "{{count}} outras pessoas na chamada"
       }
+    },
+    "regenerateNotes": {
+      "label": "Regenerar notas",
+      "title": "Regenerar as notas a partir da transcrição atual",
+      "started": "Regeneração das notas iniciada — executa em segundo plano."
     },
     "reprocess": {
       "title": "Reprocessar reunião — regenerar notas a partir da gravação",

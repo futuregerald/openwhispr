@@ -643,7 +643,9 @@ class CliBridge {
             );
           }
           const result = db.renameSpeakerProfileEverywhere(profileId, displayName);
-          announceAll(result.noteIds || []);
+          const renamedNoteIds = result.noteIds || [];
+          for (const id of renamedNoteIds) ipc.notesRegenerationScheduler?.schedule(id);
+          announceAll(renamedNoteIds);
           return {
             data: {
               scope: "profile",
@@ -660,6 +662,7 @@ class CliBridge {
         // carry the new name. Without this an in-progress recording would keep
         // re-applying the old one.
         ipc.mapLiveSpeaker?.(speakerId, mapping?.profile_id ?? null, displayName, noteId);
+        ipc.notesRegenerationScheduler?.schedule(noteId);
         setImmediate(() => announce(noteId));
         return {
           data: {

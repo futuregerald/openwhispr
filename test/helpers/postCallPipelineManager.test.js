@@ -2264,3 +2264,129 @@ test("a speaker cannot forge a user-context block in the cloud notes call", asyn
   assert.ok(!notesCall.text.includes("USER CONTEXT ("), "open marker survived");
   assert.match(notesCall.opts.systemPrompt, /Molly Finn is the PM\./);
 });
+
+// The notes the pipeline generates are stamped with a hash of exactly what was
+// written, so a later auto-regeneration can tell its own output from the user's
+// edits. These cases pin the two write sites against each other and against the
+// policy that reads the column.
+
+const nodeCrypto = require("node:crypto");
+const sha256Hex = (value) => nodeCrypto.createHash("sha256").update(value).digest("hex");
+const GENERATED_NOTES = "## Summary\nTest notes";
+
+function generatedHashMocks({ enhancedContent = null } = {}) {
+  const mocks = createMocks();
+  const state = { enhancedContent };
+  mocks.state = state;
+  mocks.writes = [];
+  mocks.databaseManager.getNote = (id) => ({
+    id,
+    title: null,
+    transcript: JSON.stringify([
+      { text: "hello", speaker: "speaker_0", source: "system", timestamp: 0 },
+    ]),
+    system_audio_path: null,
+    mic_audio_path: null,
+    meeting_type_id: null,
+    audio_duration_seconds: 300,
+    enhanced_content: state.enhancedContent,
+  });
+  mocks.databaseManager.updateNote = (id, updates) => {
+    mocks.writes.push(updates);
+    return { success: true };
+  };
+  return mocks;
+}
+
+async function runGeneratedHashNotesStep(mocks, options) {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  process.env.NOTE_FORMATTING_PROVIDER = "openai";
+  process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+  try {
+    const manager = buildManager(PostCallPipelineManager, mocks);
+    await manager.runSingleStep(1, "notes", options);
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+}
+
+test("a full run stamps the notes it generated with their own hash", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = generatedHashMocks();
+
+  process.env.NOTE_FORMATTING_PROVIDER = "openai";
+  process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+  try {
+    await buildManager(PostCallPipelineManager, mocks).run(1);
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+
+  const write = mocks.writes.find((w) => w.enhanced_content !== undefined);
+  assert.ok(write, "the full run must have written notes");
+  assert.equal(write.enhanced_generated_hash, sha256Hex(write.enhanced_content));
+});
+
+// The round trip is the case that matters: hashing the transcript instead of the
+// generated notes still writes a plausible-looking hash, and only reading it back
+// through the real digest and the real policy catches the drift.
+test("the hash the pipeline writes round-trips through the regeneration policy", async () => {
+  const mocks = generatedHashMocks();
+  await runGeneratedHashNotesStep(mocks);
+
+  const write = mocks.writes.find((w) => w.enhanced_content !== undefined);
+  assert.ok(write, "runSingleStep must have written notes");
+
+  const { shouldRegenerateNotes } = await import("../../src/helpers/notesRegenerationPolicy.js");
+  const decision = shouldRegenerateNotes({
+    enabled: true,
+    enhancedContent: write.enhanced_content,
+    generatedHash: write.enhanced_generated_hash,
+    hashOf: sha256Hex,
+  });
+  assert.deepEqual(decision, { regenerate: true, reason: "regenerate" });
+});
+
+test("onlyIfGeneratedHash still matching at write time lets the write through", async () => {
+  const mocks = generatedHashMocks({ enhancedContent: GENERATED_NOTES });
+  await runGeneratedHashNotesStep(mocks, { onlyIfGeneratedHash: sha256Hex(GENERATED_NOTES) });
+
+  const writes = mocks.writes.filter((w) => w.enhanced_content !== undefined);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].enhanced_generated_hash, sha256Hex(writes[0].enhanced_content));
+});
+
+test("notes edited while the model was running are never overwritten", async () => {
+  const mocks = generatedHashMocks({ enhancedContent: GENERATED_NOTES });
+  const authorisedHash = sha256Hex(GENERATED_NOTES);
+  mocks.inference.processText = async () => {
+    mocks.state.enhancedContent = "## Summary\nmy own wording";
+    return GENERATED_NOTES;
+  };
+
+  await runGeneratedHashNotesStep(mocks, { onlyIfGeneratedHash: authorisedHash });
+
+  assert.equal(
+    mocks.writes.filter((w) => w.enhanced_content !== undefined).length,
+    0,
+    "the hand edit was overwritten"
+  );
+  const statuses = mocks.events
+    .filter((e) => e.channel === "post-call-pipeline-status" && e.step === "notes")
+    .map((e) => e.status);
+  assert.ok(statuses.includes("complete"), `notes did not complete: ${statuses.join(",")}`);
+});
+
+test("the manual path has no hash to honour and writes unconditionally", async () => {
+  const mocks = generatedHashMocks({ enhancedContent: GENERATED_NOTES });
+  mocks.inference.processText = async () => {
+    mocks.state.enhancedContent = "## Summary\nmy own wording";
+    return GENERATED_NOTES;
+  };
+
+  await runGeneratedHashNotesStep(mocks);
+
+  assert.equal(mocks.writes.filter((w) => w.enhanced_content !== undefined).length, 1);
+});

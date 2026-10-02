@@ -1249,6 +1249,9 @@ function performSyncTeardown() {
   if (ipcHandlers?.backgroundJobQueue) {
     ipcHandlers.backgroundJobQueue.cancelPending();
   }
+  if (ipcHandlers?.notesRegenerationScheduler) {
+    ipcHandlers.notesRegenerationScheduler.stopAll();
+  }
   if (ipcHandlers) ipcHandlers._cleanupTextEditMonitor();
   if (textEditMonitor) textEditMonitor.stopMonitoring();
   if (updateManager) updateManager.cleanup();

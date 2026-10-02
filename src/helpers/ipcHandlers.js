@@ -3924,6 +3924,14 @@ class IPCHandlers {
         require("./modelManagerBridge").default.resolveModelContext(modelId),
     });
 
+    const { NotesRegenerationScheduler } = require("./notesRegenerationScheduler");
+    this.notesRegenerationScheduler = new NotesRegenerationScheduler({
+      db: this.databaseManager,
+      backgroundJobQueue: this.backgroundJobQueue,
+      hashOf: (value) => this.postCallPipelineManager._digestGeneratedNotes(value),
+      isEnabled: () => process.env.AUTO_REGENERATE_NOTES !== "false",
+    });
+
     this.backgroundJobQueue.usePersistence(this._jobStore, {
       postCallPipelineManager: this.postCallPipelineManager,
       ipcHandlers: this,
@@ -7356,6 +7364,7 @@ class IPCHandlers {
           origin: "manual",
         });
         liveSpeakerIdentifier.mapSpeaker(speakerId, resolvedProfileId, displayName, noteId);
+        this.notesRegenerationScheduler?.schedule(noteId);
         return { success: true, profileId: resolvedProfileId };
       }
     );
@@ -7476,6 +7485,11 @@ class IPCHandlers {
       return { success: true };
     });
 
+    ipcMain.handle("schedule-notes-regeneration", async (_event, noteId) => {
+      this.notesRegenerationScheduler?.schedule(noteId);
+      return { success: true };
+    });
+
     // ── Meeting types CRUD ───────────────────────────────────────────────
 
     ipcMain.handle("get-meeting-types", async () => this.databaseManager.getMeetingTypes());
@@ -7503,6 +7517,15 @@ class IPCHandlers {
 
     ipcMain.handle("set-auto-post-call-pipeline", async (_event, enabled) => {
       this._autoPostCallPipelineDisabled = !enabled;
+      return { success: true };
+    });
+
+    ipcMain.handle("set-auto-regenerate-notes", async (_event, enabled) => {
+      if (enabled) {
+        this._syncStartupEnv({}, ["AUTO_REGENERATE_NOTES"]);
+      } else {
+        this._syncStartupEnv({ AUTO_REGENERATE_NOTES: "false" });
+      }
       return { success: true };
     });
 

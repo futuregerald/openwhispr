@@ -28,7 +28,9 @@ const HANDLERS = {
     ),
 
   [JOB_KINDS.REGENERATE_NOTES]: ({ postCallPipelineManager }, payload) =>
-    postCallPipelineManager.runSingleStep(payload.noteId, "notes"),
+    postCallPipelineManager.runSingleStep(payload.noteId, "notes", {
+      onlyIfGeneratedHash: payload.onlyIfGeneratedHash,
+    }),
 
   [JOB_KINDS.REPAIR_NOTE_ATTRIBUTION]: ({ ipcHandlers }, payload) =>
     ipcHandlers.repairNoteAttribution(payload.noteId),
