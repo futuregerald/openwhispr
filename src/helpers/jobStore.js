@@ -65,18 +65,6 @@ class JobStore {
     return this.db.prepare("SELECT * FROM jobs WHERE job_key = ?").get(jobKey);
   }
 
-  /**
-   * Widens a still-pending job's payload.
-   *
-   * Exists because a key already queued is refused by `insert`, which is right
-   * for a duplicate but wrong for a request that asks for MORE than the queued
-   * one. A user who confirms "overwrite my notes" must not be answered by the
-   * automatic job already waiting, which deliberately refuses to overwrite.
-   *
-   * Only a `pending` row is widened. A `running` row has already been handed its
-   * payload, so changing the row would promise something the run will not do.
-   * Returns true when a row was widened.
-   */
   get(id) {
     return this.db.prepare("SELECT * FROM jobs WHERE id = ?").get(id);
   }

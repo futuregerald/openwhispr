@@ -7487,9 +7487,6 @@ class IPCHandlers {
       });
       if (queued) return { success: true, queued: true };
 
-      // An automatic regeneration is already waiting, and it refuses to touch
-      // notes the user has edited. This request says to overwrite them, so the
-      // waiting job has to carry that permission or the click does nothing.
       const widened = this._jobStore?.widenPendingPayload?.(jobKey, { allowOverwrite: true });
       return { success: true, queued: widened === true };
     });

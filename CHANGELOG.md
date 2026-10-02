@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.35.0] - 2026-10-02
+
+### Added
+
+- Renaming a speaker in a meeting now updates that meeting's notes for you.
+  OpenWhispr waits 60 seconds after your last rename, so renaming a whole call
+  costs one regeneration rather than one per name, and it only re-runs the notes
+  step — your recording is never re-transcribed and your speakers are never
+  re-detected.
+- Notes you have written or edited yourself are never replaced. OpenWhispr only
+  replaces notes it generated, and it checks again at the last moment, so an
+  edit you make while it is working still wins. Notes generated before this
+  update are left alone until you regenerate them once.
+- A **Regenerate notes** button on meeting notes, for when you want to rebuild
+  them from the current transcript without re-transcribing the audio. It asks
+  twice before replacing notes that already exist.
+- Settings → Meetings has a switch to turn the automatic regeneration off.
+
 ## [1.34.0] - 2026-10-01
 
 ### Added

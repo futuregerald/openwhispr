@@ -74,10 +74,6 @@ class BackgroundJobQueue extends EventEmitter {
 
   // Re-enqueues a row that is already in the table -- from enqueueKind, or from
   // recovery at startup.
-  // The payload is read when the job RUNS, not when it is queued. A key already
-  // queued is refused, so the only way to ask a waiting job for more than it was
-  // queued with is to widen its row -- and a closure that captured the payload at
-  // enqueue time would ignore that, silently running the narrower request.
   _enqueueRow(row) {
     this.enqueue(row.job_key, async () => {
       const current = this._store.get?.(row.id) ?? row;

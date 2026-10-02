@@ -372,8 +372,6 @@ export default function PersonalNotesView({
       if (activeNote.title !== localTitleRef.current) setLocalTitle(activeNote.title);
       if (activeNote.content !== localContentRef.current) setLocalContent(activeNote.content);
       if ((activeNote.enhanced_content ?? null) !== localEnhancedContentRef.current) {
-        // An unflushed edit to the notes is the user's; adopting an external value here
-        // would put it in the editor and the next keystroke would persist it over them.
         if (enhancedSaveTimeoutRef.current) {
           flushPendingEnhancedSave();
         } else {
@@ -435,6 +433,7 @@ export default function PersonalNotesView({
 
   const handleEnhancedContentChange = useCallback((content: string) => {
     setLocalEnhancedContent(content);
+    localEnhancedContentRef.current = content;
     if (!activeNoteRef.current) return;
     const noteId = activeNoteRef.current;
     if (enhancedSaveTimeoutRef.current) clearTimeout(enhancedSaveTimeoutRef.current);

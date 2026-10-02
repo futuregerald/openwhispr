@@ -46,10 +46,6 @@ class NotesRegenerationScheduler {
     this._timerByNoteId.delete(noteId);
   }
 
-  // A debounce that lives in memory is lost to a quit, and the rename with it.
-  // The job table already survives a quit, so an unfired timer is written there
-  // as a row rather than enqueued -- enqueuing would start running it while the
-  // app is tearing down. The pre-write check still protects the notes next launch.
   persistPendingForNextLaunch() {
     if (!this._jobStore?.insert) return 0;
     let persisted = 0;
