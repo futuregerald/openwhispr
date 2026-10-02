@@ -1484,7 +1484,7 @@ class DatabaseManager {
         params.push(folderId);
       }
       const where = `WHERE ${conditions.join(" AND ")}`;
-      const stmt = this.db.prepare(`SELECT * FROM notes ${where} ORDER BY updated_at DESC LIMIT ?`);
+      const stmt = this.db.prepare(`SELECT * FROM notes ${where} ORDER BY created_at DESC LIMIT ?`);
       params.push(limit);
       return stmt.all(...params);
     } catch (error) {
@@ -2498,7 +2498,7 @@ class DatabaseManager {
          FROM notes n
          LEFT JOIN folders f ON f.id = n.folder_id
          WHERE ${where.join(" AND ")}
-         ORDER BY n.updated_at DESC
+         ORDER BY n.created_at DESC
          LIMIT ?`
       )
       .all(NOTE_PREVIEW_CHARS, NOTE_PREVIEW_CHARS, ...params, cappedLimit);
