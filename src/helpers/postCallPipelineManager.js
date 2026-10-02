@@ -410,7 +410,7 @@ class PostCallPipelineManager {
     try {
       const stored = this._db.getNote(noteId);
       const content = stored?.enhanced_content;
-      if (!content) return true;
+      if (content == null) return true;
       if (digestGeneratedNotes(content) === stored.enhanced_generated_hash) {
         return true;
       }

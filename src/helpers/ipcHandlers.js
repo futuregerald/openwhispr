@@ -3931,6 +3931,7 @@ class IPCHandlers {
       backgroundJobQueue: this.backgroundJobQueue,
       hashOf: digestGeneratedNotes,
       isEnabled: () => process.env.AUTO_REGENERATE_NOTES !== "false",
+      jobStore: this._jobStore,
     });
     this.postCallPipelineManager.setNotesRegenerationScheduler(this.notesRegenerationScheduler);
 
@@ -7479,12 +7480,18 @@ class IPCHandlers {
       if (meetingTypeId !== undefined) {
         this.databaseManager.updateNote(noteId, { meeting_type_id: meetingTypeId });
       }
-      const queued = this.backgroundJobQueue.enqueueKind(
-        `regenerate-notes-${noteId}`,
-        JOB_KINDS.REGENERATE_NOTES,
-        { noteId, allowOverwrite: true }
-      );
-      return { success: true, queued };
+      const jobKey = `regenerate-notes-${noteId}`;
+      const queued = this.backgroundJobQueue.enqueueKind(jobKey, JOB_KINDS.REGENERATE_NOTES, {
+        noteId,
+        allowOverwrite: true,
+      });
+      if (queued) return { success: true, queued: true };
+
+      // An automatic regeneration is already waiting, and it refuses to touch
+      // notes the user has edited. This request says to overwrite them, so the
+      // waiting job has to carry that permission or the click does nothing.
+      const widened = this._jobStore?.widenPendingPayload?.(jobKey, { allowOverwrite: true });
+      return { success: true, queued: widened === true };
     });
 
     ipcMain.handle("schedule-notes-regeneration", async (_event, noteId) => {

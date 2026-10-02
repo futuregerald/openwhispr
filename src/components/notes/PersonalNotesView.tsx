@@ -344,10 +344,7 @@ export default function PersonalNotesView({
         clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = null;
       }
-      if (enhancedSaveTimeoutRef.current) {
-        clearTimeout(enhancedSaveTimeoutRef.current);
-        enhancedSaveTimeoutRef.current = null;
-      }
+      flushPendingEnhancedSave();
 
       // 3. Switch to new note IMMEDIATELY (no await, eliminates race window)
       markNoteAsSynced(activeNote.id);
@@ -388,10 +385,7 @@ export default function PersonalNotesView({
         clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = null;
       }
-      if (enhancedSaveTimeoutRef.current) {
-        clearTimeout(enhancedSaveTimeoutRef.current);
-        enhancedSaveTimeoutRef.current = null;
-      }
+      flushPendingEnhancedSave();
       markNoteAsSynced(null);
       setLocalTitle("");
       setLocalContent("");

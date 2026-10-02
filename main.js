@@ -1250,6 +1250,7 @@ function performSyncTeardown() {
     ipcHandlers.backgroundJobQueue.cancelPending();
   }
   if (ipcHandlers?.notesRegenerationScheduler) {
+    ipcHandlers.notesRegenerationScheduler.persistPendingForNextLaunch();
     ipcHandlers.notesRegenerationScheduler.stopAll();
   }
   if (ipcHandlers) ipcHandlers._cleanupTextEditMonitor();

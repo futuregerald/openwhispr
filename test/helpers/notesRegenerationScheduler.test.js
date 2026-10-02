@@ -272,3 +272,69 @@ test("an accepted enqueue clears the re-arm count, so a later rename gets its fu
     "the earlier refusal must not eat into a later rename's retries"
   );
 });
+
+// The debounce lives in memory. The job table does not, so an unfired timer has
+// to be written there at teardown or the rename is lost to the quit.
+const harnessWithStore = ({ notes = {} } = {}) => {
+  const clock = createFakeTimers();
+  const inserted = [];
+  const scheduler = new NotesRegenerationScheduler({
+    db: { getNote: (id) => notes[id] },
+    backgroundJobQueue: { enqueueKind: () => true },
+    hashOf,
+    delayMs: DELAY_MS,
+    timers: clock.timers,
+    jobStore: {
+      insert: (jobKey, kind, payload) => {
+        inserted.push({ jobKey, kind, payload });
+        return { id: inserted.length };
+      },
+    },
+  });
+  return { scheduler, clock, inserted };
+};
+
+test("a pending rename survives a quit as a job row, not as a lost timer", () => {
+  const { scheduler, inserted } = harnessWithStore({
+    notes: { 7: generatedNote(7), 8: generatedNote(8) },
+  });
+
+  scheduler.schedule(7);
+  scheduler.schedule(8);
+  const persisted = scheduler.persistPendingForNextLaunch();
+
+  assert.equal(persisted, 2);
+  assert.deepEqual(inserted.map((row) => row.jobKey).sort(), [
+    "regenerate-notes-7",
+    "regenerate-notes-8",
+  ]);
+  assert.deepEqual(inserted[0].payload, { noteId: 7 }, "a persisted row waives nothing");
+});
+
+test("a quit does not persist a regeneration for notes the user has edited", () => {
+  const notes = { 7: generatedNote(7) };
+  const { scheduler, inserted } = harnessWithStore({ notes });
+
+  scheduler.schedule(7);
+  notes[7] = { ...notes[7], enhanced_content: "the user fixed a sentence" };
+
+  assert.equal(scheduler.persistPendingForNextLaunch(), 0);
+  assert.equal(inserted.length, 0);
+});
+
+test("with no job store, teardown persists nothing and does not throw", () => {
+  const { scheduler } = createHarness({ notes: { 7: generatedNote(7) } });
+
+  scheduler.schedule(7);
+  assert.doesNotThrow(() => assert.equal(scheduler.persistPendingForNextLaunch(), 0));
+});
+
+test("nothing is persisted once the timer has already fired", () => {
+  const { scheduler, clock, inserted } = harnessWithStore({ notes: { 7: generatedNote(7) } });
+
+  scheduler.schedule(7);
+  clock.tick(DELAY_MS);
+
+  assert.equal(scheduler.persistPendingForNextLaunch(), 0, "the enqueue already happened");
+  assert.equal(inserted.length, 0);
+});

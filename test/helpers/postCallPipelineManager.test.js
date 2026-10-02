@@ -2271,7 +2271,14 @@ test("a speaker cannot forge a user-context block in the cloud notes call", asyn
 // policy that reads the column.
 
 const nodeCrypto = require("node:crypto");
-const sha256Hex = (value) => nodeCrypto.createHash("sha256").update(value).digest("hex");
+// Deliberately the SAME function the pipeline writes with and the scheduler
+// compares with. Hashing independently here would let the two drift apart
+// without a single test noticing, and the symptom -- every note reading as
+// hand-edited, so nothing ever regenerates -- is silent.
+const { digestGeneratedNotes } = require("../../src/helpers/generatedNotesDigest.js");
+const sha256Hex = digestGeneratedNotes;
+const sha256HexIndependently = (value) =>
+  nodeCrypto.createHash("sha256").update(value).digest("hex");
 const GENERATED_NOTES = "## Summary\nTest notes";
 
 function generatedHashMocks({ enhancedContent = null, generatedHash = undefined } = {}) {
@@ -2475,4 +2482,42 @@ test("notes generated from an unchanged transcript schedule nothing", async () =
   }
 
   assert.deepEqual(scheduled, [], "a settled transcript must not loop the pipeline back on itself");
+});
+
+test("the shared digest is the one the pipeline actually stamps notes with", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = generatedHashMocks();
+
+  process.env.NOTE_FORMATTING_PROVIDER = "openai";
+  process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+  try {
+    const manager = buildManager(PostCallPipelineManager, mocks);
+    await manager.runSingleStep(1, "notes");
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+
+  const write = enhancedWrites(mocks)[0];
+  assert.equal(
+    write.enhanced_generated_hash,
+    sha256HexIndependently(write.enhanced_content),
+    "generatedNotesDigest must stay a plain sha256 of the notes, or the scheduler's hashOf stops agreeing with it"
+  );
+});
+
+test("notes the user cleared are not refilled by a regeneration already in flight", async () => {
+  const mocks = generatedHashMocks({ enhancedContent: GENERATED_NOTES });
+  mocks.inference.processText = async () => {
+    mocks.state.enhancedContent = "";
+    return GENERATED_NOTES;
+  };
+
+  await runGeneratedHashNotesStep(mocks);
+
+  assert.equal(
+    enhancedWrites(mocks).length,
+    0,
+    "emptying the notes is an edit like any other, not an invitation to refill them"
+  );
 });

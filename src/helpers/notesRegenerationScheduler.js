@@ -13,6 +13,7 @@ class NotesRegenerationScheduler {
     isEnabled = () => true,
     delayMs = NOTES_REGENERATION_DELAY_MS,
     timers = { setTimeout, clearTimeout },
+    jobStore = null,
   }) {
     this._db = db;
     this._backgroundJobQueue = backgroundJobQueue;
@@ -20,6 +21,7 @@ class NotesRegenerationScheduler {
     this._isEnabled = isEnabled;
     this._delayMs = delayMs;
     this._timers = timers;
+    this._jobStore = jobStore;
     this._timerByNoteId = new Map();
     this._rearmsByNoteId = new Map();
   }
@@ -44,6 +46,31 @@ class NotesRegenerationScheduler {
     this._timerByNoteId.delete(noteId);
   }
 
+  // A debounce that lives in memory is lost to a quit, and the rename with it.
+  // The job table already survives a quit, so an unfired timer is written there
+  // as a row rather than enqueued -- enqueuing would start running it while the
+  // app is tearing down. The pre-write check still protects the notes next launch.
+  persistPendingForNextLaunch() {
+    if (!this._jobStore?.insert) return 0;
+    let persisted = 0;
+    for (const noteId of this._timerByNoteId.keys()) {
+      try {
+        if (!this._decide(noteId).regenerate) continue;
+        this._jobStore.insert(`regenerate-notes-${noteId}`, JOB_KINDS.REGENERATE_NOTES, { noteId });
+        persisted += 1;
+      } catch (error) {
+        debugLogger.error("Could not persist a pending notes regeneration", {
+          noteId,
+          error: error.message,
+        });
+      }
+    }
+    if (persisted > 0) {
+      debugLogger.info("Persisted pending notes regenerations for the next launch", { persisted });
+    }
+    return persisted;
+  }
+
   stopAll() {
     for (const timer of this._timerByNoteId.values()) {
       this._timers.clearTimeout(timer);
@@ -52,9 +79,7 @@ class NotesRegenerationScheduler {
     this._rearmsByNoteId.clear();
   }
 
-  _fire(noteId) {
-    this._timerByNoteId.delete(noteId);
-
+  _decide(noteId) {
     let note;
     try {
       note = this._db.getNote(noteId);
@@ -63,21 +88,25 @@ class NotesRegenerationScheduler {
         noteId,
         error: error.message,
       });
-      return;
+      return { regenerate: false, reason: "note-unreadable" };
     }
 
     if (!note) {
-      debugLogger.info("Skipping notes regeneration", { noteId, reason: "note-missing" });
-      return;
+      return { regenerate: false, reason: "note-missing" };
     }
 
-    const generatedHash = note.enhanced_generated_hash;
-    const decision = shouldRegenerateNotes({
+    return shouldRegenerateNotes({
       enabled: this._isEnabled(),
       enhancedContent: note.enhanced_content,
-      generatedHash,
+      generatedHash: note.enhanced_generated_hash,
       hashOf: this._hashOf,
     });
+  }
+
+  _fire(noteId) {
+    this._timerByNoteId.delete(noteId);
+
+    const decision = this._decide(noteId);
 
     if (!decision.regenerate) {
       debugLogger.info("Skipping notes regeneration", { noteId, reason: decision.reason });
