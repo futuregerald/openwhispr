@@ -49,7 +49,7 @@ function noteWithTranscript(db, segments, title = "Standup") {
 }
 
 function ageNote(db, id, when) {
-  db.db.prepare("UPDATE notes SET updated_at = ? WHERE id = ?").run(when, id);
+  db.db.prepare("UPDATE notes SET updated_at = ?, created_at = ? WHERE id = ?").run(when, when, id);
 }
 
 const brokenSegments = () => JSON.parse(JSON.stringify(fixture.segments));
@@ -105,7 +105,10 @@ test("repair leaves updated_at alone so the note list keeps its order", () => {
   });
 
   assert.equal(db.getNote(olderId).updated_at, before);
-  assert.deepEqual(db.getNotes().map((n) => n.id), orderBefore);
+  assert.deepEqual(
+    db.getNotes().map((n) => n.id),
+    orderBefore
+  );
   assert.equal(orderBefore[0], newerId, "the newest note must still be first");
 });
 
@@ -350,7 +353,11 @@ test("a repair records itself in the summary the user will be shown", () => {
 
   const summary = readRepairSummary(userDataDir);
   assert.deepEqual(
-    summary.notes.map((n) => ({ noteId: n.noteId, title: n.title, micAttributed: n.micAttributed })),
+    summary.notes.map((n) => ({
+      noteId: n.noteId,
+      title: n.title,
+      micAttributed: n.micAttributed,
+    })),
     [{ noteId: id, title: "Weekly sync", micAttributed: 356 }]
   );
 });

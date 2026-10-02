@@ -60,20 +60,22 @@ test("getNotes sorts by meeting time, not edit time", () => {
   db.close?.();
 });
 
-test("getNotes order matches sorting the rows by created_at DESC", () => {
+test("getNotes returns meeting dates in strictly descending order", () => {
   const db = createDb();
-  const day1Id = noteCreatedOn(db, "Day 1 meeting", "2026-01-01 09:00:00");
   const day2Id = noteCreatedOn(db, "Day 2 meeting", "2026-01-02 09:00:00");
-  const day3Id = noteCreatedOn(db, "Day 3 meeting", "2026-01-03 09:00:00");
+  noteCreatedOn(db, "Day 4 meeting", "2026-01-04 09:00:00");
+  noteCreatedOn(db, "Day 1 meeting", "2026-01-01 09:00:00");
+  noteCreatedOn(db, "Day 3 meeting", "2026-01-03 09:00:00");
 
-  db.updateNote(day1Id, { title: "Day 1 meeting (edited)" });
+  db.updateNote(day2Id, { title: "Day 2 meeting (edited)" });
 
-  const order = db.getNotes().map((note) => note.id);
-  const expected = db.db
-    .prepare("SELECT id FROM notes WHERE deleted_at IS NULL ORDER BY created_at DESC")
-    .all()
-    .map((row) => row.id);
-  assert.deepEqual(order, expected);
+  const dates = db.getNotes().map((note) => note.created_at);
+  assert.deepEqual(dates, [
+    "2026-01-04 09:00:00",
+    "2026-01-03 09:00:00",
+    "2026-01-02 09:00:00",
+    "2026-01-01 09:00:00",
+  ]);
   db.close?.();
 });
 
