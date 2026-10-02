@@ -28,7 +28,9 @@
     },
     "pipeline": {
       "autoProcess": "Processar reuniões automaticamente",
-      "autoProcessDescription": "Re-transcrever automaticamente, gerar título e criar notas após cada reunião"
+      "autoProcessDescription": "Re-transcrever automaticamente, gerar título e criar notas após cada reunião",
+      "autoRegenerateNotes": "Regenerar as notas automaticamente após renomear participantes",
+      "autoRegenerateNotesDescription": "Gera novamente as notas de uma reunião 60 segundos após a última renomeação de um falante. Apenas as notas geradas pelo OpenWhispr são substituídas; o que você editou à mão permanece."
     },
     "meetingDetection": {
       "title": "Detecção de reuniões",
@@ -2061,6 +2063,13 @@
         "othersInCall_one": "{{count}} outra pessoa na chamada",
         "othersInCall_other": "{{count}} outras pessoas na chamada"
       }
+    },
+    "regenerateNotes": {
+      "label": "Regenerar notas",
+      "confirm": "Sobrescrever as notas?",
+      "alreadyRunning": "As notas já estão sendo geradas novamente.",
+      "title": "Regenerar as notas a partir da transcrição atual",
+      "started": "Regeneração das notas iniciada — executa em segundo plano."
     },
     "reprocess": {
       "title": "Reprocessar reunião — regenerar notas a partir da gravação",

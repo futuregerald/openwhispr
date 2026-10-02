@@ -138,6 +138,7 @@ const BOOLEAN_SETTINGS = new Set([
   "meetingProcessDetection",
   "speakerDiarizationEnabled",
   "autoPostCallPipeline",
+  "autoRegenerateNotesOnRename",
   "dictationSileroEnabled",
   "noteRecordingSileroEnabled",
   "meetingSileroEnabled",
@@ -452,6 +453,7 @@ export interface SettingsState
   meetingProcessDetection: boolean;
   speakerDiarizationEnabled: boolean;
   autoPostCallPipeline: boolean;
+  autoRegenerateNotesOnRename: boolean;
   dictationSileroEnabled: boolean;
   noteRecordingSileroEnabled: boolean;
   meetingSileroEnabled: boolean;
@@ -677,6 +679,7 @@ export interface SettingsState
   setMeetingProcessDetection: (value: boolean) => void;
   setSpeakerDiarizationEnabled: (value: boolean) => void;
   setAutoPostCallPipeline: (value: boolean) => void;
+  setAutoRegenerateNotesOnRename: (value: boolean) => void;
   setDictationSileroEnabled: (value: boolean) => void;
   setNoteRecordingSileroEnabled: (value: boolean) => void;
   setMeetingSileroEnabled: (value: boolean) => void;
@@ -1039,6 +1042,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   meetingProcessDetection: readBoolean("meetingProcessDetection", true),
   speakerDiarizationEnabled: readBoolean("speakerDiarizationEnabled", true),
   autoPostCallPipeline: readBoolean("autoPostCallPipeline", true),
+  autoRegenerateNotesOnRename: readBoolean("autoRegenerateNotesOnRename", true),
   dictationSileroEnabled: readBoolean("dictationSileroEnabled", true),
   noteRecordingSileroEnabled: readBoolean("noteRecordingSileroEnabled", true),
   meetingSileroEnabled: readBoolean("meetingSileroEnabled", true),
@@ -1568,6 +1572,13 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     useSettingsStore.setState({ autoPostCallPipeline: value });
     if (isBrowser) {
       window.electronAPI?.setAutoPostCallPipeline?.(value);
+    }
+  },
+  setAutoRegenerateNotesOnRename: (value: boolean) => {
+    if (isBrowser) localStorage.setItem("autoRegenerateNotesOnRename", String(value));
+    useSettingsStore.setState({ autoRegenerateNotesOnRename: value });
+    if (isBrowser) {
+      window.electronAPI?.setAutoRegenerateNotes?.(value);
     }
   },
   setDictationSileroEnabled: (value: boolean) => {

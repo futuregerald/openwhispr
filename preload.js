@@ -366,6 +366,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   reprocessAllMeetings: () => ipcRenderer.invoke("reprocess-all-meetings"),
   regenerateNotes: (noteId, meetingTypeId) =>
     ipcRenderer.invoke("regenerate-notes", noteId, meetingTypeId),
+  scheduleNotesRegeneration: (noteId) => ipcRenderer.invoke("schedule-notes-regeneration", noteId),
   onPostCallPipelineStatus: registerListener(
     "post-call-pipeline-status",
     (callback) => (_event, data) => callback(data)
@@ -382,6 +383,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Pipeline settings
   setAutoPostCallPipeline: (enabled) => ipcRenderer.invoke("set-auto-post-call-pipeline", enabled),
+  setAutoRegenerateNotes: (enabled) => ipcRenderer.invoke("set-auto-regenerate-notes", enabled),
   syncNoteFormattingConfig: (config) => ipcRenderer.invoke("sync-note-formatting-config", config),
   onNoteFormattingAutoConfigured: registerListener("note-formatting-auto-configured"),
 

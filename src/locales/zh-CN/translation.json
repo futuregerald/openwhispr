@@ -28,7 +28,9 @@
     },
     "pipeline": {
       "autoProcess": "自动处理会议",
-      "autoProcessDescription": "每次会议结束后自动重新转写、生成标题并创建笔记"
+      "autoProcessDescription": "每次会议结束后自动重新转写、生成标题并创建笔记",
+      "autoRegenerateNotes": "重命名说话人后自动重新生成笔记",
+      "autoRegenerateNotesDescription": "在最后一次重命名说话人 60 秒后重新生成会议笔记。只会替换 OpenWhispr 生成的笔记，你手动编辑过的内容会保留。"
     },
     "meetingDetection": {
       "title": "会议检测",
@@ -2061,6 +2063,13 @@
         "othersInCall_one": "通话中还有 {{count}} 人",
         "othersInCall_other": "通话中还有 {{count}} 人"
       }
+    },
+    "regenerateNotes": {
+      "label": "重新生成笔记",
+      "confirm": "覆盖笔记？",
+      "alreadyRunning": "笔记已在重新生成中。",
+      "title": "根据当前转写重新生成笔记",
+      "started": "正在重新生成笔记 — 将在后台运行。"
     },
     "reprocess": {
       "title": "重新处理会议 — 从录音重新生成笔记",

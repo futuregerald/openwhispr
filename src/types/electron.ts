@@ -481,6 +481,11 @@ declare global {
         error?: string;
       }>;
       reprocessAllMeetings?: () => Promise<{ success: boolean; count: number; error?: string }>;
+      regenerateNotes?: (
+        noteId: number,
+        meetingTypeId?: number | null
+      ) => Promise<{ success: boolean; queued?: boolean }>;
+      scheduleNotesRegeneration?: (noteId: number) => Promise<{ success: boolean }>;
       checkWhisperModelDownloaded?: (model: string) => Promise<{ downloaded: boolean }>;
       retryTranscription: (
         id: number,
@@ -1641,6 +1646,7 @@ declare global {
         enabled: boolean
       ) => Promise<{ success: boolean; error?: string }>;
       setAutoPostCallPipeline?: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
+      setAutoRegenerateNotes?: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
       syncNoteFormattingConfig?: (config: {
         provider: string;
         model: string;

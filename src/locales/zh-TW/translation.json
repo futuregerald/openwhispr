@@ -28,7 +28,9 @@
     },
     "pipeline": {
       "autoProcess": "自動處理會議",
-      "autoProcessDescription": "每次會議結束後自動重新轉寫、產生標題並建立筆記"
+      "autoProcessDescription": "每次會議結束後自動重新轉寫、產生標題並建立筆記",
+      "autoRegenerateNotes": "重新命名說話者後自動重新產生筆記",
+      "autoRegenerateNotesDescription": "在最後一次重新命名說話者 60 秒後重新產生會議筆記。只會取代 OpenWhispr 產生的筆記，你手動編輯過的內容會保留。"
     },
     "meetingDetection": {
       "title": "會議偵測",
@@ -2061,6 +2063,13 @@
         "othersInCall_one": "通話中還有 {{count}} 人",
         "othersInCall_other": "通話中還有 {{count}} 人"
       }
+    },
+    "regenerateNotes": {
+      "label": "重新產生筆記",
+      "confirm": "覆寫筆記？",
+      "alreadyRunning": "筆記已在重新產生中。",
+      "title": "根據目前的轉寫重新產生筆記",
+      "started": "正在重新產生筆記 — 將在背景執行。"
     },
     "reprocess": {
       "title": "重新處理會議 — 從錄音重新產生筆記",

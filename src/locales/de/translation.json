@@ -28,7 +28,9 @@
     },
     "pipeline": {
       "autoProcess": "Meetings automatisch verarbeiten",
-      "autoProcessDescription": "Nach jedem Meeting automatisch neu transkribieren, Titel generieren und Notizen erstellen"
+      "autoProcessDescription": "Nach jedem Meeting automatisch neu transkribieren, Titel generieren und Notizen erstellen",
+      "autoRegenerateNotes": "Notizen nach dem Umbenennen von Sprechern automatisch neu erstellen",
+      "autoRegenerateNotesDescription": "Erstellt die Notizen eines Meetings 60 Sekunden nach der letzten Sprecherumbenennung neu. Ersetzt werden nur von OpenWhispr erzeugte Notizen – von Hand bearbeitete bleiben unverändert."
     },
     "meetingDetection": {
       "title": "Besprechungserkennung",
@@ -2061,6 +2063,13 @@
         "othersInCall_one": "{{count}} weitere Person im Gespräch",
         "othersInCall_other": "{{count}} weitere Personen im Gespräch"
       }
+    },
+    "regenerateNotes": {
+      "label": "Notizen neu erstellen",
+      "confirm": "Notizen überschreiben?",
+      "alreadyRunning": "Die Notizen werden bereits neu erstellt.",
+      "title": "Notizen aus dem aktuellen Transkript neu erstellen",
+      "started": "Notizen werden neu erstellt — läuft im Hintergrund."
     },
     "reprocess": {
       "title": "Meeting neu verarbeiten – Notizen aus der Aufnahme neu erzeugen",

@@ -548,7 +548,13 @@ test("POST /v1/context/set names an unknown key rather than silently dropping it
 });
 
 function renameIpc({ db: dbOverrides = {}, ...overrides } = {}) {
-  const calls = { renameNote: [], renameProfile: [], retroactive: 0, upsertProfile: 0 };
+  const calls = {
+    renameNote: [],
+    renameProfile: [],
+    retroactive: 0,
+    upsertProfile: 0,
+    scheduled: [],
+  };
   const broadcasts = [];
   const ipc = fakeIpcHandlers({
     db: {
@@ -573,6 +579,9 @@ function renameIpc({ db: dbOverrides = {}, ...overrides } = {}) {
     broadcastToWindows: (channel, payload) => broadcasts.push({ channel, payload }),
     _retroactiveMapping: () => {
       calls.retroactive += 1;
+    },
+    notesRegenerationScheduler: {
+      schedule: (noteId) => calls.scheduled.push(noteId),
     },
     ...overrides,
   });
@@ -803,6 +812,32 @@ test("POST /v1/speakers/rename tells the live speaker identifier", async () => {
     });
     assert.equal(res.status, 200, "precondition: the route ran");
     assert.deepEqual(mapped, [["speaker_0", 42, "Priya", 1]]);
+  });
+});
+
+test("POST /v1/speakers/rename schedules a notes regeneration for the renamed note", async () => {
+  const { ipc, calls } = renameIpc();
+  await withBridge(ipc, async ({ request }) => {
+    const res = await request("POST", "/v1/speakers/rename", {
+      body: { note_id: 1, speaker_id: "speaker_0", display_name: "Priya" },
+    });
+    assert.equal(res.status, 200, "precondition: the route ran");
+    assert.deepEqual(calls.scheduled, [1]);
+  });
+});
+
+// A profile_wide rename rewrites the transcript of every note the profile
+// appears in, so the notes of every one of them are now stale -- not only the
+// note named in the request.
+test("POST /v1/speakers/rename with profile_wide schedules every affected note", async () => {
+  const { ipc, calls } = renameIpc();
+  await withBridge(ipc, async ({ request }) => {
+    const res = await request("POST", "/v1/speakers/rename", {
+      body: { note_id: 1, speaker_id: "speaker_0", display_name: "Priya", profile_wide: true },
+    });
+    assert.equal(res.status, 200, "precondition: the route ran");
+    assert.deepEqual(calls.scheduled, [1, 2]);
+    assert.equal(res.json.data.notes_changed, 2, "the response body must be unchanged");
   });
 });
 

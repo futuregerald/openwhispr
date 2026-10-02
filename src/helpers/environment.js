@@ -57,6 +57,7 @@ const PERSISTED_KEYS = [
   "VERTEX_LOCATION",
   "NOTE_FORMATTING_PROVIDER",
   "NOTE_FORMATTING_MODEL",
+  "AUTO_REGENERATE_NOTES",
 ];
 
 // Module-level so writes are serialized across all instances — hotkeyManager

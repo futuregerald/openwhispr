@@ -65,6 +65,29 @@ class JobStore {
     return this.db.prepare("SELECT * FROM jobs WHERE job_key = ?").get(jobKey);
   }
 
+  get(id) {
+    return this.db.prepare("SELECT * FROM jobs WHERE id = ?").get(id);
+  }
+
+  widenPendingPayload(jobKey, extraPayload) {
+    const existing = this.db
+      .prepare(`SELECT * FROM jobs WHERE job_key = ? AND status = '${PENDING}'`)
+      .get(jobKey);
+    if (!existing) return false;
+
+    let payload = {};
+    try {
+      payload = JSON.parse(existing.payload) || {};
+    } catch {
+      payload = {};
+    }
+
+    this.db
+      .prepare("UPDATE jobs SET payload = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .run(JSON.stringify({ ...payload, ...extraPayload }), existing.id);
+    return true;
+  }
+
   markRunning(id) {
     this.db
       .prepare(
@@ -92,9 +115,7 @@ class JobStore {
   }
 
   pending() {
-    return this.db
-      .prepare(`SELECT * FROM jobs WHERE status = '${PENDING}' ORDER BY id ASC`)
-      .all();
+    return this.db.prepare(`SELECT * FROM jobs WHERE status = '${PENDING}' ORDER BY id ASC`).all();
   }
 
   /**

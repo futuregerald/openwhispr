@@ -2264,3 +2264,260 @@ test("a speaker cannot forge a user-context block in the cloud notes call", asyn
   assert.ok(!notesCall.text.includes("USER CONTEXT ("), "open marker survived");
   assert.match(notesCall.opts.systemPrompt, /Molly Finn is the PM\./);
 });
+
+// The notes the pipeline generates are stamped with a hash of exactly what was
+// written, so a later auto-regeneration can tell its own output from the user's
+// edits. These cases pin the two write sites against each other and against the
+// policy that reads the column.
+
+const nodeCrypto = require("node:crypto");
+// Deliberately the SAME function the pipeline writes with and the scheduler
+// compares with. Hashing independently here would let the two drift apart
+// without a single test noticing, and the symptom -- every note reading as
+// hand-edited, so nothing ever regenerates -- is silent.
+const { digestGeneratedNotes } = require("../../src/helpers/generatedNotesDigest.js");
+const sha256Hex = digestGeneratedNotes;
+const sha256HexIndependently = (value) =>
+  nodeCrypto.createHash("sha256").update(value).digest("hex");
+const GENERATED_NOTES = "## Summary\nTest notes";
+
+function generatedHashMocks({ enhancedContent = null, generatedHash = undefined } = {}) {
+  const mocks = createMocks();
+  const state = {
+    enhancedContent,
+    generatedHash:
+      generatedHash === undefined && enhancedContent ? sha256Hex(enhancedContent) : generatedHash,
+  };
+  mocks.state = state;
+  mocks.writes = [];
+  mocks.databaseManager.getNote = (id) => ({
+    id,
+    title: null,
+    transcript: JSON.stringify([
+      { text: "hello", speaker: "speaker_0", source: "system", timestamp: 0 },
+    ]),
+    system_audio_path: null,
+    mic_audio_path: null,
+    meeting_type_id: null,
+    audio_duration_seconds: 300,
+    enhanced_content: state.enhancedContent,
+    enhanced_generated_hash: state.generatedHash ?? null,
+  });
+  mocks.databaseManager.updateNote = (id, updates) => {
+    mocks.writes.push(updates);
+    return { success: true };
+  };
+  return mocks;
+}
+
+async function runGeneratedHashNotesStep(mocks, options) {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  process.env.NOTE_FORMATTING_PROVIDER = "openai";
+  process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+  try {
+    const manager = buildManager(PostCallPipelineManager, mocks);
+    await manager.runSingleStep(1, "notes", options);
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+}
+
+test("a full run stamps the notes it generated with their own hash", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = generatedHashMocks();
+
+  process.env.NOTE_FORMATTING_PROVIDER = "openai";
+  process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+  try {
+    await buildManager(PostCallPipelineManager, mocks).run(1);
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+
+  const write = mocks.writes.find((w) => w.enhanced_content !== undefined);
+  assert.ok(write, "the full run must have written notes");
+  assert.equal(write.enhanced_generated_hash, sha256Hex(write.enhanced_content));
+});
+
+// The round trip is the case that matters: hashing the transcript instead of the
+// generated notes still writes a plausible-looking hash, and only reading it back
+// through the real digest and the real policy catches the drift.
+test("the hash the pipeline writes round-trips through the regeneration policy", async () => {
+  const mocks = generatedHashMocks();
+  await runGeneratedHashNotesStep(mocks);
+
+  const write = mocks.writes.find((w) => w.enhanced_content !== undefined);
+  assert.ok(write, "runSingleStep must have written notes");
+
+  const { shouldRegenerateNotes } = await import("../../src/helpers/notesRegenerationPolicy.js");
+  const decision = shouldRegenerateNotes({
+    enabled: true,
+    enhancedContent: write.enhanced_content,
+    generatedHash: write.enhanced_generated_hash,
+    hashOf: sha256Hex,
+  });
+  assert.deepEqual(decision, { regenerate: true, reason: "regenerate" });
+});
+
+test("notes still matching their stored hash are machine-generated, so the write goes through", async () => {
+  const mocks = generatedHashMocks({ enhancedContent: GENERATED_NOTES });
+  await runGeneratedHashNotesStep(mocks);
+
+  const writes = mocks.writes.filter((w) => w.enhanced_content !== undefined);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].enhanced_generated_hash, sha256Hex(writes[0].enhanced_content));
+});
+
+test("a stale machine generation is replaced, even though it is not the digest we set out from", async () => {
+  const mocks = generatedHashMocks({ enhancedContent: GENERATED_NOTES });
+  mocks.inference.processText = async () => {
+    const supersededByAnotherRun = "## Summary\nnotes another pipeline run wrote";
+    mocks.state.enhancedContent = supersededByAnotherRun;
+    mocks.state.generatedHash = sha256Hex(supersededByAnotherRun);
+    return GENERATED_NOTES;
+  };
+
+  await runGeneratedHashNotesStep(mocks);
+
+  assert.equal(
+    mocks.writes.filter((w) => w.enhanced_content !== undefined).length,
+    1,
+    "a rename must still reach notes the pipeline itself rewrote while we were generating"
+  );
+});
+
+test("notes with no recorded provenance are left alone", async () => {
+  const mocks = generatedHashMocks({ enhancedContent: GENERATED_NOTES, generatedHash: null });
+
+  await runGeneratedHashNotesStep(mocks);
+
+  assert.equal(
+    mocks.writes.filter((w) => w.enhanced_content !== undefined).length,
+    0,
+    "notes predating the hash column could be the user's own writing"
+  );
+});
+
+test("notes edited while the model was running are never overwritten", async () => {
+  const mocks = generatedHashMocks({ enhancedContent: GENERATED_NOTES });
+  mocks.inference.processText = async () => {
+    mocks.state.enhancedContent = "## Summary\nmy own wording";
+    return GENERATED_NOTES;
+  };
+
+  await runGeneratedHashNotesStep(mocks);
+
+  assert.equal(
+    mocks.writes.filter((w) => w.enhanced_content !== undefined).length,
+    0,
+    "the hand edit was overwritten"
+  );
+  const statuses = mocks.events
+    .filter((e) => e.channel === "post-call-pipeline-status" && e.step === "notes")
+    .map((e) => e.status);
+  assert.ok(statuses.includes("complete"), `notes did not complete: ${statuses.join(",")}`);
+});
+
+test("the manual path waives the check explicitly and writes unconditionally", async () => {
+  const mocks = generatedHashMocks({ enhancedContent: GENERATED_NOTES });
+  mocks.inference.processText = async () => {
+    mocks.state.enhancedContent = "## Summary\nmy own wording";
+    return GENERATED_NOTES;
+  };
+
+  await runGeneratedHashNotesStep(mocks, { allowOverwrite: true });
+
+  assert.equal(mocks.writes.filter((w) => w.enhanced_content !== undefined).length, 1);
+});
+
+// A rename landing while the model is generating is the most likely real timing:
+// the notes the pipeline is about to write were built from a transcript that no
+// longer exists. Nothing re-arms the debounce in that case, so the pipeline has
+// to notice for itself.
+test("notes generated from a transcript that moved on schedule a regeneration", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = generatedHashMocks();
+  const renamedTranscript = JSON.stringify([
+    { text: "hello", speaker: "speaker_0", speakerName: "Molly", source: "system", timestamp: 0 },
+  ]);
+  const original = mocks.databaseManager.getNote;
+  let storedTranscript = original(1).transcript;
+  mocks.databaseManager.getNote = (id) => ({ ...original(id), transcript: storedTranscript });
+  mocks.inference.processText = async () => {
+    storedTranscript = renamedTranscript;
+    return GENERATED_NOTES;
+  };
+  const scheduled = [];
+
+  process.env.NOTE_FORMATTING_PROVIDER = "openai";
+  process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+  try {
+    const manager = buildManager(PostCallPipelineManager, mocks);
+    manager.setNotesRegenerationScheduler({ schedule: (id) => scheduled.push(id) });
+    await manager.run(1, { fromStep: "notes" });
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+
+  assert.deepEqual(scheduled, [1], "the rename that landed mid-generation was dropped");
+});
+
+test("notes generated from an unchanged transcript schedule nothing", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = generatedHashMocks();
+  const scheduled = [];
+
+  process.env.NOTE_FORMATTING_PROVIDER = "openai";
+  process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+  try {
+    const manager = buildManager(PostCallPipelineManager, mocks);
+    manager.setNotesRegenerationScheduler({ schedule: (id) => scheduled.push(id) });
+    await manager.run(1, { fromStep: "notes" });
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+
+  assert.deepEqual(scheduled, [], "a settled transcript must not loop the pipeline back on itself");
+});
+
+test("the shared digest is the one the pipeline actually stamps notes with", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = generatedHashMocks();
+
+  process.env.NOTE_FORMATTING_PROVIDER = "openai";
+  process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+  try {
+    const manager = buildManager(PostCallPipelineManager, mocks);
+    await manager.runSingleStep(1, "notes");
+  } finally {
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+
+  const write = enhancedWrites(mocks)[0];
+  assert.equal(
+    write.enhanced_generated_hash,
+    sha256HexIndependently(write.enhanced_content),
+    "generatedNotesDigest must stay a plain sha256 of the notes, or the scheduler's hashOf stops agreeing with it"
+  );
+});
+
+test("notes the user cleared are not refilled by a regeneration already in flight", async () => {
+  const mocks = generatedHashMocks({ enhancedContent: GENERATED_NOTES });
+  mocks.inference.processText = async () => {
+    mocks.state.enhancedContent = "";
+    return GENERATED_NOTES;
+  };
+
+  await runGeneratedHashNotesStep(mocks);
+
+  assert.equal(
+    enhancedWrites(mocks).length,
+    0,
+    "emptying the notes is an edit like any other, not an invitation to refill them"
+  );
+});

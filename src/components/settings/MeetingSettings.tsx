@@ -83,6 +83,21 @@ export function MeetingAutoProcessRow() {
   );
 }
 
+export function MeetingAutoRegenerateNotesRow() {
+  const { t } = useTranslation();
+  const autoRegenerateNotesOnRename = useSettingsStore((s) => s.autoRegenerateNotesOnRename);
+  const setAutoRegenerateNotesOnRename = useSettingsStore((s) => s.setAutoRegenerateNotesOnRename);
+
+  return (
+    <SettingsRow
+      label={t("settings.pipeline.autoRegenerateNotes")}
+      description={t("settings.pipeline.autoRegenerateNotesDescription")}
+    >
+      <Toggle checked={autoRegenerateNotesOnRename} onChange={setAutoRegenerateNotesOnRename} />
+    </SettingsRow>
+  );
+}
+
 const noop = () => {};
 
 export function MeetingTranscriptionPanel() {
@@ -190,6 +205,7 @@ export function MeetingTranscriptionPanel() {
       )}
       <MeetingSpeakerDetectionRow />
       <MeetingAutoProcessRow />
+      <MeetingAutoRegenerateNotesRow />
     </div>
   );
 }

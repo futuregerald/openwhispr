@@ -41,8 +41,8 @@ function queueWith(store, run) {
         calls.push({ method: "run", noteId, ...options });
         if (run) await run(noteId, options);
       },
-      runSingleStep: async (noteId, step) => {
-        calls.push({ method: "runSingleStep", noteId, step });
+      runSingleStep: async (noteId, step, options) => {
+        calls.push({ method: "runSingleStep", noteId, step, options });
         if (run) await run(noteId, { step });
       },
     },
@@ -54,7 +54,10 @@ test("a queued job is recorded, run, and removed", async () => {
   const { db, store } = freshStore();
   const { queue, calls } = queueWith(store);
 
-  assert.equal(queue.enqueueKind("post-call-12", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 12 }), true);
+  assert.equal(
+    queue.enqueueKind("post-call-12", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 12 }),
+    true
+  );
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM jobs").get().n, 1);
 
   await queue.drain();
@@ -186,7 +189,10 @@ test("a failed job does not block a fresh request for the same note", async () =
 
   failing.queue.enqueueKind("post-call-80", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 80 });
   await failing.queue.drain();
-  assert.equal(db.prepare("SELECT status FROM jobs WHERE job_key='post-call-80'").get().status, "failed");
+  assert.equal(
+    db.prepare("SELECT status FROM jobs WHERE job_key='post-call-80'").get().status,
+    "failed"
+  );
 
   const retry = queueWith(new JobStore(db));
   assert.equal(
@@ -237,7 +243,10 @@ test("enqueuing the same key twice runs the pipeline once", async () => {
   const { store } = freshStore();
   const { queue, calls } = queueWith(store);
 
-  assert.equal(queue.enqueueKind("post-call-60", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 60 }), true);
+  assert.equal(
+    queue.enqueueKind("post-call-60", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 60 }),
+    true
+  );
   assert.equal(
     queue.enqueueKind("post-call-60", JOB_KINDS.POST_CALL_PIPELINE, { noteId: 60 }),
     false,
@@ -282,7 +291,7 @@ test("fromStep travels with the job", async () => {
 
   assert.deepEqual(calls, [
     { method: "run", noteId: 70, fromStep: "notes" },
-    { method: "runSingleStep", noteId: 71, step: "notes" },
+    { method: "runSingleStep", noteId: 71, step: "notes", options: { allowOverwrite: false } },
   ]);
 });
 
@@ -357,4 +366,95 @@ test("the jobs schema here is identical to the one the app creates", () => {
     normalise(JOBS_DDL),
     "this file's jobs DDL has drifted from the one database.js creates"
   );
+});
+
+// A key already queued is refused, which is right for a duplicate and wrong for
+// a request asking for MORE than the queued one. The automatic regeneration
+// refuses to touch hand-edited notes; a user who confirms "overwrite my notes"
+// must not be silently answered by that waiting job.
+test("a pending job's payload can be widened so a confirmed overwrite is not swallowed", () => {
+  const db = new Database(":memory:");
+  db.exec(JOBS_DDL);
+  const store = new JobStore(db);
+
+  store.insert("regenerate-notes-7", JOB_KINDS.REGENERATE_NOTES, { noteId: 7 });
+
+  assert.equal(store.widenPendingPayload("regenerate-notes-7", { allowOverwrite: true }), true);
+
+  const [row] = store.pending();
+  assert.deepEqual(JSON.parse(row.payload), { noteId: 7, allowOverwrite: true });
+});
+
+test("a running job is not widened, because it already has its payload", () => {
+  const db = new Database(":memory:");
+  db.exec(JOBS_DDL);
+  const store = new JobStore(db);
+
+  const row = store.insert("regenerate-notes-7", JOB_KINDS.REGENERATE_NOTES, { noteId: 7 });
+  store.markRunning(row.id);
+
+  assert.equal(
+    store.widenPendingPayload("regenerate-notes-7", { allowOverwrite: true }),
+    false,
+    "widening a row already handed to a runner would promise something the run will not do"
+  );
+  const stored = db.prepare("SELECT payload FROM jobs WHERE id = ?").get(row.id);
+  assert.deepEqual(JSON.parse(stored.payload), { noteId: 7 });
+});
+
+test("widening a key with no pending row reports that it did nothing", () => {
+  const db = new Database(":memory:");
+  db.exec(JOBS_DDL);
+  const store = new JobStore(db);
+
+  assert.equal(store.widenPendingPayload("regenerate-notes-7", { allowOverwrite: true }), false);
+});
+
+// The widen only matters if the job reads its payload when it RUNS. A closure
+// that captured the payload at enqueue time would run the narrower request and
+// nothing would say so: the row in the database would look correct, the user
+// would be told the overwrite started, and their notes would be left untouched.
+// So drive it through the real queue, not through JobStore alone.
+test("a job widened while it waits runs with the widened payload", async () => {
+  const db = new Database(":memory:");
+  db.exec(JOBS_DDL);
+  const store = new JobStore(db);
+  const { queue, calls } = queueWith(store);
+
+  let releaseFirstJob;
+  const firstJobBlocking = new Promise((resolve) => {
+    releaseFirstJob = resolve;
+  });
+  queue.enqueue("something-else", () => firstJobBlocking);
+
+  queue.enqueueKind("regenerate-notes-7", JOB_KINDS.REGENERATE_NOTES, { noteId: 7 });
+  assert.equal(
+    store.widenPendingPayload("regenerate-notes-7", { allowOverwrite: true }),
+    true,
+    "the row must still be pending while the queue is busy"
+  );
+
+  releaseFirstJob();
+  await queue.drain();
+
+  const regeneration = calls.find((call) => call.method === "runSingleStep");
+  assert.ok(regeneration, "the regeneration never ran");
+  assert.equal(
+    regeneration.options?.allowOverwrite,
+    true,
+    "the confirmed overwrite was dropped: the job ran with the payload captured at enqueue time"
+  );
+});
+
+test("a job nobody widened still runs with the payload it was queued with", async () => {
+  const db = new Database(":memory:");
+  db.exec(JOBS_DDL);
+  const store = new JobStore(db);
+  const { queue, calls } = queueWith(store);
+
+  queue.enqueueKind("regenerate-notes-7", JOB_KINDS.REGENERATE_NOTES, { noteId: 7 });
+  await queue.drain();
+
+  const regeneration = calls.find((call) => call.method === "runSingleStep");
+  assert.equal(regeneration.options?.allowOverwrite, false);
 });

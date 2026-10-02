@@ -75,8 +75,9 @@ class BackgroundJobQueue extends EventEmitter {
   // Re-enqueues a row that is already in the table -- from enqueueKind, or from
   // recovery at startup.
   _enqueueRow(row) {
-    const payload = JSON.parse(row.payload || "{}");
     this.enqueue(row.job_key, async () => {
+      const current = this._store.get?.(row.id) ?? row;
+      const payload = JSON.parse(current.payload || "{}");
       this._store.markRunning(row.id);
       try {
         await runJob(this._dependencies, row.kind, payload);
