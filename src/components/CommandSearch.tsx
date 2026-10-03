@@ -494,7 +494,7 @@ function NoteRow({
         )}
       </div>
       <span className="text-[10px] text-muted-foreground/35 tabular-nums shrink-0">
-        {relativeTime(note.updated_at, t)}
+        {relativeTime(note.created_at, t)}
       </span>
     </button>
   );

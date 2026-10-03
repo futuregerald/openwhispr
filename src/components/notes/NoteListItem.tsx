@@ -148,7 +148,7 @@ export default function NoteListItem({
           </p>
           <div className="flex items-center gap-0.5 shrink-0">
             <span className="text-xs text-muted-foreground dark:text-muted-foreground/30 tabular-nums group-hover:opacity-0 transition-opacity">
-              {relativeTime(note.updated_at, t)}
+              {relativeTime(note.created_at, t)}
             </span>
             <DropdownMenu
               onOpenChange={(open) => {

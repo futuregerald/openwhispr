@@ -17,7 +17,7 @@ interface AddNotesToFolderDialogProps {
 function groupNotesByDate(notes: NoteItem[], t: (key: string) => string): [string, NoteItem[]][] {
   const groups = new Map<string, NoteItem[]>();
   for (const note of notes) {
-    const key = formatDateGroup(note.updated_at, t);
+    const key = formatDateGroup(note.created_at, t);
     const arr = groups.get(key) || [];
     arr.push(note);
     groups.set(key, arr);

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.35.1] - 2026-10-02
+
+### Fixed
+
+- The notes list, the command palette and the "add to folder" dialog now show
+  and sort by when the meeting happened, not when the note was last edited.
+  Previously, editing a note's title or body made it jump to the top of the
+  list and display today's date — even if the meeting itself was days ago.
+  **A note you edit no longer jumps to the top; it stays at its meeting date.**
+
 ## [1.35.0] - 2026-10-02
 
 ### Added
