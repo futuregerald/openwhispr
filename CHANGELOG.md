@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.36.0] - 2026-10-03
+
+### Added
+
+- A recording that ran through several back-to-back calls can now become one
+  note per call. If you dropped one call and joined another without stopping
+  the recording, OpenWhispr spots the seam and offers to split it: open the
+  note and a banner tells you how many calls it thinks are in there. Nothing is
+  split without you confirming it, and you can dismiss the suggestion for good.
+- Each piece becomes a note in its own right, with its own title, its own
+  generated notes and **its own date** — so it sits at its real meeting time in
+  the notes list rather than inheriting the whole morning's.
+- A seam has to earn it. A silence of 30 seconds or more only counts as a call
+  boundary when the words either side agree: someone saying goodbye before it,
+  someone arriving after it, or a completely different set of speakers. One
+  signal on its own is never enough, so a long pause in the middle of a single
+  meeting is left alone.
+
+### Changed
+
+- A note that is one slice of a longer recording can no longer be
+  re-transcribed, and the Reprocess button explains why when you hover it. Both
+  halves share one audio file, so re-transcribing either one would pull the
+  whole recording back in and undo the split.
+- Deleting a recording's audio now clears it from every note that shared the
+  file, instead of leaving the other notes pointing at a file that is gone.
+
+### Known limitations
+
+- Around a quarter of existing notes cannot be offered a split, because their
+  stored timestamps are not all on one clock and splitting them would risk
+  losing part of the transcript. Those notes are left untouched.
+- The suggestion reads English farewells and greetings, so a call in another
+  language will not be offered a split. It will never be split wrongly — only
+  missed.
+
 ## [1.35.1] - 2026-10-02
 
 ### Fixed
