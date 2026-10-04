@@ -107,6 +107,7 @@ const sliceSecondsOf = (segments, originMs) => {
  *   onNoteCreated: (note: any) => void,
  *   childTitle?: string,
  *   childContent?: string,
+ *   createdAtAnchorMs?: number | null,
  * }} args
  */
 function splitNoteAtBoundary({
@@ -117,6 +118,7 @@ function splitNoteAtBoundary({
   onNoteCreated,
   childTitle,
   childContent,
+  createdAtAnchorMs = null,
 }) {
   if (!databaseManager || !databaseManager.db) {
     throw new Error("splitNoteAtBoundary: databaseManager is required");
@@ -162,7 +164,12 @@ function splitNoteAtBoundary({
   const childSlice = sliceSecondsOf(childSegments, originMs);
   if (!parentSlice || !childSlice) return refuse("unresolvable-slice-bounds");
 
-  const childStartedAtMs = deriveTimestamps(childSegments[0].timestamp, originMs).startedAtMs;
+  const createdAtOriginMs =
+    originMs ?? (Number.isSafeInteger(createdAtAnchorMs) ? createdAtAnchorMs : null);
+  const childStartedAtMs = deriveTimestamps(
+    childSegments[0].timestamp,
+    createdAtOriginMs
+  ).startedAtMs;
   const childCreatedAt =
     childStartedAtMs == null ? parent.created_at : formatUtcSqliteTimestamp(childStartedAtMs);
 

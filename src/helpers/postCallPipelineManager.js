@@ -250,6 +250,9 @@ class PostCallPipelineManager {
 
     const fromIndex = options.fromStep ? STEP_ORDER.indexOf(options.fromStep) : 0;
     let transcript = note.transcript;
+    const createdAtAnchorMs = Number.isSafeInteger(note.transcript_origin_ms)
+      ? note.transcript_origin_ms
+      : null;
 
     // Step 1: Re-transcribe
     if (fromIndex <= 0) {
@@ -262,7 +265,7 @@ class PostCallPipelineManager {
 
     // Step 2: Split a recording that welded several calls together (non-fatal)
     if (fromIndex <= 1) {
-      const childNoteIds = await this._splitCallsStep(noteId);
+      const childNoteIds = await this._splitCallsStep(noteId, createdAtAnchorMs);
       for (const childNoteId of childNoteIds) {
         await this.run(childNoteId, { fromStep: "classify" });
       }
@@ -469,7 +472,7 @@ class PostCallPipelineManager {
     }
   }
 
-  async _splitCallsStep(noteId) {
+  async _splitCallsStep(noteId, createdAtAnchorMs = null) {
     const childNoteIds = [];
     try {
       const { detectCallBoundaries } = await import("./callBoundaries.js");
@@ -495,6 +498,7 @@ class PostCallPipelineManager {
           report,
           boundaryIndex: report.boundaries.length - 1,
           onNoteCreated: this._onNoteCreated,
+          createdAtAnchorMs,
         });
 
         if (!result.success) {

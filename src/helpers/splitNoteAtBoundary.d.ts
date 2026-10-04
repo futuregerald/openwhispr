@@ -73,6 +73,14 @@ export type SplitResult =
  * list until a refresh, unfindable by the agent's `search_notes`, and has no
  * mirror file.
  *
+ * `createdAtAnchorMs` is a fallback used for the child's `created_at` only, for
+ * the caller that captured the note's `transcript_origin_ms` before something
+ * else nulled it — re-transcription does exactly that, and the pipeline splits
+ * afterwards. The order is the live `transcript_origin_ms`, then this anchor,
+ * then the parent's own `created_at`. It never reaches the slice bounds or the
+ * child's `transcript_origin_ms`, which stay the parent's live values: an origin
+ * recomputed into those columns puts the child's transcript hours out.
+ *
  * Deliberately **not** copied to the child: `calendar_event_id`, because the
  * event describes one of the calls at most, and `meeting_type_id`, because the
  * post-call pipeline skips classification when it is already set and the child
@@ -86,4 +94,5 @@ export declare function splitNoteAtBoundary(args: {
   onNoteCreated: (note: any) => void;
   childTitle?: string;
   childContent?: string;
+  createdAtAnchorMs?: number | null;
 }): SplitResult;
