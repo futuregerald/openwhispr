@@ -2825,13 +2825,16 @@ test("a sliced note re-run from retranscribe is not retranscribed and does not s
     splitManager(PostCallPipelineManager, mocks).run(1, { fromStep: "retranscribe" })
   );
 
+  // Asserted first, and on the note count rather than on a status, so the
+  // mutation that removes the gate fails on the thing that actually matters:
+  // a third note.
+  assert.equal(mocks.rows.size, 2, "re-welding a split pair is what doubles the library");
+  assert.equal(mocks.rows.get(1).transcript, before, "a slice's transcript must not be rewritten");
   assert.deepEqual(statusesFor(mocks, 1, "retranscribe"), ["skipped"]);
   assert.equal(
     mocks.events.find((e) => e.step === "retranscribe" && e.status === "skipped")?.reason,
     "transcript-is-slice"
   );
-  assert.equal(mocks.rows.get(1).transcript, before, "a slice's transcript must not be rewritten");
-  assert.equal(mocks.rows.size, 2, "re-welding a split pair is what doubles the library");
 });
 
 test("a reprocess over an already-split pair leaves the library the same size", async () => {
