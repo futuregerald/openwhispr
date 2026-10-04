@@ -52,6 +52,7 @@ import {
 import { externalRenameUpdate } from "../../helpers/speakerMappingBroadcast";
 import { foldSpeakersInto } from "../../helpers/speakerFold";
 import NoteParticipants from "./NoteParticipants";
+import CallSplitBanner from "./CallSplitBanner";
 import MeetingTypePicker from "./MeetingTypePicker";
 import MeetingTypeEditor from "./MeetingTypeEditor";
 import type { CalendarAttendee } from "../../types/calendar";
@@ -183,6 +184,8 @@ export default function NoteEditor({
     if (reason === "no-segments") return "noSegments";
     return "unknown";
   }, [notePipeline?.preservedReason, note.retranscribe_outcome]);
+
+  const isSliceOfSharedRecording = note.slice_start_s != null;
 
   const startReprocess = useCallback(async () => {
     setPendingReprocess(false);
@@ -718,6 +721,7 @@ export default function NoteEditor({
   return (
     <div className="flex h-full min-h-0">
       <div className="flex-1 min-w-0 flex flex-col">
+        <CallSplitBanner note={note} />
         {preservedTranscriptKey && (
           <div className="mx-5 mt-3 rounded-md border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-[11px] leading-relaxed text-foreground/70">
             <span className="font-medium text-foreground/80">{t("pipeline.preserved.title")}</span>{" "}
@@ -955,24 +959,32 @@ export default function NoteEditor({
               {note.note_type === "meeting" &&
                 !isRecording &&
                 (note.system_audio_path || note.mic_audio_path) && (
-                  <button
-                    className="shrink-0 h-6 flex items-center gap-1 px-1.5 rounded-md bg-foreground/4 dark:bg-white/5 text-foreground/50 dark:text-foreground/40 hover:text-foreground/70 hover:bg-foreground/8 dark:hover:text-foreground/60 dark:hover:bg-white/8 transition-colors duration-150 text-[11px] disabled:opacity-40 disabled:pointer-events-none"
-                    onClick={handleReprocessClick}
-                    onBlur={() => setPendingReprocess(false)}
-                    disabled={isReprocessing}
-                    title={t("notes.reprocess.title")}
+                  <span
+                    className="shrink-0"
+                    title={
+                      isSliceOfSharedRecording
+                        ? t("notes.reprocess.sliceDisabled")
+                        : t("notes.reprocess.title")
+                    }
                   >
-                    {isReprocessing ? (
-                      <Loader2 size={11} className="animate-spin" />
-                    ) : (
-                      <RotateCcw size={11} />
-                    )}
-                    {isReprocessing
-                      ? t("notes.reprocess.inProgress")
-                      : pendingReprocess
-                        ? t("notes.reprocess.confirm")
-                        : t("notes.reprocess.label")}
-                  </button>
+                    <button
+                      className="shrink-0 h-6 flex items-center gap-1 px-1.5 rounded-md bg-foreground/4 dark:bg-white/5 text-foreground/50 dark:text-foreground/40 hover:text-foreground/70 hover:bg-foreground/8 dark:hover:text-foreground/60 dark:hover:bg-white/8 transition-colors duration-150 text-[11px] disabled:opacity-40 disabled:pointer-events-none"
+                      onClick={handleReprocessClick}
+                      onBlur={() => setPendingReprocess(false)}
+                      disabled={isReprocessing || isSliceOfSharedRecording}
+                    >
+                      {isReprocessing ? (
+                        <Loader2 size={11} className="animate-spin" />
+                      ) : (
+                        <RotateCcw size={11} />
+                      )}
+                      {isReprocessing
+                        ? t("notes.reprocess.inProgress")
+                        : pendingReprocess
+                          ? t("notes.reprocess.confirm")
+                          : t("notes.reprocess.label")}
+                    </button>
+                  </span>
                 )}
               {(onExportNote || onExportTranscript) && (
                 <DropdownMenu>

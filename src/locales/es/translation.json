@@ -2078,7 +2078,18 @@
       "inProgress": "Reprocesando…",
       "started": "Reprocesamiento iniciado: se ejecuta en segundo plano.",
       "failed": "Error al reprocesar: {{error}}",
-      "downloadNeeded": "Descargando primero el modelo de transcripción…"
+      "downloadNeeded": "Descargando primero el modelo de transcripción…",
+      "sliceDisabled": "Esta nota es una llamada de una grabación más larga. Volver a transcribirla recuperaría la grabación completa, por eso está desactivado aquí."
+    },
+    "callSplit": {
+      "message": "Esto parece {{count}} llamadas grabadas juntas.",
+      "split": "Dividir",
+      "splitting": "Dividiendo…",
+      "dismiss": "Descartar",
+      "confirmTitle": "¿Dividir esta grabación en {{count}} notas?",
+      "confirmDescription": "Cada llamada se convierte en su propia nota, con sus propias notas y su propia fecha. Las notas generadas, los nombres de los participantes y el tipo de reunión se quedan con la primera llamada. Esto no se puede deshacer.",
+      "done": "Dividida en {{count}} notas.",
+      "failed": "No hay nada que dividir: no se encontró ningún límite entre llamadas."
     },
     "reprocessAll": {
       "label": "Reprocesar todas las reuniones",

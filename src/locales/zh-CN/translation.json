@@ -2078,7 +2078,18 @@
       "inProgress": "重新处理中…",
       "started": "已开始重新处理 — 将在后台运行。",
       "failed": "重新处理失败：{{error}}",
-      "downloadNeeded": "正在先下载转录模型…"
+      "downloadNeeded": "正在先下载转录模型…",
+      "sliceDisabled": "这条笔记是一段更长录音中的一个通话。重新转写会把整段录音带回来，因此此处已禁用。"
+    },
+    "callSplit": {
+      "message": "这段录音看起来包含 {{count}} 个通话。",
+      "split": "拆分",
+      "splitting": "正在拆分…",
+      "dismiss": "忽略",
+      "confirmTitle": "将这段录音拆分为 {{count}} 条笔记？",
+      "confirmDescription": "每个通话会成为独立的笔记，有自己的笔记内容和日期。已生成的笔记、说话人姓名和会议类型会留在第一个通话上。此操作无法撤销。",
+      "done": "已拆分为 {{count}} 条笔记。",
+      "failed": "没有可拆分的内容 — 未找到通话边界。"
     },
     "reprocessAll": {
       "label": "重新处理所有会议",

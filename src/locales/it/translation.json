@@ -2078,7 +2078,18 @@
       "inProgress": "Rielaborazione…",
       "started": "Rielaborazione avviata — viene eseguita in background.",
       "failed": "Rielaborazione non riuscita: {{error}}",
-      "downloadNeeded": "Download del modello di trascrizione in corso…"
+      "downloadNeeded": "Download del modello di trascrizione in corso…",
+      "sliceDisabled": "Questa nota è una chiamata di una registrazione più lunga. Una nuova trascrizione riporterebbe l'intera registrazione, quindi qui è disattivata."
+    },
+    "callSplit": {
+      "message": "Sembra che qui ci siano {{count}} chiamate registrate insieme.",
+      "split": "Dividi",
+      "splitting": "Divisione in corso…",
+      "dismiss": "Ignora",
+      "confirmTitle": "Dividere questa registrazione in {{count}} note?",
+      "confirmDescription": "Ogni chiamata diventa una nota a sé, con le proprie note e la propria data. Le note generate, i nomi dei partecipanti e il tipo di riunione restano con la prima chiamata. L'operazione non può essere annullata.",
+      "done": "Divisa in {{count}} note.",
+      "failed": "Niente da dividere: nessun confine tra chiamate trovato."
     },
     "reprocessAll": {
       "label": "Rielabora tutte le riunioni",

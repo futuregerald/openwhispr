@@ -2078,7 +2078,18 @@
       "inProgress": "Wird neu verarbeitet…",
       "started": "Neuverarbeitung gestartet – läuft im Hintergrund.",
       "failed": "Neuverarbeitung fehlgeschlagen: {{error}}",
-      "downloadNeeded": "Transkriptionsmodell wird zuerst heruntergeladen…"
+      "downloadNeeded": "Transkriptionsmodell wird zuerst heruntergeladen…",
+      "sliceDisabled": "Diese Notiz ist ein Anruf aus einer längeren Aufnahme. Eine erneute Transkription würde die ganze Aufnahme zurückbringen, daher ist sie hier deaktiviert."
+    },
+    "callSplit": {
+      "message": "Das sieht nach {{count}} Anrufen aus, die zusammen aufgezeichnet wurden.",
+      "split": "Aufteilen",
+      "splitting": "Wird aufgeteilt…",
+      "dismiss": "Ausblenden",
+      "confirmTitle": "Diese Aufnahme in {{count}} Notizen aufteilen?",
+      "confirmDescription": "Jeder Anruf wird zu einer eigenen Notiz mit eigenen Notizen und eigenem Datum. Die erzeugten Notizen, die Sprechernamen und der Besprechungstyp bleiben beim ersten Anruf. Das lässt sich nicht rückgängig machen.",
+      "done": "In {{count}} Notizen aufgeteilt.",
+      "failed": "Nichts aufzuteilen — es wurde keine Grenze zwischen Anrufen gefunden."
     },
     "reprocessAll": {
       "label": "Alle Meetings neu verarbeiten",

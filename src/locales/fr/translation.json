@@ -2118,7 +2118,18 @@
       "inProgress": "Retraitement…",
       "started": "Retraitement lancé — il s'exécute en arrière-plan.",
       "failed": "Échec du retraitement : {{error}}",
-      "downloadNeeded": "Téléchargement du modèle de transcription d'abord…"
+      "downloadNeeded": "Téléchargement du modèle de transcription d'abord…",
+      "sliceDisabled": "Cette note correspond à un appel issu d'un enregistrement plus long. Une nouvelle transcription ramènerait tout l'enregistrement, c'est pourquoi elle est désactivée ici."
+    },
+    "callSplit": {
+      "message": "Cet enregistrement ressemble à {{count}} appels enregistrés ensemble.",
+      "split": "Diviser",
+      "splitting": "Division…",
+      "dismiss": "Ignorer",
+      "confirmTitle": "Diviser cet enregistrement en {{count}} notes ?",
+      "confirmDescription": "Chaque appel devient sa propre note, avec ses propres notes et sa propre date. Les notes générées, les noms des intervenants et le type de réunion restent avec le premier appel. Cette action est irréversible.",
+      "done": "Divisé en {{count}} notes.",
+      "failed": "Rien à diviser : aucune limite entre appels n'a été trouvée."
     },
     "reprocessAll": {
       "label": "Retraiter toutes les réunions",
