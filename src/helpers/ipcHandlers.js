@@ -3922,6 +3922,16 @@ class IPCHandlers {
       // actually has, instead of truncating the transcript to fit a guess.
       resolveModelContext: (modelId) =>
         require("./modelManagerBridge").default.resolveModelContext(modelId),
+      onNoteCreated: (note) => {
+        setImmediate(() => this.broadcastToWindows("note-added", note));
+        this._asyncVectorUpsert(note);
+        this._asyncMirrorWrite(note);
+      },
+      onNoteReindexed: (note) => {
+        if (!note) return;
+        this._asyncVectorUpsert(note);
+        this._asyncMirrorWrite(note);
+      },
     });
 
     const { digestGeneratedNotes } = require("./generatedNotesDigest");

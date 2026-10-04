@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
-export type PipelineStep = "retranscribe" | "title" | "classify" | "notes" | "pipeline";
+export type PipelineStep =
+  "retranscribe" | "splitCalls" | "title" | "classify" | "notes" | "pipeline";
 export type PipelineStepStatus = "pending" | "running" | "complete" | "skipped" | "error";
 export type RetranscribeSubStage = "converting" | "transcribing" | "diarizing";
 export type DebriefSubStage = "analyzing" | "writing";

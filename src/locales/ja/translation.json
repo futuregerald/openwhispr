@@ -2566,6 +2566,7 @@
     "queued": "queued",
     "steps": {
       "retranscribe": "Re-transcribing",
+      "splitCalls": "通話を分割中",
       "title": "Generating title",
       "classify": "Detecting meeting type",
       "notes": "Generating notes",

@@ -2572,6 +2572,7 @@
     "queued": "queued",
     "steps": {
       "retranscribe": "Re-transcribing",
+      "splitCalls": "Разделение звонков",
       "title": "Generating title",
       "classify": "Detecting meeting type",
       "notes": "Generating notes",

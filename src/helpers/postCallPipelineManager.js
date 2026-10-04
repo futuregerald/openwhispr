@@ -30,7 +30,21 @@ const {
 } = require("./meetingDebriefPrompts");
 const { runMeetingDebrief } = require("./meetingDebriefRunner");
 
-const STEP_ORDER = ["retranscribe", "classify", "title", "notes"];
+const STEP_ORDER = ["retranscribe", "splitCalls", "classify", "title", "notes"];
+
+const MAX_CALL_SPLITS_PER_RUN = 8;
+
+const isSliceOfSharedRecording = (note) => note != null && note.slice_start_s != null;
+
+const parseTranscriptSegments = (transcript) => {
+  if (typeof transcript !== "string" || transcript.trim() === "") return null;
+  try {
+    const parsed = JSON.parse(transcript);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
 
 // STEP_ORDER.indexOf returns -1 for anything unrecognised, and -1 <= 0, so an
 // unvalidated fromStep silently ran the ENTIRE pipeline including
@@ -210,6 +224,8 @@ class PostCallPipelineManager {
     convertToWav,
     resolveModelContext = null,
     notesRegenerationScheduler = null,
+    onNoteCreated = undefined,
+    onNoteReindexed = undefined,
   }) {
     this._broadcast = broadcast;
     this._db = databaseManager;
@@ -218,6 +234,8 @@ class PostCallPipelineManager {
     this._inference = inference;
     this._convertToWav = convertToWav;
     this._notesRegenerationScheduler = notesRegenerationScheduler;
+    this._onNoteCreated = onNoteCreated;
+    this._onNoteReindexed = onNoteReindexed;
     // Absent in the tests that construct this manager directly, and absent for
     // any caller with no local model available; both fall back to one call.
     this._resolveModelContext = resolveModelContext;
@@ -242,8 +260,16 @@ class PostCallPipelineManager {
       }
     }
 
-    // Step 2: Classify meeting type (non-fatal — errors don't halt pipeline)
+    // Step 2: Split a recording that welded several calls together (non-fatal)
     if (fromIndex <= 1) {
+      const childNoteIds = await this._splitCallsStep(noteId);
+      for (const childNoteId of childNoteIds) {
+        await this.run(childNoteId, { fromStep: "classify" });
+      }
+    }
+
+    // Step 3: Classify meeting type (non-fatal — errors don't halt pipeline)
+    if (fromIndex <= 2) {
       try {
         const classifyResult = await this._runStep(noteId, "classify", () =>
           this._classifyMeetingType(noteId, this._transcriptAsOfNow(noteId, transcript))
@@ -262,14 +288,14 @@ class PostCallPipelineManager {
       }
     }
 
-    // Step 3: Generate title
+    // Step 4: Generate title
     //
     // Guarded twice on purpose. The first check keeps "reprocess all meetings"
     // from spending one title call per note on the user's own API key only to
     // discard every result; the second closes the race the first cannot, since
     // re-transcription runs for minutes and the user can title the note in that
     // window.
-    if (fromIndex <= 2) {
+    if (fromIndex <= 3) {
       if (await this._mayGenerateTitle(noteId)) {
         const titleResult = await this._runStep(noteId, "title", () =>
           this._generateTitle(noteId, this._transcriptAsOfNow(noteId, transcript))
@@ -284,8 +310,8 @@ class PostCallPipelineManager {
       }
     }
 
-    // Step 4: Generate notes
-    if (fromIndex <= 3) {
+    // Step 5: Generate notes
+    if (fromIndex <= 4) {
       const transcriptGeneratedFrom = this._transcriptAsOfNow(noteId, transcript);
       const notesResult = await this._runStep(noteId, "notes", () =>
         this._generateNotes(noteId, transcriptGeneratedFrom)
@@ -443,10 +469,80 @@ class PostCallPipelineManager {
     }
   }
 
+  async _splitCallsStep(noteId) {
+    const childNoteIds = [];
+    try {
+      const { detectCallBoundaries } = await import("./callBoundaries.js");
+      const { splitNoteAtBoundary } = require("./splitNoteAtBoundary.js");
+
+      let announced = false;
+      for (let attempt = 0; attempt < MAX_CALL_SPLITS_PER_RUN; attempt += 1) {
+        const note = this._db.getNote(noteId);
+        const segments = parseTranscriptSegments(note && note.transcript);
+        if (!segments) break;
+
+        const report = detectCallBoundaries(segments);
+        if (report.refused || report.boundaries.length === 0) break;
+
+        if (!announced) {
+          this._emitStatus(noteId, "splitCalls", "running");
+          announced = true;
+        }
+
+        const result = splitNoteAtBoundary({
+          databaseManager: this._db,
+          noteId,
+          report,
+          boundaryIndex: report.boundaries.length - 1,
+          onNoteCreated: this._onNoteCreated,
+        });
+
+        if (!result.success) {
+          debugLogger.warn(
+            "Pipeline: call boundary found but the split was declined",
+            { noteId, reason: result.reason },
+            "meeting"
+          );
+          break;
+        }
+
+        childNoteIds.unshift(result.childNoteId);
+        this._broadcastNoteUpdate(noteId);
+        if (this._onNoteReindexed) this._onNoteReindexed(this._db.getNote(noteId));
+      }
+
+      if (!announced) {
+        this._emitStatus(noteId, "splitCalls", "skipped");
+        return [];
+      }
+
+      this._emitStatus(noteId, "splitCalls", "complete");
+      return childNoteIds;
+    } catch (err) {
+      debugLogger.error(
+        "Pipeline step splitCalls failed",
+        { noteId, error: err.message },
+        "meeting"
+      );
+      this._emitStatus(noteId, "splitCalls", "error", err.message);
+      return childNoteIds;
+    }
+  }
+
   // Re-transcription must never trade a structured, speaker-labelled transcript for a
   // plain-text blob. The shared module either produces segments that preserve the
   // speaker identities or declines, and this step only persists the former.
   async _retranscribeStep(noteId, note) {
+    if (isSliceOfSharedRecording(note)) {
+      this._broadcast("post-call-pipeline-status", {
+        noteId,
+        step: "retranscribe",
+        status: "skipped",
+        reason: "transcript-is-slice",
+      });
+      return {};
+    }
+
     const hasAudio = [note.system_audio_path, note.mic_audio_path].some(
       (audioPath) => audioPath && fs.existsSync(audioPath)
     );

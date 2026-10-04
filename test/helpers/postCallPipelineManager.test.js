@@ -1617,7 +1617,11 @@ test("every step the retry menu can ask for re-runs the right set", async () => 
   );
 
   const expected = {
-    retranscribe: ["retranscribe", "classify", "title", "notes"],
+    // splitCalls sits between retranscribe and classify, so a retranscribe
+    // retry now also re-examines the note for a welded call boundary. It emits
+    // a status either way -- "skipped" when there is no boundary -- so it shows
+    // up here even for a note that is never split.
+    retranscribe: ["retranscribe", "splitCalls", "classify", "title", "notes"],
     // Classification is settled before the title now, so a title retry can no
     // longer rewrite the meeting type the user chose.
     title: ["title", "notes"],
@@ -2520,4 +2524,347 @@ test("notes the user cleared are not refilled by a regeneration already in fligh
     0,
     "emptying the notes is an edit like any other, not an invitation to refill them"
   );
+});
+
+// ── Splitting welded calls, and refusing to retranscribe a slice ────────────
+//
+// A meeting recording that ran straight through several back-to-back calls is
+// one note covering the whole morning. The pipeline now splits it at the scored
+// silence boundary, which means one run can produce several notes.
+//
+// The hazard this section exists for: parent and child share ONE audio file.
+// Retranscribe transcribes the whole file, so without the slice gate a
+// reprocess hands both notes the full welded transcript back, the boundary
+// reappears in each, and every reprocess-all doubles the library. The fakes
+// below are built so that defect is VISIBLE: the whisper fake returns the full
+// two-call transcript, and the database fake actually stores what is written to
+// it. A static one-segment fake cannot see it.
+
+const SPLIT_SPACING_SECONDS = 25;
+const SPLIT_SEGMENTS_PER_CALL = 25;
+const SPLIT_SILENCE_SECONDS = 150;
+
+// Call A ends on a farewell (+2), call B opens on a greeting (+2), and the
+// silence between them is over two minutes (+1) — score 5 against a threshold
+// of 3. Each side holds 25 segments (over MIN_SESSION_SEGMENTS) and spans 600s
+// (over MIN_PIECE_SECONDS, under MAX_PIECE_SECONDS).
+function weldedWhisperSegments() {
+  const segments = [];
+  for (let i = 0; i < SPLIT_SEGMENTS_PER_CALL; i += 1) {
+    const start = i * SPLIT_SPACING_SECONDS;
+    segments.push({
+      start,
+      end: start + 5,
+      text:
+        i === SPLIT_SEGMENTS_PER_CALL - 1
+          ? "Alright, talk to you later, bye."
+          : `Rollout turn ${i}: we walked the migration plan and the staffing for it.`,
+    });
+  }
+  const offset = (SPLIT_SEGMENTS_PER_CALL - 1) * SPLIT_SPACING_SECONDS + SPLIT_SILENCE_SECONDS;
+  for (let i = 0; i < SPLIT_SEGMENTS_PER_CALL; i += 1) {
+    const start = offset + i * SPLIT_SPACING_SECONDS;
+    segments.push({
+      start,
+      end: start + 5,
+      text:
+        i === 0
+          ? "Hey, thanks for joining, can you hear me?"
+          : `Hiring turn ${i}: we reviewed the open roles and the interview loop.`,
+    });
+  }
+  return segments;
+}
+
+function singleCallWhisperSegments() {
+  return Array.from({ length: SPLIT_SEGMENTS_PER_CALL * 2 }, (_, i) => {
+    const start = i * SPLIT_SPACING_SECONDS;
+    return {
+      start,
+      end: start + 5,
+      text: `Rollout turn ${i}: we walked the migration plan and the staffing for it.`,
+    };
+  });
+}
+
+const asStoredTranscript = (whisperSegments) =>
+  JSON.stringify(
+    whisperSegments.map((seg, index) => ({
+      id: `retranscribe-${index}`,
+      text: seg.text,
+      source: "system",
+      timestamp: seg.start,
+    }))
+  );
+
+// Stores what is written to it, in a plain Map, and hands every reader a copy.
+// That is the whole point: the re-weld defect is only observable if a
+// transcript written by retranscribe is the transcript the split step then
+// reads back.
+function splitFakeDb(seedNotes) {
+  const rows = new Map();
+  for (const note of seedNotes) rows.set(note.id, { ...note });
+  let nextId = Math.max(...rows.keys()) + 1;
+
+  return {
+    rows,
+    db: {
+      transaction: (fn) => fn,
+      prepare: () => ({ all: () => [], run: () => {} }),
+    },
+    getNote: (id) => (rows.has(id) ? { ...rows.get(id) } : null),
+    updateNote: (id, updates) => {
+      if (!rows.has(id)) return { success: false };
+      Object.assign(rows.get(id), updates);
+      return { success: true, note: { ...rows.get(id) } };
+    },
+    saveNote: (title, content, noteType, sourceFile, audioDuration, folderId) => {
+      const id = nextId;
+      nextId += 1;
+      rows.set(id, {
+        id,
+        title,
+        content,
+        note_type: noteType,
+        source_file: sourceFile,
+        audio_duration_seconds: audioDuration,
+        folder_id: folderId,
+        transcript: null,
+        enhanced_content: null,
+        meeting_type_id: null,
+        mic_audio_path: null,
+        system_audio_path: null,
+        transcript_origin_ms: null,
+        transcript_origin_source: null,
+        split_parent_note_id: null,
+        slice_start_s: null,
+        slice_end_s: null,
+        created_at: "2026-10-02 09:00:00",
+      });
+      return { success: true, note: { ...rows.get(id) } };
+    },
+    setNoteCreatedAt: (id, value) => {
+      if (!rows.has(id)) return { success: false };
+      rows.get(id).created_at = value;
+      return { success: true };
+    },
+    _reindexTranscriptNow: () => {},
+    getMeetingType: () => null,
+    getMeetingTypes: () => [],
+    getSpeakerMappings: () => [],
+    getNoteSpeakerEmbeddings: () => [],
+  };
+}
+
+const WELDED_SEED_NOTE = {
+  id: 1,
+  title: "New note",
+  content: "",
+  note_type: "meeting",
+  source_file: null,
+  folder_id: 1,
+  audio_duration_seconds: 1400,
+  system_audio_path: "/tmp/test.opus",
+  mic_audio_path: null,
+  meeting_type_id: null,
+  enhanced_content: null,
+  transcript: JSON.stringify([
+    {
+      id: "live-0",
+      text: "Rollout turn 0: we walked the migration plan.",
+      source: "system",
+      speaker: "speaker_0",
+      timestamp: 0,
+    },
+  ]),
+  transcript_origin_ms: null,
+  transcript_origin_source: "unanchored",
+  split_parent_note_id: null,
+  slice_start_s: null,
+  slice_end_s: null,
+  created_at: "2026-10-02 09:00:00",
+};
+
+function splitMocks(seedNotes, whisperSegments) {
+  const mocks = createMocks();
+  const db = splitFakeDb(seedNotes);
+  mocks.databaseManager = db;
+  mocks.rows = db.rows;
+  mocks.created = [];
+  mocks.reindexed = [];
+  mocks.whisperManager.transcribeLocalWhisper = async () => ({
+    success: true,
+    text: whisperSegments.map((seg) => seg.text).join(" "),
+    segments: whisperSegments,
+  });
+  return mocks;
+}
+
+async function withStubbedAudio(fn) {
+  const fs = require("fs");
+  const origExists = fs.existsSync;
+  const origReadFile = fs.readFileSync;
+  const origUnlink = fs.unlinkSync;
+  fs.existsSync = (p) => (p === "/tmp/test.opus" || p === "/tmp/model.bin" ? true : origExists(p));
+  fs.readFileSync = (...args) =>
+    typeof args[0] === "string" && args[0].includes("ow-retranscribe")
+      ? Buffer.from("fake wav")
+      : origReadFile(...args);
+  fs.unlinkSync = (p) => {
+    if (!String(p).includes("ow-retranscribe")) origUnlink(p);
+  };
+  process.env.NOTE_FORMATTING_PROVIDER = "openai";
+  process.env.NOTE_FORMATTING_MODEL = "gpt-5.5";
+  try {
+    return await fn();
+  } finally {
+    fs.existsSync = origExists;
+    fs.readFileSync = origReadFile;
+    fs.unlinkSync = origUnlink;
+    delete process.env.NOTE_FORMATTING_PROVIDER;
+    delete process.env.NOTE_FORMATTING_MODEL;
+  }
+}
+
+const statusesFor = (mocks, noteId, step) =>
+  mocks.events
+    .filter(
+      (e) => e.channel === "post-call-pipeline-status" && e.noteId === noteId && e.step === step
+    )
+    .map((e) => e.status);
+
+function splitManager(PostCallPipelineManager, mocks, extra = {}) {
+  return buildManager(PostCallPipelineManager, mocks, {
+    onNoteCreated: (note) => mocks.created.push(note),
+    onNoteReindexed: (note) => mocks.reindexed.push(note),
+    ...extra,
+  });
+}
+
+test("a welded recording becomes two notes, each with its own classify, title and notes", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = splitMocks([WELDED_SEED_NOTE], weldedWhisperSegments());
+
+  await withStubbedAudio(() => splitManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.size, 2, "one boundary must produce exactly one extra note");
+  const childId = [...mocks.rows.keys()].find((id) => id !== 1);
+
+  assert.deepEqual(statusesFor(mocks, 1, "splitCalls"), ["running", "complete"]);
+
+  for (const noteId of [1, childId]) {
+    for (const step of ["classify", "title", "notes"]) {
+      assert.deepEqual(
+        statusesFor(mocks, noteId, step),
+        ["running", "complete"],
+        `note ${noteId} must run ${step} exactly once`
+      );
+    }
+  }
+
+  assert.equal(JSON.parse(mocks.rows.get(1).transcript).length, SPLIT_SEGMENTS_PER_CALL);
+  assert.equal(JSON.parse(mocks.rows.get(childId).transcript).length, SPLIT_SEGMENTS_PER_CALL);
+
+  assert.deepEqual(
+    mocks.created.map((note) => note.id),
+    [childId],
+    "the child must reach the IPC layer's note-added / vector / mirror effects"
+  );
+  assert.ok(
+    mocks.reindexed.some((note) => note.id === 1),
+    "the parent's transcript changed in place, so its vector row must be re-upserted or search_notes keeps the welded text"
+  );
+});
+
+test("a recording with one call stays one note and the split step reports skipped", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = splitMocks([WELDED_SEED_NOTE], singleCallWhisperSegments());
+
+  await withStubbedAudio(() => splitManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.size, 1);
+  assert.deepEqual(statusesFor(mocks, 1, "splitCalls"), ["skipped"]);
+  assert.deepEqual(mocks.created, []);
+});
+
+const splitPairSeed = () => {
+  const welded = asStoredTranscript(weldedWhisperSegments());
+  const all = JSON.parse(welded);
+  const callA = all.slice(0, SPLIT_SEGMENTS_PER_CALL);
+  const callB = all.slice(SPLIT_SEGMENTS_PER_CALL);
+  return [
+    {
+      ...WELDED_SEED_NOTE,
+      id: 1,
+      transcript: JSON.stringify(callA),
+      split_parent_note_id: 1,
+      slice_start_s: callA[0].timestamp,
+      slice_end_s: callA[callA.length - 1].timestamp,
+    },
+    {
+      ...WELDED_SEED_NOTE,
+      id: 2,
+      transcript: JSON.stringify(callB),
+      split_parent_note_id: 1,
+      slice_start_s: callB[0].timestamp,
+      slice_end_s: callB[callB.length - 1].timestamp,
+    },
+  ];
+};
+
+// MUTATION PROOF 9. Remove the slice gate in _retranscribeStep and this test
+// must produce a third note: retranscribe hands note 1 the full two-call
+// transcript back, the boundary reappears, and the split step runs again.
+test("a sliced note re-run from retranscribe is not retranscribed and does not split again", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const seed = splitPairSeed();
+  const mocks = splitMocks(seed, weldedWhisperSegments());
+  const before = mocks.rows.get(1).transcript;
+
+  await withStubbedAudio(() =>
+    splitManager(PostCallPipelineManager, mocks).run(1, { fromStep: "retranscribe" })
+  );
+
+  assert.deepEqual(statusesFor(mocks, 1, "retranscribe"), ["skipped"]);
+  assert.equal(
+    mocks.events.find((e) => e.step === "retranscribe" && e.status === "skipped")?.reason,
+    "transcript-is-slice"
+  );
+  assert.equal(mocks.rows.get(1).transcript, before, "a slice's transcript must not be rewritten");
+  assert.equal(mocks.rows.size, 2, "re-welding a split pair is what doubles the library");
+});
+
+test("a reprocess over an already-split pair leaves the library the same size", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const seed = splitPairSeed();
+  const mocks = splitMocks(seed, weldedWhisperSegments());
+  const before = new Map([...mocks.rows].map(([id, note]) => [id, note.transcript]));
+
+  await withStubbedAudio(async () => {
+    const manager = splitManager(PostCallPipelineManager, mocks);
+    await manager.run(1, { fromStep: "retranscribe" });
+    await manager.run(2, { fromStep: "retranscribe" });
+  });
+
+  assert.equal(mocks.rows.size, 2);
+  for (const [id, transcript] of before) {
+    assert.equal(mocks.rows.get(id).transcript, transcript, `note ${id} was re-welded`);
+  }
+});
+
+test("a split that throws is non-fatal: the notes are still generated", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = splitMocks([WELDED_SEED_NOTE], weldedWhisperSegments());
+
+  // No onNoteCreated wired, which is what splitNoteAtBoundary throws over
+  // rather than quietly creating a child the renderer never hears about.
+  await withStubbedAudio(() =>
+    buildManager(PostCallPipelineManager, mocks, {
+      onNoteReindexed: (note) => mocks.reindexed.push(note),
+    }).run(1)
+  );
+
+  assert.equal(statusesFor(mocks, 1, "splitCalls").at(-1), "error");
+  assert.equal(mocks.rows.size, 1, "a throwing split must write nothing");
+  assert.deepEqual(statusesFor(mocks, 1, "notes"), ["running", "complete"]);
 });
