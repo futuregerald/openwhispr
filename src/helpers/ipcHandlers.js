@@ -396,6 +396,20 @@ class IPCHandlers {
     });
   }
 
+  _notifyNoteCreated(note) {
+    if (!note) return;
+    setImmediate(() => this.broadcastToWindows("note-added", note));
+    this._asyncVectorUpsert(note);
+    this._asyncMirrorWrite(note);
+  }
+
+  _notifyNoteChanged(note) {
+    if (!note) return;
+    setImmediate(() => this.broadcastToWindows("note-updated", note));
+    this._asyncVectorUpsert(note);
+    this._asyncMirrorWrite(note);
+  }
+
   // A note write that skips this loses the `note-updated` broadcast, and the renderer's
   // note store has no other live refresh path — it would keep serving the pre-write
   // transcript and write it back over this one on the next speaker edit.
@@ -899,17 +913,29 @@ class IPCHandlers {
     });
 
     ipcMain.handle("delete-note-audio", async (_event, noteId) => {
+      const {
+        audioPathsOf,
+        notesSharingAudioPaths,
+        planSharedAudioClear,
+      } = require("./sharedNoteAudio.js");
       const note = this.databaseManager.getNote(noteId);
       if (!note) return { success: false, error: "Note not found" };
-      for (const p of [note.mic_audio_path, note.system_audio_path]) {
-        if (p && fs.existsSync(p)) {
+
+      const paths = audioPathsOf(note);
+      const siblings = notesSharingAudioPaths(this.databaseManager.db, paths);
+      const updates = planSharedAudioClear([note, ...siblings], paths);
+
+      for (const p of paths) {
+        if (fs.existsSync(p)) {
           try {
             fs.unlinkSync(p);
           } catch (_) {}
         }
       }
-      this.databaseManager.updateNote(noteId, { mic_audio_path: null, system_audio_path: null });
-      return { success: true };
+      for (const update of updates) {
+        this._updateNoteAndNotify(update.noteId, update.fields);
+      }
+      return { success: true, clearedNoteIds: updates.map((update) => update.noteId) };
     });
 
     ipcMain.handle("retranscribe-meeting-note", async (event, noteId, options = {}) => {
@@ -3922,11 +3948,7 @@ class IPCHandlers {
       // actually has, instead of truncating the transcript to fit a guess.
       resolveModelContext: (modelId) =>
         require("./modelManagerBridge").default.resolveModelContext(modelId),
-      onNoteCreated: (note) => {
-        setImmediate(() => this.broadcastToWindows("note-added", note));
-        this._asyncVectorUpsert(note);
-        this._asyncMirrorWrite(note);
-      },
+      onNoteCreated: (note) => this._notifyNoteCreated(note),
       onNoteReindexed: (note) => {
         if (!note) return;
         this._asyncVectorUpsert(note);
@@ -7430,6 +7452,36 @@ class IPCHandlers {
       queueLength: this.backgroundJobQueue?.length ?? 0,
       activeJob: this.backgroundJobQueue?.activeJob ?? null,
     }));
+
+    ipcMain.handle("scan-note-call-boundaries", async (_event, noteId) => {
+      const { scanNoteCallBoundaries } = require("./noteCallSplit.js");
+      return scanNoteCallBoundaries({ databaseManager: this.databaseManager, noteId });
+    });
+
+    ipcMain.handle("split-note-calls", async (_event, noteId) => {
+      const { splitNoteCalls } = require("./noteCallSplit.js");
+      const result = await splitNoteCalls({
+        databaseManager: this.databaseManager,
+        noteId,
+        onNoteCreated: (note) => this._notifyNoteCreated(note),
+        onNoteChanged: (note) => this._notifyNoteChanged(note),
+      });
+      if (!result.success) return result;
+
+      for (const id of [result.parentNoteId, ...result.childNoteIds]) {
+        this.backgroundJobQueue.enqueueKind(`post-call-retry-${id}`, JOB_KINDS.POST_CALL_PIPELINE, {
+          noteId: id,
+          fromStep: "classify",
+        });
+      }
+      return result;
+    });
+
+    ipcMain.handle("dismiss-note-call-split", async (_event, noteId) => {
+      const result = this._updateNoteAndNotify(noteId, { call_split_dismissed: 1 });
+      if (!result?.success) return { success: false, error: "Note not found" };
+      return { success: true };
+    });
 
     ipcMain.handle("retry-pipeline-step", async (_event, noteId, fromStep) => {
       // An unrecognised step used to run the WHOLE pipeline, re-transcription

@@ -98,6 +98,10 @@ export interface NoteItem {
   retranscribe_outcome?: string | null;
   transcript_origin_ms?: number | null;
   transcript_origin_source?: "audio:system" | "first-segment" | "unanchored" | null;
+  split_parent_note_id?: number | null;
+  slice_start_s?: number | null;
+  slice_end_s?: number | null;
+  call_split_dismissed?: number | null;
 }
 
 export interface FolderItem {
@@ -466,7 +470,9 @@ declare global {
         micUrl: string | null;
         systemUrl: string | null;
       }>;
-      deleteNoteAudio?: (noteId: number) => Promise<{ success: boolean }>;
+      deleteNoteAudio?: (
+        noteId: number
+      ) => Promise<{ success: boolean; error?: string; clearedNoteIds?: number[] }>;
       retranscribeMeetingNote?: (
         noteId: number,
         options?: { model?: string; language?: string }
@@ -475,6 +481,20 @@ declare global {
         noteId: number,
         fromStep: string
       ) => Promise<{ success: boolean; error?: string; queued?: boolean }>;
+      scanNoteCallBoundaries?: (noteId: number) => Promise<{
+        success: boolean;
+        noteId?: number;
+        boundaryCount?: number;
+        callCount?: number;
+        error?: string;
+      }>;
+      splitNoteCalls?: (noteId: number) => Promise<{
+        success: boolean;
+        parentNoteId?: number;
+        childNoteIds?: number[];
+        reason?: string;
+      }>;
+      dismissNoteCallSplit?: (noteId: number) => Promise<{ success: boolean; error?: string }>;
       getNoteRetrySteps?: (noteIds: number[]) => Promise<{
         success: boolean;
         steps?: Record<number, string | null>;
