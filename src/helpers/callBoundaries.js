@@ -40,6 +40,7 @@ import { scoreCallBoundary, BOUNDARY_WINDOW_SECONDS } from "./callBoundaryScore.
 export const SESSION_GAP_SECONDS = 30;
 export const MIN_SESSION_SEGMENTS = 20;
 export const MIN_PIECE_SECONDS = 300;
+export const MAX_PIECE_SECONDS = 4 * 60 * 60;
 
 const unitDivisor = (unit) => (unit === "epoch-ms" ? 1000 : 1);
 
@@ -82,13 +83,14 @@ const piecesFrom = (sessions, cuts, divisor) => {
 /**
  * @param {readonly BoundarySegment[]} segments the note's transcript segments, in whatever
  * order they are stored
- * @param {{ gapSeconds?: number, minSessionSegments?: number, minPieceSeconds?: number }} [options]
+ * @param {{ gapSeconds?: number, minSessionSegments?: number, minPieceSeconds?: number, maxPieceSeconds?: number }} [options]
  * @returns {CallBoundaryReport}
  */
 export const detectCallBoundaries = (segments, options = {}) => {
   const gapSeconds = options.gapSeconds ?? SESSION_GAP_SECONDS;
   const minSessionSegments = options.minSessionSegments ?? MIN_SESSION_SEGMENTS;
   const minPieceSeconds = options.minPieceSeconds ?? MIN_PIECE_SECONDS;
+  const maxPieceSeconds = options.maxPieceSeconds ?? MAX_PIECE_SECONDS;
 
   const list = Array.isArray(segments) ? segments : [];
   const report = detectSessions(list, { gapSeconds, minSessionSegments });
@@ -149,6 +151,13 @@ export const detectCallBoundaries = (segments, options = {}) => {
     const dropped = bordering[0];
     cuts = cuts.filter((_, position) => position !== dropped);
   }
+
+  const settled = piecesFrom(sessions, cuts, divisor);
+  cuts = cuts.filter(
+    (_, position) =>
+      settled[position].durationSeconds <= maxPieceSeconds &&
+      settled[position + 1].durationSeconds <= maxPieceSeconds
+  );
 
   const pieces = piecesFrom(sessions, cuts, divisor);
   const boundaries = cuts.map((sessionIndex, position) => {
