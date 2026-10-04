@@ -48,7 +48,20 @@ function isAcceptableNoteValue(field, value) {
   if (value === null) return true;
   if (field === "transcript_origin_ms") return Number.isSafeInteger(value) && value > 0;
   if (field === "transcript_origin_source") return TRANSCRIPT_ORIGIN_SOURCES.has(value);
+  if (field === "slice_start_s" || field === "slice_end_s") {
+    return Number.isFinite(value) && value >= 0;
+  }
+  if (field === "split_parent_note_id") return Number.isSafeInteger(value) && value > 0;
+  if (field === "call_split_dismissed") return value === 0 || value === 1;
   return true;
+}
+
+const UTC_SQLITE_TIMESTAMP = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+
+function isUtcSqliteTimestamp(value) {
+  if (typeof value !== "string" || !UTC_SQLITE_TIMESTAMP.test(value)) return false;
+  const parsed = new Date(`${value.replace(" ", "T")}Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().startsWith(value.slice(0, 10));
 }
 
 // transcript_segment_index.mixed_units is deliberately NOT consulted here. It reports that a
@@ -643,6 +656,26 @@ class DatabaseManager {
       }
       try {
         this.db.exec("ALTER TABLE notes ADD COLUMN transcript_origin_source TEXT");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+      try {
+        this.db.exec("ALTER TABLE notes ADD COLUMN split_parent_note_id INTEGER");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+      try {
+        this.db.exec("ALTER TABLE notes ADD COLUMN slice_start_s REAL");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+      try {
+        this.db.exec("ALTER TABLE notes ADD COLUMN slice_end_s REAL");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+      try {
+        this.db.exec("ALTER TABLE notes ADD COLUMN call_split_dismissed INTEGER");
       } catch (err) {
         if (!err.message.includes("duplicate column")) throw err;
       }
@@ -1765,6 +1798,10 @@ class DatabaseManager {
         "retranscribe_outcome",
         "transcript_origin_ms",
         "transcript_origin_source",
+        "split_parent_note_id",
+        "slice_start_s",
+        "slice_end_s",
+        "call_split_dismissed",
       ];
       const fields = [];
       const values = [];
@@ -1802,6 +1839,28 @@ class DatabaseManager {
       return { success: true, note };
     } catch (error) {
       debugLogger.error("Error updating note", { error: error.message }, "notes");
+      throw error;
+    }
+  }
+
+  setNoteCreatedAt(id, utcString) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      if (!isUtcSqliteTimestamp(utcString)) {
+        debugLogger.warn(
+          "Refused a note created_at that is not a UTC 'YYYY-MM-DD HH:MM:SS' string",
+          { noteId: id, value: String(utcString) },
+          "notes"
+        );
+        return { success: false };
+      }
+      const result = this.db
+        .prepare("UPDATE notes SET created_at = ? WHERE id = ?")
+        .run(utcString, id);
+      if (result.changes === 0) return { success: false };
+      return { success: true, note: this.db.prepare("SELECT * FROM notes WHERE id = ?").get(id) };
+    } catch (error) {
+      debugLogger.error("Error setting note created_at", { error: error.message }, "notes");
       throw error;
     }
   }
