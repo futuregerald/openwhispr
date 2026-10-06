@@ -52,6 +52,7 @@ function isAcceptableNoteValue(field, value) {
     return Number.isFinite(value) && value >= 0;
   }
   if (field === "split_parent_note_id") return Number.isSafeInteger(value) && value > 0;
+  if (field === "audio_duration_seconds") return Number.isFinite(value) && value >= 0;
   if (field === "call_split_dismissed") return value === 0 || value === 1;
   return true;
 }
@@ -1802,6 +1803,7 @@ class DatabaseManager {
         "slice_start_s",
         "slice_end_s",
         "call_split_dismissed",
+        "audio_duration_seconds",
       ];
       const fields = [];
       const values = [];

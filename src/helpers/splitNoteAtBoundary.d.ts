@@ -36,7 +36,15 @@ export type SplitRefusal =
  * yield the same scale.
  */
 export type AudioSlice = {
+  /** The first retained utterance's start, so any leading silence is excluded. */
   start: number;
+  /**
+   * The last retained utterance's `rangeEnd` where the transcript carries one —
+   * re-transcription writes it — and that utterance's START otherwise, because a
+   * live-captured segment records no end. So for a live-captured transcript this
+   * is short by the length of the final utterance, and `end - start`, which is
+   * what each note's `audio_duration_seconds` becomes, is short by the same.
+   */
   end: number;
 };
 
@@ -57,14 +65,31 @@ export type SplitResult =
  *
  * The parent keeps `report.pieces` up to and including the boundary's
  * `beforePieceIndex`; the child takes every piece from `afterPieceIndex` on.
- * Segments move by `indices` membership, never by walking an index range, and
- * both notes end up with `split_parent_note_id` set to the parent's own id, so
- * one query returns every piece of a recording.
+ * Segments move by `indices` membership, never by walking an index range.
+ *
+ * Both notes get `split_parent_note_id` set to the parent's own id. Nothing in
+ * the app reads that column yet — it is written for a future "show me the other
+ * pieces of this recording" query, and for support when someone asks why a note
+ * is half a meeting. Two limitations to know before relying on it: splitting a
+ * CHILD overwrites the child's `split_parent_note_id` with the child's own id,
+ * so the chain back to the original recording is lost after the second split,
+ * and nothing enforces that the id still names a live note.
  *
  * Timestamps and the transcript origin are carried across untouched: the two
  * notes describe the same audio file, so a rebased offset would point at the
  * wrong moment in it, and an origin recomputed from the child's first segment
  * would add that offset a second time.
+ *
+ * `childTitle` defaults to the empty string. Inheriting the parent's title would
+ * leave the child with a title that is not one of the app's placeholders, which
+ * makes `isRegenerableNoteTitle` answer false, so the title step skips and the
+ * child stays named after the parent's call — and the child deliberately carries
+ * no `calendar_event_id`, the only other route to a generated title.
+ *
+ * Each note's `audio_duration_seconds` is set to its own slice length, rounded
+ * to whole seconds. Copying the parent's value to both notes made the
+ * meeting-time stats (`database.js`'s duration buckets) count one recording
+ * twice.
  *
  * `onNoteCreated` is required and throws when absent. It is called once, after
  * the transaction commits, with the stored child row. The renderer broadcast,

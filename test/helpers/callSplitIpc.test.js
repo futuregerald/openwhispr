@@ -345,3 +345,47 @@ test("the split loop terminates at maxSplits rather than looping forever", async
     "the parent is left still holding two calls, which the banner will offer again"
   );
 });
+
+// Every note the pipeline has already re-transcribed has transcript_origin_ms
+// NULL and transcript_origin_source "unanchored", and the origin backfill skips
+// rows that already have a source, so the origin never comes back. Without an
+// anchor the child inherits the parent's created_at, and since PR #116 that is
+// both the date the notes list shows and the key it sorts on — so the two pieces
+// would show one date and sit next to each other, which is the opposite of what
+// splitting is for. The banner is now the only split path, so this is the main
+// case, not an edge one.
+test("a split dates each half from its own meeting time even with no transcript origin", async () => {
+  const { databaseManager } = setup();
+  const noteId = seedNote(databaseManager, { segments: weldedSegments() });
+  assert.equal(databaseManager.setNoteCreatedAt(noteId, "2026-10-02 09:00:00").success, true);
+  assert.equal(databaseManager.getNote(noteId).transcript_origin_ms, null);
+
+  const childId = (await invoke("split-note-calls", noteId)).childNoteIds[0];
+
+  const childFirstOffsetSeconds = (SEGMENTS_PER_CALL - 1) * SPACING_SECONDS + SILENCE_SECONDS;
+  const expected = new Date(Date.UTC(2026, 9, 2, 9, 0, 0) + childFirstOffsetSeconds * 1000)
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", " ");
+
+  assert.equal(databaseManager.getNote(childId).created_at, expected);
+  assert.notEqual(
+    databaseManager.getNote(childId).created_at,
+    databaseManager.getNote(noteId).created_at,
+    "two pieces sharing a date sort together and read as one meeting"
+  );
+});
+
+test("the anchor reads created_at as UTC, the way CURRENT_TIMESTAMP wrote it", async () => {
+  // created_at is stored 'YYYY-MM-DD HH:MM:SS' in UTC. Parsing it with
+  // new Date("2026-01-02 03:00:00") reads it as LOCAL time, which shifts every
+  // split child by the machine's offset — invisible in UTC-0 and wrong anywhere
+  // else.
+  const { databaseManager } = setup();
+  const noteId = seedNote(databaseManager, { segments: weldedSegments() });
+  databaseManager.setNoteCreatedAt(noteId, "2026-01-02 03:00:00");
+
+  const childId = (await invoke("split-note-calls", noteId)).childNoteIds[0];
+
+  assert.equal(databaseManager.getNote(childId).created_at, "2026-01-02 03:12:30");
+});

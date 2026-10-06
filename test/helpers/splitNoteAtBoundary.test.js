@@ -423,3 +423,67 @@ test("updateNote refuses a slice bound or parent id whose value cannot be real",
   assert.equal(db.updateNote(noteId, { call_split_dismissed: 1 }).success, true);
   assert.equal(db.getNote(noteId).call_split_dismissed, 1);
 });
+
+test("a caller that passes no title gets a blank child title, not the parent's", () => {
+  // The parent here is titled "Team sync", which is NOT one of the app's title
+  // placeholders. Inheriting it makes isRegenerableNoteTitle answer false, so
+  // the title step skips and the child is permanently named after the parent's
+  // call — and the child deliberately has no calendar_event_id, which is the
+  // only other route back to a generated title.
+  const db = createDb();
+  const { noteId, result } = splitSeeded(db);
+
+  assert.equal(db.getNote(noteId).title, "Team sync");
+  assert.equal(result.success, true);
+  assert.equal(db.getNote(result.childNoteId).title, "");
+});
+
+test("each half carries its own slice length, not the whole recording's duration", () => {
+  // Both halves used to copy audio_duration_seconds verbatim, so the stats query
+  // summed the full recording once per note: a 2h42m morning reported 5h24m.
+  const db = createDb();
+  const { noteId, result } = splitSeeded(db);
+
+  const parent = db.getNote(noteId);
+  const child = db.getNote(result.childNoteId);
+
+  assert.equal(
+    parent.audio_duration_seconds,
+    Math.round(result.parentSlice.end - result.parentSlice.start)
+  );
+  assert.equal(
+    child.audio_duration_seconds,
+    Math.round(result.childSlice.end - result.childSlice.start)
+  );
+  assert.ok(
+    parent.audio_duration_seconds + child.audio_duration_seconds < 9803.4,
+    "the two halves together cannot be longer than the recording they came from"
+  );
+});
+
+test("a slice's end comes from the last utterance's own end when the transcript has one", () => {
+  // slice_end_s is the only end stamp either note has, and the per-note duration
+  // is computed from it. Segments written by re-transcription carry rangeEnd, so
+  // use it; live-captured segments have only a start stamp, and for those the
+  // end is the last start.
+  const db = createDb();
+  const withRanges = note95Shape().map((segment) => ({
+    ...segment,
+    rangeStart: segment.timestamp,
+    rangeEnd: segment.timestamp + 12,
+  }));
+  const { noteId } = seedWeldedNote(db, { segments: withRanges });
+  const report = reportFor(withRanges);
+
+  const result = splitNoteAtBoundary({
+    databaseManager: db,
+    noteId,
+    report,
+    boundaryIndex: 0,
+    onNoteCreated: () => {},
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.parentSlice.end, withRanges[29].rangeEnd);
+  assert.equal(result.childSlice.end, withRanges[59].rangeEnd);
+});

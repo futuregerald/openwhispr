@@ -66,6 +66,13 @@ const copySpeakerRows = (db, parentId, childId, speakerIds) => {
   }
 };
 
+const segmentEndOffsetMs = (segment, startOffsetMs, originMs) => {
+  const rangeEnd = segment && segment.rangeEnd;
+  if (!Number.isFinite(rangeEnd)) return startOffsetMs;
+  const { offsetMs } = deriveTimestamps(rangeEnd, originMs);
+  return offsetMs != null && offsetMs > startOffsetMs ? offsetMs : startOffsetMs;
+};
+
 const sliceSecondsOf = (segments, originMs) => {
   let lowest = Number.POSITIVE_INFINITY;
   let highest = Number.NEGATIVE_INFINITY;
@@ -73,11 +80,14 @@ const sliceSecondsOf = (segments, originMs) => {
     const { offsetMs } = deriveTimestamps(segment && segment.timestamp, originMs);
     if (offsetMs == null) return null;
     if (offsetMs < lowest) lowest = offsetMs;
-    if (offsetMs > highest) highest = offsetMs;
+    const endMs = segmentEndOffsetMs(segment, offsetMs, originMs);
+    if (endMs > highest) highest = endMs;
   }
   if (!Number.isFinite(lowest) || !Number.isFinite(highest) || lowest < 0) return null;
   return { start: lowest / 1000, end: highest / 1000 };
 };
+
+const sliceDurationSeconds = (slice) => Math.max(0, Math.round(slice.end - slice.start));
 
 /**
  * Splits one welded recording into two notes at a confirmed call boundary.
@@ -92,6 +102,16 @@ const sliceSecondsOf = (segments, originMs) => {
  * across untouched: both notes describe the same audio file, so a rebased offset
  * would point at the wrong moment in it and a recomputed origin would add the
  * child's offset twice.
+ *
+ * `childTitle` defaults to the empty string rather than the parent's title: an
+ * inherited title is not one of the app's placeholders, so the title step would
+ * refuse to replace it and the child would stay named after the parent's call.
+ *
+ * Each note's `audio_duration_seconds` is its own slice length. Copying the
+ * parent's verbatim made the meeting-time stats count one recording twice. The
+ * slice ends at the last utterance's `rangeEnd` where the transcript carries one
+ * (re-transcription writes it) and at the last utterance's start otherwise, so
+ * for a live-captured transcript the length is short by that final utterance.
  *
  * `onNoteCreated` is required, and is called once with the stored child row
  * after the transaction commits. The renderer broadcast, the Qdrant upsert and
@@ -116,7 +136,7 @@ function splitNoteAtBoundary({
   report,
   boundaryIndex = 0,
   onNoteCreated,
-  childTitle,
+  childTitle = "",
   childContent,
   createdAtAnchorMs = null,
 }) {
@@ -185,11 +205,11 @@ function splitNoteAtBoundary({
   const run = db.transaction(() => {
     const created = assertWrote(
       databaseManager.saveNote(
-        childTitle ?? parent.title,
+        childTitle,
         childContent ?? "",
         parent.note_type,
         parent.source_file,
-        parent.audio_duration_seconds,
+        sliceDurationSeconds(childSlice),
         parent.folder_id
       ),
       "creating the child note"
@@ -223,6 +243,7 @@ function splitNoteAtBoundary({
         split_parent_note_id: noteId,
         slice_start_s: parentSlice.start,
         slice_end_s: parentSlice.end,
+        audio_duration_seconds: sliceDurationSeconds(parentSlice),
       }),
       "trimming the parent transcript"
     );
