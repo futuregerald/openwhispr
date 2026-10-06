@@ -32,8 +32,6 @@ const { runMeetingDebrief } = require("./meetingDebriefRunner");
 
 const STEP_ORDER = ["retranscribe", "splitCalls", "classify", "title", "notes"];
 
-const MAX_CALL_SPLITS_PER_RUN = 8;
-
 const isSliceOfSharedRecording = (note) => note != null && note.slice_start_s != null;
 
 const parseTranscriptSegments = (transcript) => {
@@ -250,9 +248,6 @@ class PostCallPipelineManager {
 
     const fromIndex = options.fromStep ? STEP_ORDER.indexOf(options.fromStep) : 0;
     let transcript = note.transcript;
-    const createdAtAnchorMs = Number.isSafeInteger(note.transcript_origin_ms)
-      ? note.transcript_origin_ms
-      : null;
 
     // Step 1: Re-transcribe
     if (fromIndex <= 0) {
@@ -263,12 +258,8 @@ class PostCallPipelineManager {
       }
     }
 
-    // Step 2: Split a recording that welded several calls together (non-fatal)
     if (fromIndex <= 1) {
-      const childNoteIds = await this._splitCallsStep(noteId, createdAtAnchorMs);
-      for (const childNoteId of childNoteIds) {
-        await this.run(childNoteId, { fromStep: "classify" });
-      }
+      await this._splitCallsStep(noteId);
     }
 
     // Step 3: Classify meeting type (non-fatal — errors don't halt pipeline)
@@ -472,56 +463,42 @@ class PostCallPipelineManager {
     }
   }
 
-  async _splitCallsStep(noteId, createdAtAnchorMs = null) {
-    const childNoteIds = [];
+  /**
+   * Detects a recording that welded several calls together and reports it. It
+   * creates and modifies nothing: splitting is irreversible, re-merging is out
+   * of scope, and the scoring bar fires on some single long meetings, so the
+   * user is asked by the banner on the note instead. `callCount` rides on the
+   * status so the renderer knows what to offer without rescanning.
+   *
+   * @param {number} noteId
+   * @returns {Promise<number>} how many calls the recording appears to hold
+   */
+  async _splitCallsStep(noteId) {
     try {
       const { detectCallBoundaries } = await import("./callBoundaries.js");
-      const { splitNoteAtBoundary } = require("./splitNoteAtBoundary.js");
+      const note = this._db.getNote(noteId);
+      const segments = parseTranscriptSegments(note && note.transcript);
+      const report = segments ? detectCallBoundaries(segments) : null;
+      const boundaryCount = report && !report.refused ? report.boundaries.length : 0;
 
-      let announced = false;
-      for (let attempt = 0; attempt < MAX_CALL_SPLITS_PER_RUN; attempt += 1) {
-        const note = this._db.getNote(noteId);
-        const segments = parseTranscriptSegments(note && note.transcript);
-        if (!segments) break;
-
-        const report = detectCallBoundaries(segments);
-        if (report.refused || report.boundaries.length === 0) break;
-
-        if (!announced) {
-          this._emitStatus(noteId, "splitCalls", "running");
-          announced = true;
-        }
-
-        const result = splitNoteAtBoundary({
-          databaseManager: this._db,
-          noteId,
-          report,
-          boundaryIndex: report.boundaries.length - 1,
-          onNoteCreated: this._onNoteCreated,
-          createdAtAnchorMs,
-        });
-
-        if (!result.success) {
-          debugLogger.warn(
-            "Pipeline: call boundary found but the split was declined",
-            { noteId, reason: result.reason },
-            "meeting"
-          );
-          break;
-        }
-
-        childNoteIds.unshift(result.childNoteId);
-        this._broadcastNoteUpdate(noteId);
-        if (this._onNoteReindexed) this._onNoteReindexed(this._db.getNote(noteId));
-      }
-
-      if (!announced) {
+      if (boundaryCount === 0) {
         this._emitStatus(noteId, "splitCalls", "skipped");
-        return [];
+        return 1;
       }
 
-      this._emitStatus(noteId, "splitCalls", "complete");
-      return childNoteIds;
+      const callCount = boundaryCount + 1;
+      this._broadcast("post-call-pipeline-status", {
+        noteId,
+        step: "splitCalls",
+        status: "complete",
+        callCount,
+      });
+      debugLogger.info(
+        "Pipeline: this recording looks like several calls, offering a split",
+        { noteId, callCount },
+        "meeting"
+      );
+      return callCount;
     } catch (err) {
       debugLogger.error(
         "Pipeline step splitCalls failed",
@@ -529,7 +506,7 @@ class PostCallPipelineManager {
         "meeting"
       );
       this._emitStatus(noteId, "splitCalls", "error", err.message);
-      return childNoteIds;
+      return 1;
     }
   }
 

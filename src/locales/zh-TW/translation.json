@@ -2577,7 +2577,7 @@
     "queued": "queued",
     "steps": {
       "retranscribe": "Re-transcribing",
-      "splitCalls": "正在拆分通話",
+      "splitCalls": "正在偵測是否為多段通話",
       "title": "Generating title",
       "classify": "Detecting meeting type",
       "notes": "Generating notes",

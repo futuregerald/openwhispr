@@ -299,3 +299,49 @@ test("deleting the audio of a note that does not exist reports it", async () => 
   assert.equal(result.success, false);
   assert.match(result.error, /not found/i);
 });
+
+// ── The split loop itself (moved here from the pipeline, which no longer splits)
+
+// splitNoteCalls splits at the LAST boundary each time and re-detects, so a
+// three-call morning needs two iterations. Every candidate note in the real
+// library has exactly one boundary, so without this a loop that ran once would
+// still pass every other test and a three-call recording would come out as one
+// note plus a still-welded two-call note.
+test("the split loop keeps going until no boundary is left", async () => {
+  const { splitNoteCalls } = require("../../src/helpers/noteCallSplit.js");
+  const { databaseManager } = setup();
+  const noteId = seedNote(databaseManager, { segments: weldedSegments(3) });
+
+  const result = await splitNoteCalls({
+    databaseManager,
+    noteId,
+    onNoteCreated: () => {},
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.childNoteIds.length, 2);
+  for (const id of [noteId, ...result.childNoteIds]) {
+    assert.equal(JSON.parse(databaseManager.getNote(id).transcript).length, SEGMENTS_PER_CALL);
+  }
+});
+
+test("the split loop terminates at maxSplits rather than looping forever", async () => {
+  const { splitNoteCalls } = require("../../src/helpers/noteCallSplit.js");
+  const { databaseManager } = setup();
+  const noteId = seedNote(databaseManager, { segments: weldedSegments(3) });
+
+  const result = await splitNoteCalls({
+    databaseManager,
+    noteId,
+    onNoteCreated: () => {},
+    maxSplits: 1,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.childNoteIds.length, 1, "the cap stops the loop one split in");
+  assert.equal(
+    JSON.parse(databaseManager.getNote(noteId).transcript).length,
+    SEGMENTS_PER_CALL * 2,
+    "the parent is left still holding two calls, which the banner will offer again"
+  );
+});

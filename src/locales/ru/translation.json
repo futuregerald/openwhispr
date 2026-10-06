@@ -2583,7 +2583,7 @@
     "queued": "queued",
     "steps": {
       "retranscribe": "Re-transcribing",
-      "splitCalls": "Разделение звонков",
+      "splitCalls": "Поиск отдельных звонков",
       "title": "Generating title",
       "classify": "Detecting meeting type",
       "notes": "Generating notes",

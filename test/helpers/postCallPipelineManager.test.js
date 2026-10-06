@@ -2741,39 +2741,44 @@ function splitManager(PostCallPipelineManager, mocks, extra = {}) {
   });
 }
 
-test("a welded recording becomes two notes, each with its own classify, title and notes", async () => {
+// The pipeline detects and reports; it never splits. Splitting is irreversible
+// — re-merging is out of scope — and the scoring bar is low enough to fire on a
+// single long meeting with a screen-share pause in it, so every split is the
+// user's decision, taken from the banner on the note. The step stays in
+// STEP_ORDER and keeps emitting a status so the renderer can say what it found.
+test("a welded recording is reported, not split: the library does not grow", async () => {
   const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
   const mocks = splitMocks([WELDED_SEED_NOTE], weldedWhisperSegments());
 
   await withStubbedAudio(() => splitManager(PostCallPipelineManager, mocks).run(1));
 
-  assert.equal(mocks.rows.size, 2, "one boundary must produce exactly one extra note");
-  const childId = [...mocks.rows.keys()].find((id) => id !== 1);
+  assert.equal(mocks.rows.size, 1, "an automatic split is never taken without confirmation");
+  assert.deepEqual(mocks.created, [], "no child note is created");
+  assert.deepEqual(statusesFor(mocks, 1, "splitCalls"), ["complete"]);
+  assert.equal(
+    mocks.events.find((e) => e.step === "splitCalls" && e.status === "complete")?.callCount,
+    2,
+    "the status carries what the banner will offer, so the renderer need not rescan"
+  );
 
-  assert.deepEqual(statusesFor(mocks, 1, "splitCalls"), ["running", "complete"]);
+  assert.equal(
+    JSON.parse(mocks.rows.get(1).transcript).length,
+    SPLIT_SEGMENTS_PER_CALL * 2,
+    "detection must leave every segment where re-transcription put it"
+  );
+  assert.equal(
+    mocks.rows.get(1).slice_start_s,
+    null,
+    "nothing may be marked a slice of a longer recording until the user confirms"
+  );
 
-  for (const noteId of [1, childId]) {
-    for (const step of ["classify", "title", "notes"]) {
-      assert.deepEqual(
-        statusesFor(mocks, noteId, step),
-        ["running", "complete"],
-        `note ${noteId} must run ${step} exactly once`
-      );
-    }
+  for (const step of ["classify", "title", "notes"]) {
+    assert.deepEqual(
+      statusesFor(mocks, 1, step),
+      ["running", "complete"],
+      `the note must still run ${step} exactly once`
+    );
   }
-
-  assert.equal(JSON.parse(mocks.rows.get(1).transcript).length, SPLIT_SEGMENTS_PER_CALL);
-  assert.equal(JSON.parse(mocks.rows.get(childId).transcript).length, SPLIT_SEGMENTS_PER_CALL);
-
-  assert.deepEqual(
-    mocks.created.map((note) => note.id),
-    [childId],
-    "the child must reach the IPC layer's note-added / vector / mirror effects"
-  );
-  assert.ok(
-    mocks.reindexed.some((note) => note.id === 1),
-    "the parent's transcript changed in place, so its vector row must be re-upserted or search_notes keeps the welded text"
-  );
 });
 
 test("a recording with one call stays one note and the split step reports skipped", async () => {
@@ -2812,9 +2817,12 @@ const splitPairSeed = () => {
   ];
 };
 
-// MUTATION PROOF 9. Remove the slice gate in _retranscribeStep and this test
-// must produce a third note: retranscribe hands note 1 the full two-call
-// transcript back, the boundary reappears, and the split step runs again.
+// MUTATION PROOF 9. Remove the slice gate in _retranscribeStep and retranscribe
+// hands note 1 the full two-call transcript back, re-welding the slice: the
+// transcript assertion below is what catches it. The gate is still load-bearing
+// even though the pipeline no longer splits — a user who confirms a split and
+// then runs reprocess-all would otherwise get the whole recording back in each
+// half, and the banner would offer the same split again on both.
 test("a sliced note re-run from retranscribe is not retranscribed and does not split again", async () => {
   const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
   const seed = splitPairSeed();
@@ -2855,139 +2863,14 @@ test("a reprocess over an already-split pair leaves the library the same size", 
   }
 });
 
-test("a split that throws is non-fatal: the notes are still generated", async () => {
+test("an unreadable transcript makes detection skip, not halt the pipeline", async () => {
   const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
-  const mocks = splitMocks([WELDED_SEED_NOTE], weldedWhisperSegments());
+  const mocks = splitMocks([{ ...WELDED_SEED_NOTE, system_audio_path: null }], []);
+  mocks.rows.get(1).transcript = "not json";
 
-  // No onNoteCreated wired, which is what splitNoteAtBoundary throws over
-  // rather than quietly creating a child the renderer never hears about.
-  await withStubbedAudio(() =>
-    buildManager(PostCallPipelineManager, mocks, {
-      onNoteReindexed: (note) => mocks.reindexed.push(note),
-    }).run(1)
-  );
+  await withStubbedAudio(() => splitManager(PostCallPipelineManager, mocks).run(1));
 
-  assert.equal(statusesFor(mocks, 1, "splitCalls").at(-1), "error");
-  assert.equal(mocks.rows.size, 1, "a throwing split must write nothing");
+  assert.deepEqual(statusesFor(mocks, 1, "splitCalls"), ["skipped"]);
+  assert.equal(mocks.rows.size, 1);
   assert.deepEqual(statusesFor(mocks, 1, "notes"), ["running", "complete"]);
-});
-
-// Retranscribe writes `transcript_origin_ms: null` before the split step runs,
-// so by the time the splitter looks for an anchor the note no longer has one and
-// the child falls back to the parent's `created_at`. Since PR #116 that column
-// is both the date the notes list shows and the key it sorts on, so the pair
-// would show one date and sort together — the opposite of "each piece lands at
-// its own meeting time". The anchor is read in run() before the step and
-// threaded through.
-const ANCHORED_SEED_NOTE = {
-  ...WELDED_SEED_NOTE,
-  transcript_origin_ms: 1790870467607,
-  transcript_origin_source: "audio:system",
-};
-
-const CHILD_FIRST_OFFSET_SECONDS =
-  (SPLIT_SEGMENTS_PER_CALL - 1) * SPLIT_SPACING_SECONDS + SPLIT_SILENCE_SECONDS;
-
-test("a pipeline split dates the child from its own meeting time, not the parent's", async () => {
-  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
-  const mocks = splitMocks([ANCHORED_SEED_NOTE], weldedWhisperSegments());
-
-  await withStubbedAudio(() => splitManager(PostCallPipelineManager, mocks).run(1));
-
-  const childId = [...mocks.rows.keys()].find((id) => id !== 1);
-  const child = mocks.rows.get(childId);
-  const expected = new Date(
-    ANCHORED_SEED_NOTE.transcript_origin_ms + CHILD_FIRST_OFFSET_SECONDS * 1000
-  )
-    .toISOString()
-    .slice(0, 19)
-    .replace("T", " ");
-
-  assert.equal(
-    child.created_at,
-    expected,
-    "the origin captured before retranscribe nulled it is what dates the child"
-  );
-  assert.notEqual(
-    child.created_at,
-    WELDED_SEED_NOTE.created_at,
-    "inheriting the parent's date sorts the two pieces together"
-  );
-  assert.equal(
-    child.transcript_origin_ms,
-    null,
-    "the anchor dates the child and nothing else: the origin columns are still the parent's live values"
-  );
-  assert.equal(
-    child.slice_start_s,
-    CHILD_FIRST_OFFSET_SECONDS,
-    "the anchor must not reach the slice bounds, which are already right without it"
-  );
-});
-
-// The split step loops, splitting at the LAST boundary each time and
-// re-detecting, up to MAX_CALL_SPLITS_PER_RUN. Every candidate note in the real
-// library has exactly one boundary, so without this fixture only the
-// single-iteration path is ever exercised: a loop that ran once would still make
-// every other split test pass, and a three-call morning would come out as one
-// note plus a still-welded two-call note.
-function threeCallWhisperSegments() {
-  const segments = [];
-  for (let call = 0; call < 3; call += 1) {
-    const base =
-      call * ((SPLIT_SEGMENTS_PER_CALL - 1) * SPLIT_SPACING_SECONDS + SPLIT_SILENCE_SECONDS);
-    for (let i = 0; i < SPLIT_SEGMENTS_PER_CALL; i += 1) {
-      const start = base + i * SPLIT_SPACING_SECONDS;
-      let text = `Call ${call} turn ${i}: we walked the migration plan and the staffing for it.`;
-      if (i === 0 && call > 0) text = "Hey, thanks for joining, can you hear me?";
-      if (i === SPLIT_SEGMENTS_PER_CALL - 1 && call < 2) text = "Alright, talk to you later, bye.";
-      segments.push({ start, end: start + 5, text });
-    }
-  }
-  return segments;
-}
-
-test("a recording of three back-to-back calls becomes three notes in one run", async () => {
-  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
-  const mocks = splitMocks([WELDED_SEED_NOTE], threeCallWhisperSegments());
-
-  await withStubbedAudio(() => splitManager(PostCallPipelineManager, mocks).run(1));
-
-  assert.equal(mocks.rows.size, 3, "two boundaries must produce two extra notes");
-  for (const [id, note] of mocks.rows) {
-    assert.equal(
-      JSON.parse(note.transcript).length,
-      SPLIT_SEGMENTS_PER_CALL,
-      `note ${id} must hold exactly one call`
-    );
-  }
-
-  assert.deepEqual(
-    statusesFor(mocks, 1, "splitCalls"),
-    ["running", "complete"],
-    "the loop is one step, so it announces itself once however many times it splits"
-  );
-
-  const childIds = [...mocks.rows.keys()].filter((id) => id !== 1);
-  assert.deepEqual(
-    mocks.created.map((note) => note.id).sort((a, b) => a - b),
-    [...childIds].sort((a, b) => a - b),
-    "every child must reach the IPC layer's note-added / vector / mirror effects"
-  );
-
-  for (const noteId of mocks.rows.keys()) {
-    for (const step of ["classify", "title", "notes"]) {
-      assert.deepEqual(
-        statusesFor(mocks, noteId, step),
-        ["running", "complete"],
-        `note ${noteId} must run ${step} exactly once — a child must not be processed twice`
-      );
-    }
-  }
-
-  assert.deepEqual(
-    statusesFor(mocks, 1, "pipeline"),
-    ["complete"],
-    "the loop terminates: one run, one terminal status for the parent"
-  );
 });
