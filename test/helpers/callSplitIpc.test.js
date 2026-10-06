@@ -389,3 +389,59 @@ test("the anchor reads created_at as UTC, the way CURRENT_TIMESTAMP wrote it", a
 
   assert.equal(databaseManager.getNote(childId).created_at, "2026-01-02 03:12:30");
 });
+
+// ── The 30-day audio sweep over a shared recording ──────────────────────────
+
+// delete-note-audio has no renderer caller; the retention sweep is the path
+// that actually deletes meeting audio, and it derives the owning note from the
+// FILENAME. A split child's id appears in no filename, so the sweep used to ask
+// only the parent whether the meeting was processed and to clear only the
+// parent's columns.
+function seedSplitPairSharingAudio(databaseManager) {
+  const AudioStorageManager = require("../../src/helpers/audioStorage.js");
+  const audioStorageManager = new AudioStorageManager();
+  const noteId = seedNote(databaseManager, { segments: weldedSegments() });
+  const audioPath = path.join(
+    audioStorageManager.audioDir,
+    `OpenWhispr-meeting-${noteId}-20261002-system.opus`
+  );
+  fs.writeFileSync(audioPath, "audio");
+  databaseManager.updateNote(noteId, { system_audio_path: audioPath });
+
+  return { audioStorageManager, noteId, audioPath };
+}
+
+test("the sweep keeps a shared recording while either half still has no notes", async () => {
+  const { databaseManager } = setup();
+  const { audioStorageManager, noteId, audioPath } = seedSplitPairSharingAudio(databaseManager);
+  const childId = (await invoke("split-note-calls", noteId)).childNoteIds[0];
+
+  databaseManager.updateNote(noteId, { enhanced_content: "## Notes for the first call" });
+  databaseManager.updateNote(childId, { enhanced_content: null });
+
+  audioStorageManager.cleanupExpiredAudio(0, databaseManager);
+
+  assert.equal(fs.existsSync(audioPath), true, "the child's meeting has no other copy");
+  assert.equal(databaseManager.getNote(noteId).system_audio_path, audioPath);
+  assert.equal(databaseManager.getNote(childId).system_audio_path, audioPath);
+});
+
+test("when the sweep deletes a shared recording it clears the path on both halves", async () => {
+  const { databaseManager } = setup();
+  const { audioStorageManager, noteId, audioPath } = seedSplitPairSharingAudio(databaseManager);
+  const childId = (await invoke("split-note-calls", noteId)).childNoteIds[0];
+
+  for (const id of [noteId, childId]) {
+    databaseManager.updateNote(id, { enhanced_content: "## Notes" });
+  }
+
+  audioStorageManager.cleanupExpiredAudio(0, databaseManager);
+
+  assert.equal(fs.existsSync(audioPath), false);
+  assert.equal(databaseManager.getNote(noteId).system_audio_path, null);
+  assert.equal(
+    databaseManager.getNote(childId).system_audio_path,
+    null,
+    "a sibling pointing at a deleted file still hands the player a URL, and its Reprocess is disabled"
+  );
+});

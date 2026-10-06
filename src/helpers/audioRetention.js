@@ -9,6 +9,12 @@
  * audio no matter how old it is. Otherwise deferring a meeting — which the app
  * now asks users to do when memory is tight — quietly becomes data loss thirty
  * days later.
+ *
+ * Two notes can share one file, because splitting a welded recording copies the
+ * paths rather than the audio. So the question is asked of EVERY note that
+ * references a file, not of the one the filename happens to name: one
+ * unprocessed sibling retains the file, and deleting it clears the columns on
+ * all of them.
  */
 
 /** @returns {number|null} the note id for a meeting track, or null for anything else */
@@ -28,8 +34,12 @@ function parseTranscriptionId(filename) {
  * @param {Array<{name:string, mtimeMs:number}>} args.files
  * @param {number} args.cutoffMs files older than this are candidates for deletion
  * @param {(noteId:number) => boolean} args.isMeetingUnprocessed
+ * @param {(filename:string) => number[]} [args.notesSharingFile] every note id whose
+ *   `mic_audio_path` or `system_audio_path` points at this file. A split child's id
+ *   never appears in a filename, so without this the sweep asks only the recording
+ *   note whether the meeting was processed, and clears the columns on only that one.
  */
-function planAudioCleanup({ files, cutoffMs, isMeetingUnprocessed }) {
+function planAudioCleanup({ files, cutoffMs, isMeetingUnprocessed, notesSharingFile = null }) {
   const deleteFiles = [];
   const expiredTranscriptionIds = [];
   const expiredNoteIds = new Set();
@@ -42,22 +52,43 @@ function planAudioCleanup({ files, cutoffMs, isMeetingUnprocessed }) {
       continue;
     }
 
-    const noteId = parseMeetingNoteId(name);
-    if (noteId != null) {
-      let unprocessed;
+    const nameNoteId = parseMeetingNoteId(name);
+    const sharedNoteIds = new Set();
+    if (nameNoteId != null) sharedNoteIds.add(nameNoteId);
+
+    let lookupFailed = false;
+    if (notesSharingFile) {
       try {
-        unprocessed = isMeetingUnprocessed(noteId);
+        for (const id of notesSharingFile(name) || []) {
+          if (Number.isInteger(id)) sharedNoteIds.add(id);
+        }
       } catch {
-        // Unable to tell — keep it. Disk is cheap; a lost meeting is not.
-        unprocessed = true;
+        lookupFailed = true;
+      }
+    }
+
+    if (sharedNoteIds.size > 0 || nameNoteId != null) {
+      let unprocessed = lookupFailed;
+      if (!unprocessed) {
+        for (const id of sharedNoteIds) {
+          try {
+            if (isMeetingUnprocessed(id)) {
+              unprocessed = true;
+              break;
+            }
+          } catch {
+            unprocessed = true;
+            break;
+          }
+        }
       }
       if (unprocessed) {
-        retainedNoteIds.add(noteId);
+        for (const id of sharedNoteIds) retainedNoteIds.add(id);
         keptCount++;
         continue;
       }
       deleteFiles.push(name);
-      expiredNoteIds.add(noteId);
+      for (const id of sharedNoteIds) expiredNoteIds.add(id);
       continue;
     }
 
