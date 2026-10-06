@@ -5,7 +5,7 @@ const os = require("os");
 const crypto = require("crypto");
 const debugLogger = require("./debugLogger");
 const { JOB_KINDS } = require("./jobDispatch");
-const { isPipelineStep } = require("./postCallPipelineManager");
+const { isPipelineStep, isSliceOfSharedRecording } = require("./postCallPipelineManager");
 const {
   findNotesNeedingAttributionRepair,
   repairNoteAttribution: repairStoredNoteAttribution,
@@ -942,6 +942,13 @@ class IPCHandlers {
       const { BrowserWindow } = require("electron");
       const note = this.databaseManager.getNote(noteId);
       if (!note) return { success: false, error: "Note not found" };
+      if (isSliceOfSharedRecording(note)) {
+        return {
+          success: false,
+          error:
+            "This note is part of a longer recording that was split into separate calls, so re-transcribing it would put the whole recording back into it",
+        };
+      }
 
       try {
         const { convertToWav } = require("./ffmpegUtils");
@@ -7466,14 +7473,15 @@ class IPCHandlers {
         onNoteCreated: (note) => this._notifyNoteCreated(note),
         onNoteChanged: (note) => this._notifyNoteChanged(note),
       });
-      if (!result.success) return result;
+      const childNoteIds = result.childNoteIds ?? [];
+      if (childNoteIds.length === 0) return result;
 
       this.backgroundJobQueue.enqueueKind(
         `regenerate-notes-${result.parentNoteId}`,
         JOB_KINDS.REGENERATE_NOTES,
         { noteId: result.parentNoteId }
       );
-      for (const id of result.childNoteIds) {
+      for (const id of childNoteIds) {
         this.backgroundJobQueue.enqueueKind(`post-call-retry-${id}`, JOB_KINDS.POST_CALL_PIPELINE, {
           noteId: id,
           fromStep: "classify",

@@ -2129,7 +2129,13 @@
       "confirmTitle": "Diviser cet enregistrement en {{count}} notes ?",
       "confirmDescription": "Chaque appel devient sa propre note, avec ses propres notes et sa propre date. Les notes générées, les noms des intervenants et le type de réunion restent avec le premier appel. Cette action est irréversible.",
       "done": "Divisé en {{count}} notes.",
-      "failed": "Rien à diviser : aucune limite entre appels n'a été trouvée."
+      "failed": "Rien à diviser : aucune limite entre appels n'a été trouvée.",
+      "failedMissing": "Cette note n'existe plus.",
+      "failedUnreadable": "La transcription de cet enregistrement n'a pas pu être lue, il ne peut donc pas être divisé.",
+      "failedUnanchored": "Les horodatages de cet enregistrement ne correspondent pas à son audio : le diviser n'est pas sûr.",
+      "failedStale": "La transcription a changé pendant la vérification. Réouvrez la note et réessayez.",
+      "failedPartway": "Quelque chose a échoué en cours de route. Certains appels sont peut-être déjà des notes distinctes — réouvrez la note pour voir.",
+      "failedUnknown": "La division n'a pas pu aboutir."
     },
     "reprocessAll": {
       "label": "Retraiter toutes les réunions",

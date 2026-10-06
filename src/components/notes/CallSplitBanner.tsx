@@ -5,6 +5,17 @@ import { useToast } from "../ui/useToast";
 import { ConfirmDialog } from "../ui/dialog.js";
 import type { NoteItem } from "../../types/electron";
 
+const FAILURE_KEY_BY_REASON: Record<string, string> = {
+  "no-boundary": "notes.callSplit.failed",
+  "note-not-found": "notes.callSplit.failedMissing",
+  "unreadable-transcript": "notes.callSplit.failedUnreadable",
+  "unresolvable-slice-bounds": "notes.callSplit.failedUnanchored",
+  "transcript-does-not-match-report": "notes.callSplit.failedStale",
+  "report-refused": "notes.callSplit.failedStale",
+  "empty-piece": "notes.callSplit.failedStale",
+  "split-failed-partway": "notes.callSplit.failedPartway",
+};
+
 export default function CallSplitBanner({ note }: { note: NoteItem }) {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -44,9 +55,16 @@ export default function CallSplitBanner({ note }: { note: NoteItem }) {
         toast({
           title: t("notes.callSplit.done", { count: (result.childNoteIds?.length ?? 0) + 1 }),
         });
-      } else {
-        toast({ title: t("notes.callSplit.failed"), variant: "destructive" });
+        return;
       }
+      const key = FAILURE_KEY_BY_REASON[result?.reason ?? ""] ?? "notes.callSplit.failedUnknown";
+      toast({ title: t(key), variant: "destructive" });
+    } catch (error) {
+      toast({
+        title: t("notes.callSplit.failedUnknown"),
+        description: error instanceof Error ? error.message : undefined,
+        variant: "destructive",
+      });
     } finally {
       setIsSplitting(false);
     }

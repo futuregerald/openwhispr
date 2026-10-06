@@ -493,6 +493,7 @@ declare global {
         parentNoteId?: number;
         childNoteIds?: number[];
         reason?: string;
+        error?: string;
       }>;
       dismissNoteCallSplit?: (noteId: number) => Promise<{ success: boolean; error?: string }>;
       getNoteRetrySteps?: (noteIds: number[]) => Promise<{

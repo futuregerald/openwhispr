@@ -2089,7 +2089,13 @@
       "confirmTitle": "Dividere questa registrazione in {{count}} note?",
       "confirmDescription": "Ogni chiamata diventa una nota a sé, con le proprie note e la propria data. Le note generate, i nomi dei partecipanti e il tipo di riunione restano con la prima chiamata. L'operazione non può essere annullata.",
       "done": "Divisa in {{count}} note.",
-      "failed": "Niente da dividere: nessun confine tra chiamate trovato."
+      "failed": "Niente da dividere: nessun confine tra chiamate trovato.",
+      "failedMissing": "Quella nota non esiste più.",
+      "failedUnreadable": "Non è stato possibile leggere la trascrizione di questa registrazione, quindi non può essere divisa.",
+      "failedUnanchored": "Le marcature temporali di questa registrazione non corrispondono al suo audio, quindi dividerla non è sicuro.",
+      "failedStale": "La trascrizione è cambiata durante il controllo. Riapri la nota e riprova.",
+      "failedPartway": "Qualcosa è andato storto a metà. Alcune chiamate potrebbero essere già note separate: riapri la nota per vedere.",
+      "failedUnknown": "Non è stato possibile completare la divisione."
     },
     "reprocessAll": {
       "label": "Rielabora tutte le riunioni",

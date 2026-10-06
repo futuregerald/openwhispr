@@ -2089,7 +2089,13 @@
       "confirmTitle": "要將這段錄音分割為 {{count}} 則筆記嗎？",
       "confirmDescription": "每個通話會成為獨立的筆記，擁有自己的筆記內容與日期。已產生的筆記、說話者姓名與會議類型會留在第一個通話。此操作無法復原。",
       "done": "已分割為 {{count}} 則筆記。",
-      "failed": "沒有可分割的內容 — 找不到通話邊界。"
+      "failed": "沒有可分割的內容 — 找不到通話邊界。",
+      "failedMissing": "該筆記已不存在。",
+      "failedUnreadable": "無法讀取這段錄音的轉錄內容，因此無法拆分。",
+      "failedUnanchored": "這段錄音的時間戳記與音訊無法對應，拆分並不安全。",
+      "failedStale": "檢查期間轉錄內容已變更。請重新開啟筆記後再試。",
+      "failedPartway": "中途出錯了。部分通話可能已成為獨立的筆記，請重新開啟筆記查看。",
+      "failedUnknown": "無法完成拆分。"
     },
     "reprocessAll": {
       "label": "重新處理所有會議",

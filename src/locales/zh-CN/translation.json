@@ -2089,7 +2089,13 @@
       "confirmTitle": "将这段录音拆分为 {{count}} 条笔记？",
       "confirmDescription": "每个通话会成为独立的笔记，有自己的笔记内容和日期。已生成的笔记、说话人姓名和会议类型会留在第一个通话上。此操作无法撤销。",
       "done": "已拆分为 {{count}} 条笔记。",
-      "failed": "没有可拆分的内容 — 未找到通话边界。"
+      "failed": "没有可拆分的内容 — 未找到通话边界。",
+      "failedMissing": "该笔记已不存在。",
+      "failedUnreadable": "无法读取这段录音的转写内容，因此无法拆分。",
+      "failedUnanchored": "这段录音的时间戳与音频无法对应，拆分不安全。",
+      "failedStale": "检查期间转写内容发生了变化。请重新打开笔记后再试。",
+      "failedPartway": "中途出错了。部分通话可能已经成为独立的笔记，请重新打开笔记查看。",
+      "failedUnknown": "无法完成拆分。"
     },
     "reprocessAll": {
       "label": "重新处理所有会议",

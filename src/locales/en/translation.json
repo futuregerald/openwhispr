@@ -2167,7 +2167,13 @@
       "confirmTitle": "Split this recording into {{count}} notes?",
       "confirmDescription": "Each call becomes its own note, with its own notes and date. The generated notes, speaker names and meeting type stay with the first call. This cannot be undone.",
       "done": "Split into {{count}} notes.",
-      "failed": "Nothing to split — no call boundary was found."
+      "failed": "Nothing to split — no call boundary was found.",
+      "failedMissing": "That note no longer exists.",
+      "failedUnreadable": "This recording's transcript could not be read, so it cannot be split.",
+      "failedUnanchored": "This recording's timestamps cannot be matched to its audio, so splitting it is not safe.",
+      "failedStale": "The transcript changed while this was being checked. Reopen the note and try again.",
+      "failedPartway": "Something went wrong partway through. Some calls may already be separate notes — reopen the note to see where it got to.",
+      "failedUnknown": "The split could not be completed."
     },
     "reprocessAll": {
       "label": "Reprocess all meetings",

@@ -471,3 +471,78 @@ test("when the sweep deletes a shared recording it clears the path on both halve
     "a sibling pointing at a deleted file still hands the player a URL, and its Reprocess is disabled"
   );
 });
+
+// ── Manual re-transcription over a slice ─────────────────────────────────────
+
+// The pipeline's retranscribe step grew a slice gate; this handler, which calls
+// the same module on the same whole shared audio file and writes straight into
+// notes.transcript, did not get one. Running it on either half re-welds the full
+// recording into that note. The handler's own comment warns that it once carried
+// a second copy of this logic and so a second copy of a bug, and the gate went
+// into only one of the two copies.
+test("manual re-transcription refuses a slice instead of re-welding it", async () => {
+  const { databaseManager } = setup();
+  const noteId = seedNote(databaseManager, { segments: weldedSegments() });
+  const childId = (await invoke("split-note-calls", noteId)).childNoteIds[0];
+
+  for (const id of [noteId, childId]) {
+    const before = databaseManager.getNote(id).transcript;
+    const result = await invoke("retranscribe-meeting-note", id);
+
+    assert.equal(result.success, false, `note ${id} is a slice of a longer recording`);
+    assert.match(result.error, /part of a longer recording/i);
+    assert.equal(databaseManager.getNote(id).transcript, before);
+  }
+});
+
+// ── A failure partway through the loop ───────────────────────────────────────
+
+// splitNoteCalls had no try/catch and the banner had try/finally with no catch,
+// so a throw on the second iteration left the first child committed, enqueued no
+// jobs for anything, and told the user nothing at all.
+test("a throw partway through the loop reports the failure and keeps what committed", async () => {
+  const { splitNoteCalls } = require("../../src/helpers/noteCallSplit.js");
+  const { databaseManager } = setup();
+  const noteId = seedNote(databaseManager, { segments: weldedSegments(3) });
+
+  let calls = 0;
+  const result = await splitNoteCalls({
+    databaseManager,
+    noteId,
+    onNoteCreated: () => {
+      calls += 1;
+      if (calls === 2) throw new Error("the renderer broadcast blew up");
+    },
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.reason, "split-failed-partway");
+  assert.match(result.error, /blew up/);
+  assert.deepEqual(result.childNoteIds.length, 1, "the first child committed and must be reported");
+  assert.equal(
+    JSON.parse(databaseManager.getNote(result.childNoteIds[0]).transcript).length,
+    SEGMENTS_PER_CALL
+  );
+});
+
+test("the halves that did commit still get their own notes scheduled", async () => {
+  const { databaseManager, enqueued } = setup();
+  const noteId = seedNote(databaseManager, { segments: weldedSegments(3) });
+
+  const { splitNoteCalls } = require("../../src/helpers/noteCallSplit.js");
+  const partway = await splitNoteCalls({
+    databaseManager,
+    noteId,
+    onNoteCreated: () => {},
+    maxSplits: 1,
+  });
+  assert.equal(partway.childNoteIds.length, 1);
+
+  // Drive the handler on a fresh note so the enqueue list belongs to one split.
+  const otherId = seedNote(databaseManager, { segments: weldedSegments() });
+  await invoke("split-note-calls", otherId);
+  assert.ok(
+    enqueued.some((job) => job.payload.noteId === otherId && job.kind === "regenerate-notes"),
+    "the parent is left with notes describing a transcript it no longer has"
+  );
+});

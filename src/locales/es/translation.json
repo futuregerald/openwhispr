@@ -2089,7 +2089,13 @@
       "confirmTitle": "¿Dividir esta grabación en {{count}} notas?",
       "confirmDescription": "Cada llamada se convierte en su propia nota, con sus propias notas y su propia fecha. Las notas generadas, los nombres de los participantes y el tipo de reunión se quedan con la primera llamada. Esto no se puede deshacer.",
       "done": "Dividida en {{count}} notas.",
-      "failed": "No hay nada que dividir: no se encontró ningún límite entre llamadas."
+      "failed": "No hay nada que dividir: no se encontró ningún límite entre llamadas.",
+      "failedMissing": "Esa nota ya no existe.",
+      "failedUnreadable": "No se pudo leer la transcripción de esta grabación, así que no se puede dividir.",
+      "failedUnanchored": "Las marcas de tiempo de esta grabación no coinciden con su audio, así que dividirla no es seguro.",
+      "failedStale": "La transcripción cambió mientras se comprobaba. Vuelve a abrir la nota e inténtalo de nuevo.",
+      "failedPartway": "Algo falló a mitad del proceso. Puede que algunas llamadas ya sean notas separadas: vuelve a abrir la nota para verlo.",
+      "failedUnknown": "No se pudo completar la división."
     },
     "reprocessAll": {
       "label": "Reprocesar todas las reuniones",

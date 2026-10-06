@@ -1171,6 +1171,7 @@ module.exports = {
   buildTypedNotesPrompt,
   STEP_ORDER,
   isPipelineStep,
+  isSliceOfSharedRecording,
   localizedTitlePlaceholders,
   DEBRIEF_PROPAGATED_ERROR_CODES,
 };

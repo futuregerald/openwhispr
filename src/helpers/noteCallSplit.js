@@ -69,15 +69,26 @@ async function splitNoteCalls({
     const report = detectCallBoundaries(segments);
     if (boundaryCountOf(report) === 0) break;
 
-    const result = splitNoteAtBoundary({
-      databaseManager,
-      noteId,
-      report,
-      boundaryIndex: report.boundaries.length - 1,
-      onNoteCreated,
-      childTitle,
-      createdAtAnchorMs: createdAtAnchorMsOf(note.created_at),
-    });
+    let result;
+    try {
+      result = splitNoteAtBoundary({
+        databaseManager,
+        noteId,
+        report,
+        boundaryIndex: report.boundaries.length - 1,
+        onNoteCreated,
+        childTitle,
+        createdAtAnchorMs: createdAtAnchorMsOf(note.created_at),
+      });
+    } catch (err) {
+      return {
+        success: false,
+        reason: "split-failed-partway",
+        error: err.message,
+        parentNoteId: noteId,
+        childNoteIds,
+      };
+    }
 
     if (result.success !== true) {
       lastRefusal = result.reason;
@@ -88,7 +99,7 @@ async function splitNoteCalls({
     if (onNoteChanged) onNoteChanged(databaseManager.getNote(noteId));
   }
 
-  if (childNoteIds.length === 0) return { success: false, reason: lastRefusal };
+  if (childNoteIds.length === 0) return { success: false, reason: lastRefusal, childNoteIds };
   return { success: true, parentNoteId: noteId, childNoteIds };
 }
 
