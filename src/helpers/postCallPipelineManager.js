@@ -259,7 +259,7 @@ class PostCallPipelineManager {
     }
 
     if (fromIndex <= 1) {
-      await this._splitCallsStep(noteId);
+      await this._detectWeldedCallsStep(noteId);
     }
 
     // Step 3: Classify meeting type (non-fatal — errors don't halt pipeline)
@@ -464,16 +464,10 @@ class PostCallPipelineManager {
   }
 
   /**
-   * Detects a recording that welded several calls together and reports it. It
-   * creates and modifies nothing: splitting is irreversible, re-merging is out
-   * of scope, and the scoring bar fires on some single long meetings, so the
-   * user is asked by the banner on the note instead. `callCount` rides on the
-   * status so the renderer knows what to offer without rescanning.
-   *
    * @param {number} noteId
    * @returns {Promise<number>} how many calls the recording appears to hold
    */
-  async _splitCallsStep(noteId) {
+  async _detectWeldedCallsStep(noteId) {
     try {
       const { detectCallBoundaries } = await import("./callBoundaries.js");
       const note = this._db.getNote(noteId);

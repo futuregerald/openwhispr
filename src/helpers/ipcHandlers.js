@@ -7468,7 +7468,12 @@ class IPCHandlers {
       });
       if (!result.success) return result;
 
-      for (const id of [result.parentNoteId, ...result.childNoteIds]) {
+      this.backgroundJobQueue.enqueueKind(
+        `regenerate-notes-${result.parentNoteId}`,
+        JOB_KINDS.REGENERATE_NOTES,
+        { noteId: result.parentNoteId }
+      );
+      for (const id of result.childNoteIds) {
         this.backgroundJobQueue.enqueueKind(`post-call-retry-${id}`, JOB_KINDS.POST_CALL_PIPELINE, {
           noteId: id,
           fromStep: "classify",

@@ -103,16 +103,6 @@ const sliceDurationSeconds = (slice) => Math.max(0, Math.round(slice.end - slice
  * would point at the wrong moment in it and a recomputed origin would add the
  * child's offset twice.
  *
- * `childTitle` defaults to the empty string rather than the parent's title: an
- * inherited title is not one of the app's placeholders, so the title step would
- * refuse to replace it and the child would stay named after the parent's call.
- *
- * Each note's `audio_duration_seconds` is its own slice length. Copying the
- * parent's verbatim made the meeting-time stats count one recording twice. The
- * slice ends at the last utterance's `rangeEnd` where the transcript carries one
- * (re-transcription writes it) and at the last utterance's start otherwise, so
- * for a live-captured transcript the length is short by that final utterance.
- *
  * `onNoteCreated` is required, and is called once with the stored child row
  * after the transaction commits. The renderer broadcast, the Qdrant upsert and
  * the markdown mirror live on the IPC layer rather than on `DatabaseManager`, so

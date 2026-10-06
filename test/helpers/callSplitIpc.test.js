@@ -197,13 +197,39 @@ test("splitting a welded note creates the sibling and schedules its own notes", 
     "both halves must be re-embedded or search_notes still answers with the welded text"
   );
 
+  // The parent keeps its meeting type and its title, so it needs neither
+  // classify nor title — and the full pipeline's notes step writes
+  // enhanced_content UNCONDITIONALLY, so running it on the parent would destroy
+  // notes the user had hand-edited, which is exactly what the confirm dialog
+  // promises will not happen. Its notes do have to be regenerated, because its
+  // transcript is now one call rather than two, so it gets the notes-only job
+  // that keeps hand edits.
   assert.deepEqual(
-    enqueued.map((job) => job.payload).sort((a, b) => a.noteId - b.noteId),
+    enqueued.map((job) => ({ kind: job.kind, ...job.payload })).sort((a, b) => a.noteId - b.noteId),
     [
-      { noteId, fromStep: "classify" },
-      { noteId: childId, fromStep: "classify" },
+      { kind: "regenerate-notes", noteId },
+      { kind: "post-call-pipeline", noteId: childId, fromStep: "classify" },
     ],
-    "both halves need their own classify/title/notes, and neither needs retranscribe"
+    "the parent must not re-run the full pipeline over its own hand edits"
+  );
+});
+
+test("a hand-edited parent keeps its notes when the split is confirmed", async () => {
+  const { databaseManager, enqueued } = setup();
+  const noteId = seedNote(databaseManager, { segments: weldedSegments() });
+  databaseManager.updateNote(noteId, {
+    enhanced_content: "## My own notes\n\nwhich I wrote by hand",
+    enhanced_generated_hash: "a-hash-of-something-else",
+  });
+
+  await invoke("split-note-calls", noteId);
+
+  const parentJob = enqueued.find((job) => job.payload.noteId === noteId);
+  assert.equal(parentJob.kind, "regenerate-notes");
+  assert.notEqual(
+    parentJob.payload.allowOverwrite,
+    true,
+    "allowOverwrite: true is what makes runSingleStep skip the hand-edit guard"
   );
 });
 
