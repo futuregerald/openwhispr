@@ -8,6 +8,7 @@ export const FAREWELL_LOOKBACK_SEGMENTS = 3;
 export const OPENING_LOOKAHEAD_SEGMENTS = 5;
 export const SPEAKER_SIMILARITY_THRESHOLD = 0.5;
 export const BOUNDARY_SCORE_THRESHOLD = 3;
+export const CUE_TRAILING_WORDS = 2;
 
 export const FAREWELL_CUES = [
   "have to drop",
@@ -43,22 +44,49 @@ const normalise = (value) =>
   typeof value === "string"
     ? value
         .toLowerCase()
-        .replace(/[^a-z0-9\s]+/g, "")
+        .replace(/['\u2018\u2019]/g, "")
+        .replace(/[^a-z0-9\s]+/g, " ")
         .replace(/\s+/g, " ")
         .trim()
     : "";
 
-const NORMALISED_FAREWELL_CUES = FAREWELL_CUES.map(normalise).filter(Boolean);
-const NORMALISED_OPENING_CUES = OPENING_CUES.map(normalise).filter(Boolean);
+const phrase = (value) => ` ${value} `;
+
+const clausesOf = (value) =>
+  typeof value === "string"
+    ? value
+        .toLowerCase()
+        .replace(/['\u2018\u2019]/g, "")
+        .split(/[^a-z0-9\s]+/)
+        .map((clause) => clause.replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+    : [];
+
+const PADDED_FAREWELL_CUES = FAREWELL_CUES.map(normalise).filter(Boolean).map(phrase);
+const PADDED_OPENING_CUES = OPENING_CUES.map(normalise).filter(Boolean).map(phrase);
 
 const asSegments = (value) => (Array.isArray(value) ? value : []);
 
-const hasCue = (segments, normalisedCues) =>
-  segments.some((segment) => {
-    const text = normalise(segment && segment.text);
-    if (!text) return false;
-    return normalisedCues.some((cue) => text.includes(cue));
-  });
+const wordCount = (value) => (value === "" ? 0 : value.split(" ").length);
+
+const cueEndsClause = (clause, paddedCue) => {
+  const padded = phrase(clause);
+  let from = 0;
+  for (;;) {
+    const at = padded.indexOf(paddedCue, from);
+    if (at === -1) return false;
+    const after = padded.slice(at + paddedCue.length - 1).trim();
+    if (wordCount(after) <= CUE_TRAILING_WORDS) return true;
+    from = at + 1;
+  }
+};
+
+const hasCue = (segments, paddedCues) =>
+  segments.some((segment) =>
+    clausesOf(segment && segment.text).some((clause) =>
+      paddedCues.some((cue) => cueEndsClause(clause, cue))
+    )
+  );
 
 const speakerSet = (segments) => {
   const names = new Set();
@@ -90,12 +118,12 @@ export const scoreCallBoundary = (options = {}) => {
   const reasons = [];
   let score = 0;
 
-  if (hasCue(before.slice(-FAREWELL_LOOKBACK_SEGMENTS), NORMALISED_FAREWELL_CUES)) {
+  if (hasCue(before.slice(-FAREWELL_LOOKBACK_SEGMENTS), PADDED_FAREWELL_CUES)) {
     reasons.push("farewell-cue");
     score += FAREWELL_WEIGHT;
   }
 
-  if (hasCue(after.slice(0, OPENING_LOOKAHEAD_SEGMENTS), NORMALISED_OPENING_CUES)) {
+  if (hasCue(after.slice(0, OPENING_LOOKAHEAD_SEGMENTS), PADDED_OPENING_CUES)) {
     reasons.push("opening-cue");
     score += OPENING_WEIGHT;
   }

@@ -212,3 +212,41 @@ test("the 120s window is exported as a named constant for the caller to slice by
 
   assert.equal(BOUNDARY_WINDOW_SECONDS, 120);
 });
+
+// Cue matching used to be a bare substring test, so a cue could be found inside
+// an unrelated word boundary-free span of ordinary speech. Each of these fired a
+// cue in the real code before the match was anchored to phrase boundaries.
+test("ordinary mid-call speech does not fire a farewell cue", async () => {
+  const { scoreCallBoundary } = await load();
+
+  const innocuous = [
+    "We have to drop the column first.",
+    "Can you see your screen?",
+    "Talk to your manager about it.",
+    "Good ones, both of them.",
+    "we have to run the migration first",
+  ];
+
+  for (const text of innocuous) {
+    const result = scoreCallBoundary({
+      before: [segment("Jorge", text, 100)],
+      after: [segment("Jorge", "back to the queue depth", 150)],
+      gapSeconds: 45,
+    });
+    assert.deepEqual(result.reasons, [], text);
+  }
+});
+
+test("a closing phrase does not fire the opening cue it happens to contain", async () => {
+  const { scoreCallBoundary } = await load();
+
+  // "later on, time to wrap up" normalises to "later on time to wrap up", which
+  // contains the opening cue "on time" as a substring but not as a phrase.
+  const result = scoreCallBoundary({
+    before: [segment("Jorge", "so the queue depth was flat", 100)],
+    after: [segment("Jorge", "later on, time to wrap up", 150)],
+    gapSeconds: 45,
+  });
+
+  assert.deepEqual(result.reasons, []);
+});
