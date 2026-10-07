@@ -2078,7 +2078,24 @@
       "inProgress": "再処理中…",
       "started": "再処理を開始しました。バックグラウンドで実行されます。",
       "failed": "再処理に失敗しました: {{error}}",
-      "downloadNeeded": "先に文字起こしモデルをダウンロードしています…"
+      "downloadNeeded": "先に文字起こしモデルをダウンロードしています…",
+      "sliceDisabled": "このノートは長い録音のうちの 1 件の通話です。再文字起こしすると録音全体が戻ってしまうため、ここでは無効になっています。"
+    },
+    "callSplit": {
+      "message": "{{count}} 件の通話が続けて録音されているようです。",
+      "split": "分割",
+      "splitting": "分割中…",
+      "dismiss": "閉じる",
+      "confirmTitle": "この録音を {{count}} 件のノートに分割しますか？",
+      "confirmDescription": "各通話がそれぞれのノートになり、独自のノートと日付を持ちます。生成済みのノート、話者名、会議の種類は最初の通話に残ります。この操作は取り消せません。",
+      "done": "{{count}} 件のノートに分割しました。",
+      "failed": "分割できません。通話の境界が見つかりませんでした。",
+      "failedMissing": "そのノートはもう存在しません。",
+      "failedUnreadable": "この録音の文字起こしを読み取れなかったため、分割できません。",
+      "failedUnanchored": "この録音のタイムスタンプが音声と一致しないため、分割は安全ではありません。",
+      "failedStale": "確認中に文字起こしが変わりました。ノートを開き直してもう一度お試しください。",
+      "failedPartway": "途中で問題が発生しました。一部の通話はすでに別のノートになっている可能性があります。ノートを開き直して確認してください。",
+      "failedUnknown": "分割を完了できませんでした。"
     },
     "reprocessAll": {
       "label": "すべての会議を再処理",
@@ -2566,6 +2583,7 @@
     "queued": "queued",
     "steps": {
       "retranscribe": "Re-transcribing",
+      "splitCalls": "通話の区切りを確認中",
       "title": "Generating title",
       "classify": "Detecting meeting type",
       "notes": "Generating notes",

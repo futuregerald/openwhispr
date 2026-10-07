@@ -3,6 +3,7 @@ const path = require("path");
 const { app } = require("electron");
 const debugLogger = require("./debugLogger");
 const { planAudioCleanup } = require("./audioRetention");
+const { notesSharingAudioPaths, planSharedAudioClear } = require("./sharedNoteAudio.js");
 
 const RETAINED_AUDIO_EXTENSIONS = [".webm", ".opus", ".pcm"];
 
@@ -108,9 +109,7 @@ class AudioStorageManager {
   cleanupExpiredAudio(retentionDays, databaseManager) {
     try {
       const cutoffMs = Date.now() - retentionDays * 86400000;
-      const names = fs
-        .readdirSync(this.audioDir)
-        .filter((f) => isRetainedAudioFile(f));
+      const names = fs.readdirSync(this.audioDir).filter((f) => isRetainedAudioFile(f));
 
       const files = [];
       for (const name of names) {
@@ -136,6 +135,10 @@ class AudioStorageManager {
           if (!note) return false;
           return !String(note.enhanced_content || "").trim();
         },
+        notesSharingFile: (name) =>
+          notesSharingAudioPaths(databaseManager?.db, [path.join(this.audioDir, name)]).map(
+            (row) => row.id
+          ),
       });
 
       for (const name of plan.deleteFiles) {
@@ -165,9 +168,13 @@ class AudioStorageManager {
       if (expiredTranscriptionIds.length > 0 && databaseManager) {
         databaseManager.clearAudioFlags(expiredTranscriptionIds);
       }
-      for (const noteId of expiredNoteIds) {
+      const deletedPaths = plan.deleteFiles.map((name) => path.join(this.audioDir, name));
+      for (const update of planSharedAudioClear(
+        notesSharingAudioPaths(databaseManager?.db, deletedPaths),
+        deletedPaths
+      )) {
         try {
-          databaseManager?.updateNote(noteId, { mic_audio_path: null, system_audio_path: null });
+          databaseManager?.updateNote(update.noteId, update.fields);
         } catch (_) {}
       }
 
@@ -186,9 +193,7 @@ class AudioStorageManager {
 
   deleteAllAudio() {
     try {
-      const files = fs.readdirSync(this.audioDir).filter(
-        (f) => isRetainedAudioFile(f)
-      );
+      const files = fs.readdirSync(this.audioDir).filter((f) => isRetainedAudioFile(f));
       for (const file of files) {
         try {
           fs.unlinkSync(path.join(this.audioDir, file));
@@ -210,9 +215,7 @@ class AudioStorageManager {
 
   getStorageUsage() {
     try {
-      const files = fs.readdirSync(this.audioDir).filter(
-        (f) => isRetainedAudioFile(f)
-      );
+      const files = fs.readdirSync(this.audioDir).filter((f) => isRetainedAudioFile(f));
       let totalBytes = 0;
       for (const file of files) {
         try {

@@ -5,7 +5,7 @@ const os = require("os");
 const crypto = require("crypto");
 const debugLogger = require("./debugLogger");
 const { JOB_KINDS } = require("./jobDispatch");
-const { isPipelineStep } = require("./postCallPipelineManager");
+const { isPipelineStep, isSliceOfSharedRecording } = require("./postCallPipelineManager");
 const {
   findNotesNeedingAttributionRepair,
   repairNoteAttribution: repairStoredNoteAttribution,
@@ -394,6 +394,20 @@ class IPCHandlers {
       if (!vectorIndex.isReady()) return;
       vectorIndex.deleteNote(noteId).catch(() => {});
     });
+  }
+
+  _notifyNoteCreated(note) {
+    if (!note) return;
+    setImmediate(() => this.broadcastToWindows("note-added", note));
+    this._asyncVectorUpsert(note);
+    this._asyncMirrorWrite(note);
+  }
+
+  _notifyNoteChanged(note) {
+    if (!note) return;
+    setImmediate(() => this.broadcastToWindows("note-updated", note));
+    this._asyncVectorUpsert(note);
+    this._asyncMirrorWrite(note);
   }
 
   // A note write that skips this loses the `note-updated` broadcast, and the renderer's
@@ -899,23 +913,42 @@ class IPCHandlers {
     });
 
     ipcMain.handle("delete-note-audio", async (_event, noteId) => {
+      const {
+        audioPathsOf,
+        notesSharingAudioPaths,
+        planSharedAudioClear,
+      } = require("./sharedNoteAudio.js");
       const note = this.databaseManager.getNote(noteId);
       if (!note) return { success: false, error: "Note not found" };
-      for (const p of [note.mic_audio_path, note.system_audio_path]) {
-        if (p && fs.existsSync(p)) {
+
+      const paths = audioPathsOf(note);
+      const siblings = notesSharingAudioPaths(this.databaseManager.db, paths);
+      const updates = planSharedAudioClear([note, ...siblings], paths);
+
+      for (const p of paths) {
+        if (fs.existsSync(p)) {
           try {
             fs.unlinkSync(p);
           } catch (_) {}
         }
       }
-      this.databaseManager.updateNote(noteId, { mic_audio_path: null, system_audio_path: null });
-      return { success: true };
+      for (const update of updates) {
+        this._updateNoteAndNotify(update.noteId, update.fields);
+      }
+      return { success: true, clearedNoteIds: updates.map((update) => update.noteId) };
     });
 
     ipcMain.handle("retranscribe-meeting-note", async (event, noteId, options = {}) => {
       const { BrowserWindow } = require("electron");
       const note = this.databaseManager.getNote(noteId);
       if (!note) return { success: false, error: "Note not found" };
+      if (isSliceOfSharedRecording(note)) {
+        return {
+          success: false,
+          error:
+            "This note is part of a longer recording that was split into separate calls, so re-transcribing it would put the whole recording back into it",
+        };
+      }
 
       try {
         const { convertToWav } = require("./ffmpegUtils");
@@ -3922,6 +3955,12 @@ class IPCHandlers {
       // actually has, instead of truncating the transcript to fit a guess.
       resolveModelContext: (modelId) =>
         require("./modelManagerBridge").default.resolveModelContext(modelId),
+      onNoteCreated: (note) => this._notifyNoteCreated(note),
+      onNoteReindexed: (note) => {
+        if (!note) return;
+        this._asyncVectorUpsert(note);
+        this._asyncMirrorWrite(note);
+      },
     });
 
     const { digestGeneratedNotes } = require("./generatedNotesDigest");
@@ -7420,6 +7459,42 @@ class IPCHandlers {
       queueLength: this.backgroundJobQueue?.length ?? 0,
       activeJob: this.backgroundJobQueue?.activeJob ?? null,
     }));
+
+    ipcMain.handle("scan-note-call-boundaries", async (_event, noteId) => {
+      const { scanNoteCallBoundaries } = require("./noteCallSplit.js");
+      return scanNoteCallBoundaries({ databaseManager: this.databaseManager, noteId });
+    });
+
+    ipcMain.handle("split-note-calls", async (_event, noteId) => {
+      const { splitNoteCalls } = require("./noteCallSplit.js");
+      const result = await splitNoteCalls({
+        databaseManager: this.databaseManager,
+        noteId,
+        onNoteCreated: (note) => this._notifyNoteCreated(note),
+        onNoteChanged: (note) => this._notifyNoteChanged(note),
+      });
+      const childNoteIds = result.childNoteIds ?? [];
+      if (childNoteIds.length === 0) return result;
+
+      this.backgroundJobQueue.enqueueKind(
+        `regenerate-notes-${result.parentNoteId}`,
+        JOB_KINDS.REGENERATE_NOTES,
+        { noteId: result.parentNoteId }
+      );
+      for (const id of childNoteIds) {
+        this.backgroundJobQueue.enqueueKind(`post-call-retry-${id}`, JOB_KINDS.POST_CALL_PIPELINE, {
+          noteId: id,
+          fromStep: "classify",
+        });
+      }
+      return result;
+    });
+
+    ipcMain.handle("dismiss-note-call-split", async (_event, noteId) => {
+      const result = this._updateNoteAndNotify(noteId, { call_split_dismissed: 1 });
+      if (!result?.success) return { success: false, error: "Note not found" };
+      return { success: true };
+    });
 
     ipcMain.handle("retry-pipeline-step", async (_event, noteId, fromStep) => {
       // An unrecognised step used to run the WHOLE pipeline, re-transcription

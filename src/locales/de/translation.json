@@ -2078,7 +2078,24 @@
       "inProgress": "Wird neu verarbeitet…",
       "started": "Neuverarbeitung gestartet – läuft im Hintergrund.",
       "failed": "Neuverarbeitung fehlgeschlagen: {{error}}",
-      "downloadNeeded": "Transkriptionsmodell wird zuerst heruntergeladen…"
+      "downloadNeeded": "Transkriptionsmodell wird zuerst heruntergeladen…",
+      "sliceDisabled": "Diese Notiz ist ein Anruf aus einer längeren Aufnahme. Eine erneute Transkription würde die ganze Aufnahme zurückbringen, daher ist sie hier deaktiviert."
+    },
+    "callSplit": {
+      "message": "Das sieht nach {{count}} Anrufen aus, die zusammen aufgezeichnet wurden.",
+      "split": "Aufteilen",
+      "splitting": "Wird aufgeteilt…",
+      "dismiss": "Ausblenden",
+      "confirmTitle": "Diese Aufnahme in {{count}} Notizen aufteilen?",
+      "confirmDescription": "Jeder Anruf wird zu einer eigenen Notiz mit eigenen Notizen und eigenem Datum. Die erzeugten Notizen, die Sprechernamen und der Besprechungstyp bleiben beim ersten Anruf. Das lässt sich nicht rückgängig machen.",
+      "done": "In {{count}} Notizen aufgeteilt.",
+      "failed": "Nichts aufzuteilen — es wurde keine Grenze zwischen Anrufen gefunden.",
+      "failedMissing": "Diese Notiz existiert nicht mehr.",
+      "failedUnreadable": "Das Transkript dieser Aufnahme konnte nicht gelesen werden, sie lässt sich daher nicht teilen.",
+      "failedUnanchored": "Die Zeitstempel dieser Aufnahme passen nicht zur Audiodatei, ein Teilen wäre nicht sicher.",
+      "failedStale": "Das Transkript hat sich während der Prüfung geändert. Öffne die Notiz erneut und versuche es noch einmal.",
+      "failedPartway": "Mitten im Vorgang ist etwas schiefgegangen. Einige Anrufe sind möglicherweise schon eigene Notizen – öffne die Notiz erneut, um nachzusehen.",
+      "failedUnknown": "Das Teilen konnte nicht abgeschlossen werden."
     },
     "reprocessAll": {
       "label": "Alle Meetings neu verarbeiten",
@@ -2566,6 +2583,7 @@
     "queued": "queued",
     "steps": {
       "retranscribe": "Re-transcribing",
+      "splitCalls": "Suche nach getrennten Anrufen",
       "title": "Generating title",
       "classify": "Detecting meeting type",
       "notes": "Generating notes",

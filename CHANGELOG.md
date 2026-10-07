@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.36.0] - 2026-10-06
+
+### Added
+
+- A recording that ran through several back-to-back calls can now become one
+  note per call. If you dropped one call and joined another without stopping
+  the recording, OpenWhispr spots the seam and **flags** it: open the note and a
+  banner tells you how many calls it thinks are in there, with Split and
+  Dismiss. A new recording is never split on its own — splitting cannot be
+  undone, so it only ever happens when you say so, and you can dismiss the
+  suggestion for good.
+- Each piece becomes a note in its own right, with its own title, its own
+  generated notes, its own meeting length and **its own date** — so it sits at
+  its real meeting time in the notes list rather than inheriting the whole
+  morning's.
+- A seam has to earn it. A silence of 30 seconds or more only counts as a call
+  boundary when the words either side agree: someone saying goodbye before it,
+  someone arriving after it, or a completely different set of speakers. A long
+  pause with none of that is left alone, and a phrase only counts when it is
+  really what was said — "we have to drop the column first" is not a goodbye.
+
+### Changed
+
+- Splitting a recording keeps the notes you wrote. The first call's notes are
+  rebuilt from its shorter transcript, but anything you edited by hand is left
+  exactly as you wrote it. Its title and meeting type stay as they are.
+- A note that is one slice of a longer recording can no longer be
+  re-transcribed, and the Reprocess button explains why when you hover it. Both
+  halves share one audio file, so re-transcribing either one would pull the
+  whole recording back in and undo the split.
+- Deleting a recording's audio now clears it from every note that shared the
+  file, instead of leaving the other notes pointing at a file that is gone. The
+  30-day audio clean-up does the same, and it keeps a shared recording for as
+  long as **any** of the notes made from it is still waiting for its notes.
+- When a split cannot be done, the message now says why instead of always
+  claiming no call boundary was found.
+
+### Known limitations
+
+- Around a quarter of existing notes cannot be offered a split, because their
+  stored timestamps are not all on one clock and splitting them would risk
+  losing part of the transcript. Those notes are left untouched.
+- The suggestion reads English farewells and greetings, so a call in another
+  language will not be offered a split. It will never be split wrongly — only
+  missed.
+- Splitting cannot be undone. Two notes cannot be welded back into one.
+- Each piece's meeting length is measured from its first word to its last, so
+  it is a few seconds shorter than the audio it covers, and leading silence is
+  not counted.
+- A piece that had no title of its own before the split keeps its placeholder
+  name; only the newly created pieces get a generated title.
+
 ## [1.35.1] - 2026-10-02
 
 ### Fixed

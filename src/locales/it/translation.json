@@ -2078,7 +2078,24 @@
       "inProgress": "Rielaborazione…",
       "started": "Rielaborazione avviata — viene eseguita in background.",
       "failed": "Rielaborazione non riuscita: {{error}}",
-      "downloadNeeded": "Download del modello di trascrizione in corso…"
+      "downloadNeeded": "Download del modello di trascrizione in corso…",
+      "sliceDisabled": "Questa nota è una chiamata di una registrazione più lunga. Una nuova trascrizione riporterebbe l'intera registrazione, quindi qui è disattivata."
+    },
+    "callSplit": {
+      "message": "Sembra che qui ci siano {{count}} chiamate registrate insieme.",
+      "split": "Dividi",
+      "splitting": "Divisione in corso…",
+      "dismiss": "Ignora",
+      "confirmTitle": "Dividere questa registrazione in {{count}} note?",
+      "confirmDescription": "Ogni chiamata diventa una nota a sé, con le proprie note e la propria data. Le note generate, i nomi dei partecipanti e il tipo di riunione restano con la prima chiamata. L'operazione non può essere annullata.",
+      "done": "Divisa in {{count}} note.",
+      "failed": "Niente da dividere: nessun confine tra chiamate trovato.",
+      "failedMissing": "Quella nota non esiste più.",
+      "failedUnreadable": "Non è stato possibile leggere la trascrizione di questa registrazione, quindi non può essere divisa.",
+      "failedUnanchored": "Le marcature temporali di questa registrazione non corrispondono al suo audio, quindi dividerla non è sicuro.",
+      "failedStale": "La trascrizione è cambiata durante il controllo. Riapri la nota e riprova.",
+      "failedPartway": "Qualcosa è andato storto a metà. Alcune chiamate potrebbero essere già note separate: riapri la nota per vedere.",
+      "failedUnknown": "Non è stato possibile completare la divisione."
     },
     "reprocessAll": {
       "label": "Rielabora tutte le riunioni",
@@ -2566,6 +2583,7 @@
     "queued": "queued",
     "steps": {
       "retranscribe": "Re-transcribing",
+      "splitCalls": "Ricerca di chiamate separate",
       "title": "Generating title",
       "classify": "Detecting meeting type",
       "notes": "Generating notes",
