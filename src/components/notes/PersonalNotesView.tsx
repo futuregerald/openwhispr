@@ -57,6 +57,7 @@ import { parseTranscriptSegments } from "../../utils/parseTranscriptSegments";
 import { buildNoteActionInput } from "../../utils/noteActionInput";
 import { serializeTranscriptSegments } from "../../helpers/transcriptSpeakerState";
 import { resolveExpectedSpeakerCount } from "../../utils/participants";
+import { useNotesListWidth } from "../../hooks/useNotesListWidth";
 import {
   useNotes,
   useActiveNoteId,
@@ -110,6 +111,7 @@ export default function PersonalNotesView({
   const notes = useNotes();
   const activeNoteId = useActiveNoteId();
   const isSidePanelLayout = isMeetingMode || (isNarrowWindow && activeNoteId != null);
+  const notesList = useNotesListWidth({ enabled: !isSidePanelLayout });
   const activeFolderId = useActiveFolderId();
   const [isSaving, setIsSaving] = useState(false);
   const [localTitle, setLocalTitle] = useState("");
@@ -669,18 +671,27 @@ export default function PersonalNotesView({
         content: isLocalSynced ? localContent : activeNote.content,
       }
     : null;
+  const editorEnhancedContent = isLocalSynced
+    ? localEnhancedContent
+    : (activeNote?.enhanced_content ?? null);
 
   if (!isOnboardingComplete) {
     return <NotesOnboarding onComplete={completeOnboarding} />;
   }
 
   return (
-    <div className="flex h-full">
+    <div ref={notesList.rootRef} className="flex h-full">
       <div
-        className="shrink-0 overflow-hidden transition-[width] duration-300 ease-out"
-        style={{ width: isSidePanelLayout ? 0 : "13rem" }}
+        className={cn(
+          "shrink-0 overflow-hidden",
+          !notesList.isResizing && "transition-[width] duration-300 ease-out"
+        )}
+        style={{ width: isSidePanelLayout ? 0 : notesList.width }}
       >
-        <div className="w-52 shrink-0 border-r border-border/15 dark:border-white/4 flex flex-col h-full">
+        <div
+          className="shrink-0 border-r border-border/15 dark:border-white/4 flex flex-col h-full"
+          style={{ width: notesList.width }}
+        >
           <div className="px-2 pt-2 pb-1 shrink-0 space-y-0.5">
             <button
               onClick={handleOpenNewNoteDialog}
@@ -1045,6 +1056,20 @@ export default function PersonalNotesView({
         </div>
       </div>
 
+      {!isSidePanelLayout && (
+        <div className="relative w-0 shrink-0 z-10">
+          <div
+            {...notesList.handleProps}
+            aria-label={t("notes.list.resizeHandle")}
+            className={cn(
+              "absolute inset-y-0 -left-0.75 w-1.5 cursor-col-resize touch-none",
+              "transition-colors duration-150 hover:bg-primary/15 focus:outline-none focus-visible:bg-primary/25",
+              notesList.isResizing && "bg-primary/25"
+            )}
+          />
+        </div>
+      )}
+
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {editorNote ? (
           <>
@@ -1061,9 +1086,9 @@ export default function PersonalNotesView({
               onExportNote={handleExportNote}
               onExportTranscript={handleExportTranscript}
               enhancement={
-                localEnhancedContent
+                editorEnhancedContent
                   ? {
-                      content: localEnhancedContent,
+                      content: editorEnhancedContent,
                       isStale: isEnhancementStale,
                       onChange: handleEnhancedContentChange,
                     }

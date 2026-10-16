@@ -1832,6 +1832,7 @@
       "newNote": "Nouvelle note",
       "untitled": "Sans titre",
       "untitledNote": "Note sans titre",
+      "resizeHandle": "Redimensionner la liste des notes",
       "timeNow": "maintenant",
       "minutesAgo": "il y a {{count}}m",
       "hoursAgo": "il y a {{count}}h",
