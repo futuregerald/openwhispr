@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.37.0] - 2026-10-16
+
+### Added
+
+- The notes list can be made wider. Drag its right edge to see whole meeting
+  titles instead of "Weekly sync on the release …". It remembers the width you
+  pick, never gets narrower than it used to be, and always leaves room for the
+  note itself. Double-click the edge to put it back; with the edge focused, the
+  arrow keys move it too.
+
+### Changed
+
+- Opening a meeting now shows its generated notes first, not the blank page
+  for your own notes. If the notes are still being written when you open the
+  meeting, they appear as soon as they're ready — unless you've already picked
+  a tab or started working in the note: typing, or naming speakers in the
+  transcript. Personal notes still open on what you wrote.
+
 ## [1.36.0] - 2026-10-06
 
 ### Added
