@@ -5814,7 +5814,8 @@ class IPCHandlers {
       meetingConnectionOptions = options;
       meetingConnectionWin = BrowserWindow.fromWebContents(event.sender);
       meetingReconnectCount = 0;
-      this.meetingDetectionEngine?.setUserRecording(true);
+      const confirmRecordingStarted = () =>
+        this.meetingDetectionEngine?.meetingRecordingStarted({ noteId: options.noteId ?? null });
       try {
         const systemAudioPlan = await getMeetingSystemAudioPlan();
         let { mode: systemAudioMode, strategy: systemAudioStrategy } = systemAudioPlan;
@@ -5846,6 +5847,7 @@ class IPCHandlers {
             systemAudioStrategy,
             "during warm-start reuse"
           ));
+          confirmRecordingStarted();
           return {
             success: true,
             systemAudioMode,
@@ -5886,6 +5888,7 @@ class IPCHandlers {
             systemAudioStrategy,
           });
 
+          confirmRecordingStarted();
           return {
             success: true,
             systemAudioMode,
@@ -5907,6 +5910,7 @@ class IPCHandlers {
           systemAudioStrategy,
           "in realtime mode"
         ));
+        confirmRecordingStarted();
         return {
           success: true,
           systemAudioMode,
@@ -5915,7 +5919,6 @@ class IPCHandlers {
         };
       } catch (error) {
         await rollbackMeetingTranscriptionStart();
-        this.meetingDetectionEngine?.setUserRecording(false);
         debugLogger.error("Meeting transcription start error", { error: error.message });
         return { success: false, error: error.message };
       } finally {
@@ -6207,6 +6210,8 @@ class IPCHandlers {
       } catch (error) {
         debugLogger.error("Meeting transcription stop error", { error: error.message });
         return { success: false, error: error.message };
+      } finally {
+        this.meetingDetectionEngine?.meetingRecordingStopComplete();
       }
     });
 

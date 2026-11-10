@@ -24,6 +24,7 @@ const DEACTIVATE_DEBOUNCE_MS = 8000; // survive short device flaps mid-call
 // camera (only the call holds it) and the meeting URL instead.
 const END_POLL_MS = 12000;
 const END_MISS_THRESHOLD = 2; // ~24s of "not in call" before auto-stop
+const URL_EVIDENCE_STREAK = 2;
 const RESTART_BASE_MS = 1000;
 const RESTART_MAX_MS = 60 * 1000;
 const RESTART_MAX_ATTEMPTS = 5;
@@ -40,6 +41,8 @@ class CallStateDetector extends EventEmitter {
     this._callActive = false;
     this._selfRecording = false; // true while OUR recording is holding the mic
     this._callUsedCamera = false;
+    this._callObserved = false;
+    this._urlMatchStreak = 0;
     this._endPollTimer = null;
     this._endMisses = 0;
     this._running = false;
@@ -108,6 +111,8 @@ class CallStateDetector extends EventEmitter {
     this.state = { camera: false, microphone: false };
     this._callActive = false;
     this._callUsedCamera = false;
+    this._callObserved = false;
+    this._urlMatchStreak = 0;
     if (this._activateTimer) {
       clearTimeout(this._activateTimer);
       this._activateTimer = null;
@@ -187,7 +192,10 @@ class CallStateDetector extends EventEmitter {
   }
 
   _reconcile() {
-    if (this.state.camera) this._callUsedCamera = true;
+    if (this.state.camera) {
+      this._callUsedCamera = true;
+      this._callObserved = true;
+    }
 
     // While our own recording holds the mic, the device signal can't tell us the
     // call ended — end detection runs in _endPollTick() via setSelfRecording().
@@ -240,16 +248,28 @@ class CallStateDetector extends EventEmitter {
     return this._callActive;
   }
 
+  isRunning() {
+    return this._running;
+  }
+
+  hasObservedCall() {
+    return this._callObserved;
+  }
+
   // The engine calls this when it auto-starts/stops a recording. While true, our
   // own capture holds the mic, so we switch end-detection to a poll (camera +
   // meeting URL) that isn't fooled by our own mic usage.
   setSelfRecording(active) {
     this._selfRecording = active;
+    this._urlMatchStreak = 0;
     if (active) {
+      this._callUsedCamera = this.state.camera;
+      this._callObserved = this.state.camera;
       this._startEndPoll();
     } else {
       this._stopEndPoll();
       this._callUsedCamera = false;
+      this._callObserved = false;
     }
   }
 
@@ -269,6 +289,24 @@ class CallStateDetector extends EventEmitter {
     this._endMisses = 0;
   }
 
+  async _urlEvidenceStillInCall() {
+    let match;
+    try {
+      match = await this.urlChecker();
+    } catch {
+      this._urlMatchStreak = 0;
+      return true;
+    }
+    if (match?.matched === true) {
+      this._urlMatchStreak += 1;
+      if (this._urlMatchStreak >= URL_EVIDENCE_STREAK) this._callObserved = true;
+      return true;
+    }
+    this._urlMatchStreak = 0;
+    if (match?.denied || match?.unavailable) return true;
+    return !this._callObserved;
+  }
+
   async _endPollTick() {
     if (!this._selfRecording) return;
     let stillInCall;
@@ -278,16 +316,9 @@ class CallStateDetector extends EventEmitter {
       // isn't: Meet's "you left" screen keeps the meeting-code URL.)
       stillInCall = this.state.camera;
     } else if (this.urlChecker) {
-      // Audio-only / camera-off: fall back to whether a meeting URL is still open
-      // (ends when the tab is closed/navigated away). The self-held mic is ignored.
-      try {
-        const match = await this.urlChecker();
-        stillInCall = !!match?.matched;
-      } catch {
-        stillInCall = true; // on error, stay conservative and rely on the max cap
-      }
+      stillInCall = await this._urlEvidenceStillInCall();
     } else {
-      stillInCall = true; // no usable signal — rely on the max-duration safety cap
+      stillInCall = true;
     }
     if (stillInCall) {
       this._endMisses = 0;
@@ -299,6 +330,8 @@ class CallStateDetector extends EventEmitter {
       this._callActive = false;
       this._selfRecording = false;
       this._callUsedCamera = false;
+      this._callObserved = false;
+      this._urlMatchStreak = 0;
       this.emit("call-ended");
     }
   }
@@ -329,6 +362,8 @@ class CallStateDetector extends EventEmitter {
     this._callActive = false;
     this._selfRecording = false;
     this._callUsedCamera = false;
+    this._callObserved = false;
+    this._urlMatchStreak = 0;
     this._stopEndPoll();
     this.state = { camera: false, microphone: false };
     health.setMode("call", "stopped");

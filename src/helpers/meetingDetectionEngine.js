@@ -3,9 +3,11 @@ const debugLogger = require("./debugLogger");
 const { getMeetingJoinUrl } = require("./meetingJoinUrl");
 const health = require("./meetingDetectionHealth");
 const { resetAutomationDenied } = require("./browserMeetingUrlChecker");
+const { i18nMain } = require("./i18nMain");
+const { CAP_MS, WARN_LEAD_MS, CALL_ENDED_NOTICE_MS } = require("./recordingLimits");
 
 const IMMINENT_THRESHOLD_MS = 5 * 60 * 1000;
-const MAX_AUTO_RECORD_MS = 4 * 60 * 60 * 1000; // safety cap for auto-started recordings
+const POST_RECORDING_COOLDOWN_MS = 2500;
 // Backstop only: the latch is cleared where the session ends. Long enough not to
 // interrupt a meeting being set up, short enough that a missed clear costs one
 // coffee break rather than the rest of the day.
@@ -51,9 +53,17 @@ class MeetingDetectionEngine {
     this.activeDetections = new Map();
     this.preferences = { processDetection: true, audioDetection: true, autoStartRecording: false };
     this._userRecording = false;
+    this._dictationActive = false;
+    this._meetingRecording = null;
     this._meetingModeActive = false;
     this._autoStarted = false;
-    this._autoStopTimer = null;
+    this._capWarnTimer = null;
+    this._capStopTimer = null;
+    this._detectorStartedForRecording = false;
+    this._requestedStopReason = null;
+    this._pendingStopReason = null;
+    this._stopInFlight = false;
+    this._callEndedNotice = null;
     this._notificationQueue = [];
     this._postRecordingCooldown = null;
     this._bindListeners();
@@ -141,7 +151,14 @@ class MeetingDetectionEngine {
     if (!urlMatch?.matched) {
       debugLogger.info(
         "Camera/mic in use; URL check unavailable — trusting device signal for auto-start",
-        { devices: data?.devices, reason: urlMatch?.denied ? "denied" : urlMatch?.unavailable ? "unavailable" : "no-checker" },
+        {
+          devices: data?.devices,
+          reason: urlMatch?.denied
+            ? "denied"
+            : urlMatch?.unavailable
+              ? "unavailable"
+              : "no-checker",
+        },
         "meeting"
       );
     }
@@ -153,14 +170,7 @@ class MeetingDetectionEngine {
     this._autoStarted = true;
     this._beginMeetingSession(placeholderEvent("__detected__"), "auto-start")
       .then((ok) => {
-        if (ok) {
-          // Tell the detector we now hold the mic, so it switches to camera/URL
-          // end-detection, and arm a max-duration safety stop.
-          this.callStateDetector?.setSelfRecording(true);
-          this._armAutoStopSafety();
-        } else {
-          this._autoStarted = false;
-        }
+        if (!ok) this._autoStarted = false;
       })
       .catch((error) => {
         this._autoStarted = false;
@@ -172,13 +182,18 @@ class MeetingDetectionEngine {
   }
 
   _handleCallEnded() {
-    this._clearAutoStopSafety();
-    // Only auto-stop sessions that were auto-started — never a manual recording.
-    if (this._autoStarted && this._userRecording) {
-      debugLogger.info("Call ended — auto-stopping recording", {}, "meeting");
-      this.broadcastToWindows("meeting-auto-stop-request", {});
-    }
-    this._autoStarted = false;
+    if (!this._meetingRecording) return;
+    debugLogger.info(
+      "Call ended — requesting recording stop",
+      { autoStarted: this._autoStarted, noteId: this._meetingRecording.noteId },
+      "meeting"
+    );
+    this._requestStop("call-ended");
+  }
+
+  _requestStop(reason) {
+    this._requestedStopReason = reason;
+    this.broadcastToWindows("meeting-auto-stop-request", { reason });
   }
 
   _armMeetingModeWatchdog() {
@@ -226,19 +241,96 @@ class MeetingDetectionEngine {
     this.callStateDetector?.revalidate?.(reason);
   }
 
-  _armAutoStopSafety() {
-    this._clearAutoStopSafety();
-    this._autoStopTimer = setTimeout(() => {
-      debugLogger.warn("Auto-started recording hit the max duration; stopping", {}, "meeting");
-      this._handleCallEnded();
-    }, MAX_AUTO_RECORD_MS);
+  _armCap(fromMs) {
+    this._clearCap();
+    this._capWarnTimer = setTimeout(() => {
+      this._capWarnTimer = null;
+      debugLogger.info(
+        "Recording nearing the cap; warning",
+        { endsAt: fromMs + CAP_MS },
+        "meeting"
+      );
+      this.windowManager?.showRecordingNotice?.({ kind: "cap-warning", endsAt: fromMs + CAP_MS });
+    }, CAP_MS - WARN_LEAD_MS);
+    this._capStopTimer = setTimeout(() => {
+      this._capStopTimer = null;
+      debugLogger.warn("Recording hit the cap; requesting stop", { capMs: CAP_MS }, "meeting");
+      this._requestStop("cap");
+    }, CAP_MS);
+    this._capWarnTimer?.unref?.();
+    this._capStopTimer?.unref?.();
   }
 
-  _clearAutoStopSafety() {
-    if (this._autoStopTimer) {
-      clearTimeout(this._autoStopTimer);
-      this._autoStopTimer = null;
+  _clearCap() {
+    if (this._capWarnTimer) {
+      clearTimeout(this._capWarnTimer);
+      this._capWarnTimer = null;
     }
+    if (this._capStopTimer) {
+      clearTimeout(this._capStopTimer);
+      this._capStopTimer = null;
+    }
+  }
+
+  keepRecording() {
+    if (!this._meetingRecording) return;
+    debugLogger.info("Recording kept past the cap warning", {}, "meeting");
+    this._armCap(Date.now());
+    this.windowManager?.dismissRecordingNotice?.();
+  }
+
+  handleRecordingNoticeResponse(action) {
+    debugLogger.info("Recording notice response", { action }, "meeting");
+    if (action === "keep") {
+      this.keepRecording();
+    } else if (action === "stop") {
+      this._requestStop("cap-user");
+      this.windowManager?.dismissRecordingNotice?.();
+    } else if (action === "resume") {
+      return this.resumeAfterCallEnded();
+    } else {
+      this.windowManager?.dismissRecordingNotice?.();
+    }
+    return undefined;
+  }
+
+  async resumeAfterCallEnded() {
+    const notice = this._callEndedNotice;
+    if (!notice || this._stopInFlight || this._meetingRecording) return false;
+    if (Date.now() >= notice.until) {
+      this._callEndedNotice = null;
+      return false;
+    }
+    const source = notice.noteId == null ? null : this.databaseManager.getNote(notice.noteId);
+    if (!source) return false;
+    this._callEndedNotice = null;
+    this.windowManager?.dismissRecordingNotice?.();
+
+    const suffix = i18nMain.t("recordingNotice.continuedSuffix", { defaultValue: "(continued)" });
+    const summary = `${source.title || "New note"} ${suffix}`;
+    debugLogger.info("Resuming after call ended", { fromNoteId: notice.noteId }, "meeting");
+    let created;
+    try {
+      created = await this._beginMeetingSession(
+        { ...placeholderEvent("__manual__"), summary },
+        "resume"
+      );
+    } catch (error) {
+      this._meetingModeActive = false;
+      debugLogger.error("Resume after call ended failed", { error: error?.message }, "meeting");
+      return false;
+    }
+    if (!created) return false;
+
+    const carried = {};
+    for (const field of ["calendar_event_id", "participants", "meeting_type_id"]) {
+      if (source[field] != null) carried[field] = source[field];
+    }
+    if (Object.keys(carried).length > 0) {
+      const result = this.databaseManager.updateNote(created.id, carried);
+      if (result?.success && result?.note) this.broadcastToWindows("note-updated", result.note);
+    }
+    return true;
   }
 
   // Shared "begin a meeting recording" path used by both the notification
@@ -290,7 +382,7 @@ class MeetingDetectionEngine {
     });
 
     this.audioActivityDetector.resetPrompt();
-    return true;
+    return noteResult.note;
   }
 
   // Calendar reminders enter the same pipeline as mic detections, so they share
@@ -332,7 +424,13 @@ class MeetingDetectionEngine {
       debugLogger.info("Detection queued — user is recording", { detectionId, source }, "meeting");
       health.recordSuppression("queued-user-recording", { detectionId, source });
       this._notificationQueue.push({ source, key, data });
-      this.activeDetections.set(detectionId, { source, key, data, dismissed: false, at: Date.now() });
+      this.activeDetections.set(detectionId, {
+        source,
+        key,
+        data,
+        dismissed: false,
+        at: Date.now(),
+      });
       return;
     }
 
@@ -602,30 +700,93 @@ class MeetingDetectionEngine {
   endMeetingSession(reason = "recording-stopped") {
     debugLogger.info("Meeting session ended", { reason }, "meeting");
     this.setMeetingModeActive(false);
-    this.setUserRecording(false);
+    this._pendingStopReason = reason;
+    this._stopInFlight = true;
+    if (!this._meetingRecording) this.meetingRecordingStopComplete();
+  }
+
+  meetingRecordingStopComplete() {
+    if (!this._stopInFlight) return;
+    const reason = this._requestedStopReason ?? this._pendingStopReason;
+    this._stopInFlight = false;
+    this.meetingRecordingStopped(reason);
+  }
+
+  _publishRecording() {
+    this._userRecording = this._dictationActive || !!this._meetingRecording;
+    this.audioActivityDetector.setUserRecording(this._userRecording);
+  }
+
+  _startPostRecordingCooldown(delayMs = POST_RECORDING_COOLDOWN_MS) {
+    if (this._postRecordingCooldown) clearTimeout(this._postRecordingCooldown);
+    this._postRecordingCooldown = setTimeout(() => {
+      this._postRecordingCooldown = null;
+      this._flushNotificationQueue();
+    }, delayMs);
+  }
+
+  _recordingStarted() {
+    this._clearMeetingModeWatchdog();
+    if (this._postRecordingCooldown) {
+      clearTimeout(this._postRecordingCooldown);
+      this._postRecordingCooldown = null;
+    }
+  }
+
+  meetingRecordingStarted({ noteId = null } = {}) {
+    debugLogger.info("Meeting recording started", { noteId }, "meeting");
+    this._requestedStopReason = null;
+    this._pendingStopReason = null;
+    this._meetingRecording = { noteId, startedAt: Date.now() };
+    if (this.callStateDetector && !this.callStateDetector.isRunning?.()) {
+      this.callStateDetector.start();
+      this._detectorStartedForRecording = true;
+    }
+    this.callStateDetector?.setSelfRecording(true);
+    this._armCap(Date.now());
+    this._recordingStarted();
+    this._publishRecording();
+  }
+
+  meetingRecordingStopped(reason) {
+    debugLogger.info("Meeting recording stopped", { reason }, "meeting");
+    const noteId = this._meetingRecording?.noteId ?? null;
+    const wasRecording = !!this._meetingRecording;
+    this._clearCap();
+    this.callStateDetector?.setSelfRecording(false);
+    if (this._detectorStartedForRecording && !this.preferences.autoStartRecording) {
+      this.callStateDetector?.stop();
+    }
+    this._detectorStartedForRecording = false;
+    this._meetingRecording = null;
+    this._autoStarted = false;
+    this._requestedStopReason = null;
+    this._pendingStopReason = null;
+    this._stopInFlight = false;
+    this._publishRecording();
+    this.windowManager?.dismissRecordingNotice?.();
+
+    let cooldownMs = POST_RECORDING_COOLDOWN_MS;
+    if (wasRecording && reason === "call-ended") {
+      const until = Date.now() + CALL_ENDED_NOTICE_MS;
+      this._callEndedNotice = { noteId, until };
+      this.windowManager?.showRecordingNotice?.({ kind: "call-ended", noteId, until });
+      cooldownMs = Math.max(cooldownMs, until - Date.now());
+    }
+
+    if (this.__meetingModeActive) this._armMeetingModeWatchdog();
+    if (!this._dictationActive) this._startPostRecordingCooldown(cooldownMs);
   }
 
   setUserRecording(active) {
-    this._userRecording = active;
-    this.audioActivityDetector.setUserRecording(active);
+    this._dictationActive = active;
+    this._publishRecording();
 
     if (active) {
-      this._clearMeetingModeWatchdog();
-      if (this._postRecordingCooldown) {
-        clearTimeout(this._postRecordingCooldown);
-        this._postRecordingCooldown = null;
-      }
-    } else {
+      this._recordingStarted();
+    } else if (!this._meetingRecording) {
       if (this.__meetingModeActive) this._armMeetingModeWatchdog();
-      // Recording stopped (manually or auto): stop treating the mic as ours and
-      // clear the auto-start bookkeeping.
-      this.callStateDetector?.setSelfRecording(false);
-      this._autoStarted = false;
-      this._clearAutoStopSafety();
-      this._postRecordingCooldown = setTimeout(() => {
-        this._postRecordingCooldown = null;
-        this._flushNotificationQueue();
-      }, 2500);
+      this._startPostRecordingCooldown();
     }
   }
 
@@ -646,8 +807,14 @@ class MeetingDetectionEngine {
     }
 
     if (this.callStateDetector) {
-      if (this.preferences.autoStartRecording) this.callStateDetector.start();
-      else this.callStateDetector.stop();
+      if (this._meetingRecording) {
+        if (this.preferences.autoStartRecording) this.callStateDetector.start();
+        else this._detectorStartedForRecording = true;
+      } else if (this.preferences.autoStartRecording) {
+        this.callStateDetector.start();
+      } else {
+        this.callStateDetector.stop();
+      }
     }
   }
 
@@ -668,7 +835,7 @@ class MeetingDetectionEngine {
     this.audioActivityDetector.stop();
     this.callStateDetector?.stop();
     this._autoStarted = false;
-    this._clearAutoStopSafety();
+    this._clearCap();
     this._clearMeetingModeWatchdog();
     this.activeDetections.clear();
     this._meetingModeActive = false;
