@@ -8,6 +8,7 @@ const { lockTranscriptSpeaker } = require("./transcriptSpeakerState.js");
 const { buildNoteSearchQuery } = require("./noteSearch");
 const peopleResolver = require("./peopleResolver");
 const { resolveDateRange } = require("./searchDateRange");
+const { MODEL_ID: SPEAKER_MODEL_ID, l2Normalize } = require("./speakerEmbeddings");
 const { app } = require("electron");
 
 // Server-enforced trigger cap (openwhispr-api); enforced here so one oversized
@@ -25,6 +26,15 @@ const USER_CONTEXT_DDL = `
 const TRANSCRIPT_ORIGIN_SOURCES = new Set(["audio:system", "first-segment", "unanchored"]);
 
 const SPEAKER_MAPPING_ORIGINS = new Set(["manual", "auto", "unknown", "agent"]);
+const MAX_PROFILE_SAMPLES = 20;
+
+function toEmbeddingBlob(embedding) {
+  if (Buffer.isBuffer(embedding)) return embedding;
+  if (ArrayBuffer.isView(embedding)) {
+    return Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
+  }
+  return Buffer.from(Float32Array.from(embedding).buffer);
+}
 
 const MAX_NOTE_SUMMARY_LIMIT = 50;
 const NOTE_PREVIEW_CHARS = 400;
@@ -623,6 +633,51 @@ class DatabaseManager {
           FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
         )
       `);
+
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS speaker_profile_samples (
+          id INTEGER PRIMARY KEY,
+          profile_id INTEGER NOT NULL REFERENCES speaker_profiles(id) ON DELETE CASCADE,
+          embedding BLOB NOT NULL,
+          duration_s REAL NOT NULL,
+          note_id INTEGER,
+          speaker_id TEXT,
+          model_id TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      this.db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_speaker_profile_samples_profile ON speaker_profile_samples(profile_id)"
+      );
+
+      try {
+        this.db.exec("ALTER TABLE speaker_profiles ADD COLUMN model_id TEXT");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+      try {
+        this.db.exec("ALTER TABLE speaker_profiles ADD COLUMN total_speech_s REAL");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+      try {
+        this.db.exec("ALTER TABLE note_speaker_embeddings ADD COLUMN model_id TEXT");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+      try {
+        this.db.exec("ALTER TABLE note_speaker_embeddings ADD COLUMN speech_s REAL");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+
+      this._runOnce("voiceprints_wespeaker_resnet293", () =>
+        this.db.transaction(() => {
+          this.db.exec("DELETE FROM speaker_profile_samples");
+          this.db.exec("DELETE FROM speaker_profiles");
+          this.db.exec("DELETE FROM note_speaker_embeddings");
+        })()
+      );
 
       // Sync columns for notes
       try {
@@ -3299,7 +3354,13 @@ class DatabaseManager {
     return this.db.prepare("SELECT * FROM speaker_profiles WHERE lower(email) = ?").get(normalized);
   }
 
-  upsertSpeakerProfile(name, email, embeddingBuffer, profileId = null) {
+  upsertSpeakerProfile(
+    name,
+    email,
+    embeddingBuffer,
+    profileId = null,
+    { durationS = 0, noteId = null, speakerId = null } = {}
+  ) {
     try {
       if (!this.db) throw new Error("Database not initialized");
       const normalizedEmail = this._normalizeEmail(email);
@@ -3309,33 +3370,18 @@ class DatabaseManager {
       if (!existing && normalizedEmail) {
         existing = this._findProfileByEmail(normalizedEmail);
       }
-      if (!existing) {
-        existing = this.db
-          .prepare("SELECT * FROM speaker_profiles WHERE display_name = ?")
-          .get(name);
-      }
+      const sample = { embeddingBuffer, durationS, noteId, speakerId };
       if (existing) {
-        const stored = new Float32Array(
-          existing.embedding.buffer,
-          existing.embedding.byteOffset,
-          existing.embedding.byteLength / 4
-        );
-        const incoming = new Float32Array(
-          embeddingBuffer.buffer,
-          embeddingBuffer.byteOffset,
-          embeddingBuffer.byteLength / 4
-        );
-        const updated = new Float32Array(stored.length);
-        for (let i = 0; i < stored.length; i++) {
-          updated[i] = 0.3 * incoming[i] + 0.7 * stored[i];
-        }
-        const updatedBuf = Buffer.from(updated.buffer);
         const finalEmail = normalizedEmail || existing.email || null;
-        this.db
-          .prepare(
-            "UPDATE speaker_profiles SET display_name = ?, email = ?, embedding = ?, sample_count = sample_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-          )
-          .run(name, finalEmail, updatedBuf, existing.id);
+        this.db.transaction(() => {
+          this.db
+            .prepare(
+              "UPDATE speaker_profiles SET display_name = ?, email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+            )
+            .run(name, finalEmail, existing.id);
+          this._addSpeakerProfileSample(existing.id, sample);
+          this._rebuildSpeakerProfile(existing.id);
+        })();
         const resolved = this.db
           .prepare("SELECT * FROM speaker_profiles WHERE id = ?")
           .get(existing.id);
@@ -3349,14 +3395,166 @@ class DatabaseManager {
         }
         return resolved;
       }
-      const result = this.db
-        .prepare("INSERT INTO speaker_profiles (display_name, email, embedding) VALUES (?, ?, ?)")
-        .run(name, normalizedEmail, embeddingBuffer);
-      return this.db
-        .prepare("SELECT * FROM speaker_profiles WHERE id = ?")
-        .get(result.lastInsertRowid);
+      const createdId = this.db.transaction(() => {
+        const result = this.db
+          .prepare(
+            "INSERT INTO speaker_profiles (display_name, email, embedding, model_id) VALUES (?, ?, ?, ?)"
+          )
+          .run(name, normalizedEmail, embeddingBuffer, SPEAKER_MODEL_ID);
+        this._addSpeakerProfileSample(result.lastInsertRowid, sample);
+        this._rebuildSpeakerProfile(result.lastInsertRowid);
+        return result.lastInsertRowid;
+      })();
+      return this.db.prepare("SELECT * FROM speaker_profiles WHERE id = ?").get(createdId);
     } catch (error) {
       debugLogger.error("Error upserting speaker profile", { error: error.message }, "database");
+      throw error;
+    }
+  }
+
+  _addSpeakerProfileSample(profileId, { embeddingBuffer, durationS, noteId, speakerId }) {
+    if (noteId != null && speakerId != null) {
+      this.db
+        .prepare(
+          "DELETE FROM speaker_profile_samples WHERE profile_id = ? AND note_id = ? AND speaker_id = ?"
+        )
+        .run(profileId, noteId, speakerId);
+    }
+    this.db
+      .prepare(
+        "INSERT INTO speaker_profile_samples (profile_id, embedding, duration_s, note_id, speaker_id, model_id) VALUES (?, ?, ?, ?, ?, ?)"
+      )
+      .run(
+        profileId,
+        embeddingBuffer,
+        Number.isFinite(durationS) && durationS > 0 ? durationS : 0,
+        noteId,
+        speakerId,
+        SPEAKER_MODEL_ID
+      );
+  }
+
+  _rebuildSpeakerProfile(profileId) {
+    this.db
+      .prepare(
+        `DELETE FROM speaker_profile_samples
+          WHERE profile_id = ?
+            AND id NOT IN (
+              SELECT id FROM speaker_profile_samples
+               WHERE profile_id = ? ORDER BY id DESC LIMIT ?
+            )`
+      )
+      .run(profileId, profileId, MAX_PROFILE_SAMPLES);
+
+    const samples = this.db
+      .prepare(
+        "SELECT embedding, duration_s FROM speaker_profile_samples WHERE profile_id = ? AND model_id = ? ORDER BY id"
+      )
+      .all(profileId, SPEAKER_MODEL_ID);
+    const totalSpeechS = samples.reduce((sum, s) => sum + s.duration_s, 0);
+
+    if (!samples.length) {
+      this.db.prepare("DELETE FROM speaker_profiles WHERE id = ?").run(profileId);
+      return;
+    }
+
+    const vectors = samples.map((s) =>
+      l2Normalize(
+        new Float32Array(s.embedding.buffer, s.embedding.byteOffset, s.embedding.byteLength / 4)
+      )
+    );
+    const dim = vectors[0].length;
+    const weights = samples.map((s) => (s.duration_s > 0 ? s.duration_s : 1));
+    const sum = new Float32Array(dim);
+    vectors.forEach((v, index) => {
+      if (v.length !== dim) {
+        throw new RangeError(`Speaker sample dimension mismatch: ${v.length} vs ${dim}`);
+      }
+      for (let i = 0; i < dim; i++) sum[i] += v[i] * weights[index];
+    });
+    const profileVector = l2Normalize(sum);
+
+    this.db
+      .prepare(
+        "UPDATE speaker_profiles SET embedding = ?, sample_count = ?, total_speech_s = ?, model_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+      )
+      .run(
+        Buffer.from(profileVector.buffer),
+        samples.length,
+        totalSpeechS,
+        SPEAKER_MODEL_ID,
+        profileId
+      );
+  }
+
+  removeSpeakerProfileSample(profileId, noteId, speakerId) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      this.db.transaction(() => {
+        this.db
+          .prepare(
+            "DELETE FROM speaker_profile_samples WHERE profile_id = ? AND note_id = ? AND speaker_id = ?"
+          )
+          .run(profileId, noteId, speakerId);
+        this._rebuildSpeakerProfile(profileId);
+      })();
+    } catch (error) {
+      debugLogger.error(
+        "Error removing speaker profile sample",
+        { error: error.message },
+        "database"
+      );
+      throw error;
+    }
+  }
+
+  getSpeakerProfileSamples(profileId) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      return this.db
+        .prepare(
+          "SELECT id, profile_id, duration_s, note_id, speaker_id, model_id, created_at FROM speaker_profile_samples WHERE profile_id = ? ORDER BY id"
+        )
+        .all(profileId);
+    } catch (error) {
+      debugLogger.error(
+        "Error getting speaker profile samples",
+        { error: error.message },
+        "database"
+      );
+      throw error;
+    }
+  }
+
+  findSpeakerProfileByEmail(email) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      return this._findProfileByEmail(email) ?? null;
+    } catch (error) {
+      debugLogger.error(
+        "Error finding speaker profile by email",
+        { error: error.message },
+        "database"
+      );
+      throw error;
+    }
+  }
+
+  findSpeakerProfilesByName(displayName) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      const wantedName = peopleResolver.normalizeName(displayName);
+      if (!wantedName) return [];
+      return this.db
+        .prepare("SELECT * FROM speaker_profiles WHERE model_id = ?")
+        .all(SPEAKER_MODEL_ID)
+        .filter((profile) => peopleResolver.normalizeName(profile.display_name) === wantedName);
+    } catch (error) {
+      debugLogger.error(
+        "Error finding speaker profiles by name",
+        { error: error.message },
+        "database"
+      );
       throw error;
     }
   }
@@ -3402,24 +3600,6 @@ class DatabaseManager {
     const winner = (a.sample_count || 0) >= (b.sample_count || 0) ? a : b;
     const loser = winner === a ? b : a;
 
-    const winnerEmb = new Float32Array(
-      winner.embedding.buffer,
-      winner.embedding.byteOffset,
-      winner.embedding.byteLength / 4
-    );
-    const loserEmb = new Float32Array(
-      loser.embedding.buffer,
-      loser.embedding.byteOffset,
-      loser.embedding.byteLength / 4
-    );
-    const wSamples = winner.sample_count || 1;
-    const lSamples = loser.sample_count || 1;
-    const total = wSamples + lSamples;
-    const blended = new Float32Array(winnerEmb.length);
-    for (let i = 0; i < winnerEmb.length; i++) {
-      blended[i] = (winnerEmb[i] * wSamples + loserEmb[i] * lSamples) / total;
-    }
-
     const finalEmail = winner.email || loser.email || null;
     const finalName = winner.display_name || loser.display_name;
 
@@ -3432,15 +3612,32 @@ class DatabaseManager {
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
-          "UPDATE speaker_profiles SET display_name = ?, email = ?, embedding = ?, sample_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+          `DELETE FROM speaker_profile_samples
+            WHERE profile_id = ?
+              AND note_id IS NOT NULL AND speaker_id IS NOT NULL
+              AND EXISTS (
+                SELECT 1 FROM speaker_profile_samples kept
+                 WHERE kept.profile_id = ?
+                   AND kept.note_id = speaker_profile_samples.note_id
+                   AND kept.speaker_id = speaker_profile_samples.speaker_id
+              )`
         )
-        .run(finalName, finalEmail, Buffer.from(blended.buffer), total, winner.id);
+        .run(loser.id, winner.id);
+      this.db
+        .prepare("UPDATE speaker_profile_samples SET profile_id = ? WHERE profile_id = ?")
+        .run(winner.id, loser.id);
+      this.db
+        .prepare(
+          "UPDATE speaker_profiles SET display_name = ?, email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+        )
+        .run(finalName, finalEmail, winner.id);
       this.db
         .prepare(
           "UPDATE speaker_mappings SET profile_id = ?, display_name = ?, confidence = NULL WHERE profile_id = ?"
         )
         .run(winner.id, finalName, loser.id);
       this.db.prepare("DELETE FROM speaker_profiles WHERE id = ?").run(loser.id);
+      this._rebuildSpeakerProfile(winner.id);
     });
     tx();
 
@@ -3453,10 +3650,10 @@ class DatabaseManager {
     try {
       if (!this.db) throw new Error("Database not initialized");
       const query = includeEmbedding
-        ? "SELECT * FROM speaker_profiles"
+        ? "SELECT * FROM speaker_profiles WHERE model_id = ?"
         : `SELECT id, display_name, email, sample_count, created_at, updated_at
-           FROM speaker_profiles`;
-      return this.db.prepare(query).all();
+           FROM speaker_profiles WHERE model_id = ?`;
+      return this.db.prepare(query).all(SPEAKER_MODEL_ID);
     } catch (error) {
       debugLogger.error("Error getting speaker profiles", { error: error.message }, "database");
       throw error;
@@ -3645,15 +3842,22 @@ class DatabaseManager {
     }
   }
 
-  saveNoteSpeakerEmbeddings(noteId, embeddings) {
+  saveNoteSpeakerEmbeddings(noteId, embeddings, speechSecondsBySpeaker = {}) {
     try {
       if (!this.db) throw new Error("Database not initialized");
       const transaction = this.db.transaction((entries) => {
         const stmt = this.db.prepare(
-          "INSERT OR REPLACE INTO note_speaker_embeddings (note_id, speaker_id, embedding) VALUES (?, ?, ?)"
+          "INSERT OR REPLACE INTO note_speaker_embeddings (note_id, speaker_id, embedding, model_id, speech_s) VALUES (?, ?, ?, ?, ?)"
         );
-        for (const [speakerId, buffer] of entries) {
-          stmt.run(noteId, speakerId, buffer);
+        for (const [speakerId, embedding] of entries) {
+          const speechS = speechSecondsBySpeaker?.[speakerId];
+          stmt.run(
+            noteId,
+            speakerId,
+            toEmbeddingBlob(embedding),
+            SPEAKER_MODEL_ID,
+            Number.isFinite(speechS) ? speechS : null
+          );
         }
       });
       transaction(Object.entries(embeddings));
@@ -3693,7 +3897,9 @@ class DatabaseManager {
   getNoteSpeakerEmbeddings(noteId) {
     try {
       if (!this.db) throw new Error("Database not initialized");
-      return this.db.prepare("SELECT * FROM note_speaker_embeddings WHERE note_id = ?").all(noteId);
+      return this.db
+        .prepare("SELECT * FROM note_speaker_embeddings WHERE note_id = ? AND model_id = ?")
+        .all(noteId, SPEAKER_MODEL_ID);
     } catch (error) {
       debugLogger.error(
         "Error getting note speaker embeddings",

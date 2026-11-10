@@ -2,13 +2,14 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const debugLogger = require("./debugLogger");
+const { secondsBySpeaker } = require("./foldMinorSpeakers");
+const { RETRANSCRIBE_MATCH_THRESHOLD } = require("./speakerThresholds");
 
 // Whisper re-segments the audio, so a rewritten transcript can only keep its speaker
 // identities by re-deriving them. Everything here exists to make that possible, or to
 // refuse the rewrite when it is not.
 
 const SEGMENT_TAIL_SECONDS = 2.5;
-const EMBEDDING_MATCH_THRESHOLD = 0.6;
 const EPOCH_MS_THRESHOLD = 1e9;
 const UNKNOWN_SOURCE = " unknown";
 
@@ -104,19 +105,6 @@ function freshSpeakerIdFactory(takenIds) {
   };
 }
 
-function cosineSimilarity(a, b) {
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length && i < b.length; i += 1) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  if (!normA || !normB) return 0;
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
 function toFloat32(embedding) {
   if (embedding instanceof Float32Array) return embedding;
   if (Array.isArray(embedding)) return new Float32Array(embedding);
@@ -129,15 +117,18 @@ function toFloat32(embedding) {
 // Greedy one-to-one: a cluster is one person, so two clusters must not claim the same
 // prior identity.
 function matchClustersByEmbedding(clusterEmbeddings, storedEmbeddings) {
+  const clusters = Object.entries(clusterEmbeddings || {});
+  if (!clusters.length) return new Map();
+  const { cosineSimilarity } = require("./speakerEmbeddings");
   const pairs = [];
-  for (const [clusterId, embedding] of Object.entries(clusterEmbeddings || {})) {
+  for (const [clusterId, embedding] of clusters) {
     const clusterVec = toFloat32(embedding);
     if (!clusterVec) continue;
     for (const stored of storedEmbeddings || []) {
       const storedVec = toFloat32(stored.embedding);
       if (!storedVec) continue;
       const similarity = cosineSimilarity(clusterVec, storedVec);
-      if (similarity > EMBEDDING_MATCH_THRESHOLD) {
+      if (similarity > RETRANSCRIBE_MATCH_THRESHOLD) {
         pairs.push({ clusterId, oldId: stored.speaker_id, similarity });
       }
     }
@@ -298,6 +289,7 @@ function persistSpeakerState({
   finalSegments,
   segmentsWithClusters,
   clusterEmbeddings,
+  clusterSpeechSeconds = {},
   hadOldSegments,
 }) {
   if (!databaseManager) return;
@@ -310,13 +302,21 @@ function persistSpeakerState({
 
   if (clusterEmbeddings) {
     const resolvedEmbeddings = {};
+    const resolvedSpeechSeconds = {};
     for (const seg of segmentsWithClusters) {
       if (!seg.speaker || !seg.originCluster) continue;
       const embedding = clusterEmbeddings[seg.originCluster];
-      if (embedding) resolvedEmbeddings[seg.speaker] = embedding;
+      if (embedding) {
+        resolvedEmbeddings[seg.speaker] = embedding;
+        resolvedSpeechSeconds[seg.speaker] = clusterSpeechSeconds[seg.originCluster];
+      }
     }
     if (Object.keys(resolvedEmbeddings).length) {
-      databaseManager.saveNoteSpeakerEmbeddings?.(noteId, resolvedEmbeddings);
+      databaseManager.saveNoteSpeakerEmbeddings?.(
+        noteId,
+        resolvedEmbeddings,
+        resolvedSpeechSeconds
+      );
     }
   }
 
@@ -409,6 +409,7 @@ async function retranscribeNoteTranscript({
     }));
 
     let clusterEmbeddings = null;
+    let clusterSpeechSeconds = {};
     let diarized = false;
 
     if (track.source === "system" && diarizationManager?.isAvailable?.()) {
@@ -426,13 +427,20 @@ async function retranscribeNoteTranscript({
             newSegments = built;
             diarized = true;
             const rawIds = [...new Set(diarizationSegments.map((s) => s.speaker))];
+            const clusterIdFor = (rawId) => `cluster_${rawIds.indexOf(rawId)}`;
+            clusterSpeechSeconds = Object.fromEntries(
+              [...secondsBySpeaker(diarizationSegments)].map(([rawId, seconds]) => [
+                clusterIdFor(rawId),
+                seconds,
+              ])
+            );
             clusterEmbeddings = await extractClusterEmbeddings({
               // Required here rather than at module load: it pulls in the ONNX worker,
               // and only the diarized path ever needs it.
               speakerEmbeddings: speakerEmbeddings || require("./speakerEmbeddings"),
               wavPath: tmpWav,
               diarizationSegments,
-              clusterIdFor: (rawId) => `cluster_${rawIds.indexOf(rawId)}`,
+              clusterIdFor,
             });
           }
         }
@@ -497,6 +505,7 @@ async function retranscribeNoteTranscript({
       finalSegments,
       segmentsWithClusters: newSegments,
       clusterEmbeddings,
+      clusterSpeechSeconds,
       hadOldSegments: effectiveOldSegments.length > 0,
     });
 

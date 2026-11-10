@@ -27,7 +27,7 @@ function createHandlers({ diarizeImpl, available = true } = {}) {
     databaseManager: {
       getSpeakerProfiles: () => [],
     },
-    _resolveSpeakerExpectation: () => ({ numSpeakers: 0, cap: null }),
+    _resolveSpeakerExpectation: () => ({ maxSpeakers: null }),
     _enqueuePostCallPipeline: (noteId) => enqueued.push(noteId),
   });
 

@@ -1,6 +1,11 @@
 "use strict";
 
-const { MATCH_THRESHOLD, MATCH_MARGIN } = require("./liveSpeakerMatching");
+const {
+  CONFIRM_THRESHOLD: MATCH_THRESHOLD,
+  MARGIN: MATCH_MARGIN,
+  MIN_CLUSTER_SPEECH_S,
+  MIN_PROFILE_SPEECH_S,
+} = require("./speakerThresholds");
 
 /**
  * Classifies one speaker profile against the unmapped speakers of one note, and
@@ -18,7 +23,12 @@ const { MATCH_THRESHOLD, MATCH_MARGIN } = require("./liveSpeakerMatching");
  * merge. Here the speakers are already separated, so a high-confidence near-tie
  * is the riskiest thing to auto-confirm, not the safest.
  */
-function classifyRetroactiveMatch(profileEmbedding, candidates, similarityOf) {
+function classifyRetroactiveMatch(
+  profileEmbedding,
+  candidates,
+  similarityOf,
+  { profileSpeechS } = {}
+) {
   let best = null;
   let bestScore = -Infinity;
   let runnerUp = -Infinity;
@@ -39,8 +49,10 @@ function classifyRetroactiveMatch(profileEmbedding, candidates, similarityOf) {
   if (best.mapped) return null;
 
   const ambiguous = bestScore - runnerUp < MATCH_MARGIN;
+  const tooLittleSpeech =
+    !(best.speechS >= MIN_CLUSTER_SPEECH_S) || !(profileSpeechS >= MIN_PROFILE_SPEECH_S);
   return {
-    outcome: ambiguous ? "suggest" : "match",
+    outcome: ambiguous || tooLittleSpeech ? "suggest" : "match",
     speakerId: best.speakerId,
     confidence: bestScore,
   };

@@ -44,13 +44,21 @@ const profile = {
   id: 7,
   display_name: "Dana",
   embedding: Buffer.from(PROFILE_VECTOR.buffer),
+  total_speech_s: 60,
 };
 
 /**
  * @param scores   similarity each speaker in the note should score
  * @param segments transcript segments, defaulting to one per speaker
  */
-function sweepHarness({ scores, segments = null, rawTranscript = null, existing = [] } = {}) {
+function sweepHarness({
+  scores,
+  segments = null,
+  rawTranscript = null,
+  existing = [],
+  speechS = 30,
+  sweptProfile = profile,
+} = {}) {
   const noteId = 1;
   const mappingWrites = [];
   const noteUpdates = [];
@@ -58,6 +66,7 @@ function sweepHarness({ scores, segments = null, rawTranscript = null, existing 
   const speakers = scores.map((score, i) => ({
     speaker_id: `speaker_${i}`,
     embedding: embeddingBuffer(score),
+    speech_s: speechS,
   }));
 
   const transcript =
@@ -83,7 +92,7 @@ function sweepHarness({ scores, segments = null, rawTranscript = null, existing 
   });
 
   const run = async () => {
-    handlers._retroactiveMapping(profile);
+    handlers._retroactiveMapping(sweptProfile);
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
   };
@@ -288,4 +297,23 @@ test("re-sweeping an already-suggested note writes nothing", async () => {
   });
   await h.run();
   assert.equal(h.noteUpdates.length, 0, "an unchanged note was rewritten anyway");
+});
+
+test("a clear winner with too little speech in the note is suggested, not mapped", async () => {
+  const h = sweepHarness({ scores: [0.9, 0.2], speechS: 3 });
+  await h.run();
+  assert.equal(h.mappingWrites.length, 0, "a short cluster was given a confirmed name");
+  const seg = writtenSegments(h).find((s) => s.speaker === "speaker_0");
+  assert.equal(seg.suggestedName, "Dana");
+  assert.ok(!seg.speakerName);
+});
+
+test("a clear winner against a barely-enrolled profile is suggested, not mapped", async () => {
+  const h = sweepHarness({
+    scores: [0.9, 0.2],
+    sweptProfile: { ...profile, total_speech_s: 5 },
+  });
+  await h.run();
+  assert.equal(h.mappingWrites.length, 0, "a thin profile confirmed a name");
+  assert.equal(writtenSegments(h).find((s) => s.speaker === "speaker_0").suggestedName, "Dana");
 });

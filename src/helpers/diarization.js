@@ -10,6 +10,7 @@ const { getModelsDirForService } = require("./modelDirUtils");
 const { convertToWav } = require("./ffmpegUtils");
 const { getSafeTempDir } = require("./safeTempDir");
 const { applyConfirmedSpeaker } = require("./speakerAssignmentPolicy");
+const { MODEL_FILE: VOICEPRINT_EMBEDDING_ONNX } = require("./speakerEmbeddings");
 const {
   foldMinorSpeakers,
   foldFloorFor,
@@ -56,14 +57,24 @@ const markMicEchoOfSystem = (segments) => {
 
 const SEGMENTATION_MODEL_URL =
   "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2";
-const EMBEDDING_MODEL_URL =
-  "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx";
+const SPEAKER_MODELS_RELEASE_URL =
+  "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models";
 const SILERO_VAD_MODEL_URL =
   "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx";
 
 const SEGMENTATION_DIR = "sherpa-onnx-pyannote-segmentation-3-0";
 const SEGMENTATION_ONNX = path.join(SEGMENTATION_DIR, "model.onnx");
-const EMBEDDING_ONNX = "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx";
+const CLUSTERING_EMBEDDING_ONNX = "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx";
+const EMBEDDING_ONNXS = [CLUSTERING_EMBEDDING_ONNX, VOICEPRINT_EMBEDDING_ONNX];
+const SEGMENTATION_MODEL_BYTES = 6_600_000;
+const CLUSTERING_EMBEDDING_MODEL_BYTES = 29_596_978;
+const VOICEPRINT_EMBEDDING_MODEL_BYTES = 114_336_527;
+const VAD_MODEL_BYTES = 2_000_000;
+const MODEL_DOWNLOAD_BYTES =
+  SEGMENTATION_MODEL_BYTES +
+  CLUSTERING_EMBEDDING_MODEL_BYTES +
+  VOICEPRINT_EMBEDDING_MODEL_BYTES +
+  VAD_MODEL_BYTES;
 const SILERO_VAD_ONNX = "silero_vad.onnx";
 
 // --- FluidAudio (optional macOS CoreML/ANE diarization backend) ---
@@ -81,7 +92,7 @@ const FLUIDAUDIO_OFFLINE_THRESHOLD = 0.5;
 function buildFluidAudioArgs({ wavPath, outJson, mode, numSpeakers = -1, maxSpeakers = -1 }) {
   const args = ["process", wavPath, "--mode", mode, "--output", outJson];
   if (mode === "offline") {
-    args.push("--threshold", String(FLUIDAUDIO_OFFLINE_THRESHOLD));
+    args.push("--threshold", String(FLUIDAUDIO_OFFLINE_THRESHOLD), "--exclusive-segments");
   }
   if (numSpeakers > 0) {
     // Exact speaker count requested (rare).
@@ -192,9 +203,9 @@ class DiarizationManager {
   }
 
   isModelDownloaded() {
-    const segPath = this._resolveModelPath(SEGMENTATION_ONNX);
-    const embPath = this._resolveModelPath(EMBEDDING_ONNX);
-    return fs.existsSync(segPath) && fs.existsSync(embPath);
+    return [SEGMENTATION_ONNX, ...EMBEDDING_ONNXS].every((file) =>
+      fs.existsSync(this._resolveModelPath(file))
+    );
   }
 
   getVadModelPath() {
@@ -216,7 +227,7 @@ class DiarizationManager {
       return { success: true, path: modelsDir };
     }
 
-    const requiredBytes = modelsReady ? 2 * 1_000_000 : 37 * 1_000_000;
+    const requiredBytes = modelsReady ? VAD_MODEL_BYTES : MODEL_DOWNLOAD_BYTES;
     const spaceCheck = await checkDiskSpace(modelsDir, requiredBytes * 2.5);
     if (!spaceCheck.ok) {
       throw new Error(
@@ -263,11 +274,10 @@ class DiarizationManager {
         }
       }
 
-      // Download embedding model (.onnx directly)
-      const embModelPath = path.join(modelsDir, EMBEDDING_ONNX);
-
-      if (!fs.existsSync(embModelPath)) {
-        await downloadFile(EMBEDDING_MODEL_URL, embModelPath, {
+      for (const file of EMBEDDING_ONNXS) {
+        const embModelPath = path.join(modelsDir, file);
+        if (fs.existsSync(embModelPath)) continue;
+        await downloadFile(`${SPEAKER_MODELS_RELEASE_URL}/${file}`, embModelPath, {
           timeout: 600000,
           signal,
           onProgress: (downloadedBytes, totalBytes) => {
@@ -478,7 +488,16 @@ class DiarizationManager {
       }
       debugLogger.warn("FluidAudio engine selected but binary missing; using sherpa-onnx");
     }
-    return this._foldMinorSpeakersAndLog(await this._diarizeSherpa(wavPath, options), options);
+    const sherpaOptions =
+      options.userSetSpeakers &&
+      Number(options.maxSpeakers) > 0 &&
+      !(Number(options.numSpeakers) > 0)
+        ? { ...options, numSpeakers: Number(options.maxSpeakers) }
+        : options;
+    return this._foldMinorSpeakersAndLog(
+      await this._diarizeSherpa(wavPath, sherpaOptions),
+      sherpaOptions
+    );
   }
 
   async _diarizeFluidAudio(wavPath, options = {}) {
@@ -641,7 +660,7 @@ class DiarizationManager {
     }
 
     const segPath = this._resolveModelPath(SEGMENTATION_ONNX);
-    const embPath = this._resolveModelPath(EMBEDDING_ONNX);
+    const embPath = this._resolveModelPath(CLUSTERING_EMBEDDING_ONNX);
 
     const threads = resolveDiarizationThreads();
     const args = [
@@ -745,20 +764,6 @@ class DiarizationManager {
     }
 
     return segments;
-  }
-
-  capSpeakerClusters(segments, cap) {
-    if (!cap || !segments?.length) return segments;
-    const totals = new Map();
-    for (const s of segments) {
-      totals.set(s.speaker, (totals.get(s.speaker) || 0) + (s.end - s.start));
-    }
-    if (totals.size <= cap) return segments;
-
-    const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]);
-    const keep = new Set(ranked.slice(0, cap).map(([sp]) => sp));
-    const primary = ranked[0][0];
-    return segments.map((s) => (keep.has(s.speaker) ? s : { ...s, speaker: primary }));
   }
 
   mergeWithTranscript(transcriptSegments, diarizationSegments) {
@@ -917,14 +922,16 @@ class DiarizationManager {
   async deleteModels() {
     const modelsDir = this.getModelsDir();
     const segDir = path.join(modelsDir, SEGMENTATION_DIR);
-    const embPath = path.join(modelsDir, EMBEDDING_ONNX);
     const vadPath = this.getVadModelPath();
 
     if (fs.existsSync(segDir)) {
       await fsPromises.rm(segDir, { recursive: true, force: true });
     }
-    if (fs.existsSync(embPath)) {
-      await fsPromises.unlink(embPath);
+    for (const file of EMBEDDING_ONNXS) {
+      const embPath = path.join(modelsDir, file);
+      if (fs.existsSync(embPath)) {
+        await fsPromises.unlink(embPath);
+      }
     }
     if (fs.existsSync(vadPath)) {
       await fsPromises.unlink(vadPath);
@@ -945,3 +952,6 @@ class DiarizationManager {
 module.exports = DiarizationManager;
 module.exports.buildFluidAudioArgs = buildFluidAudioArgs;
 module.exports.FLUIDAUDIO_OFFLINE_THRESHOLD = FLUIDAUDIO_OFFLINE_THRESHOLD;
+module.exports.CLUSTERING_EMBEDDING_ONNX = CLUSTERING_EMBEDDING_ONNX;
+module.exports.VOICEPRINT_EMBEDDING_ONNX = VOICEPRINT_EMBEDDING_ONNX;
+module.exports.MODEL_DOWNLOAD_BYTES = MODEL_DOWNLOAD_BYTES;

@@ -2,14 +2,26 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { classifyRetroactiveMatch } = require("../../src/helpers/retroactiveSpeakerMatch");
+const {
+  CONFIRM_THRESHOLD,
+  MARGIN,
+  MIN_CLUSTER_SPEECH_S,
+  MIN_PROFILE_SPEECH_S,
+} = require("../../src/helpers/speakerThresholds");
 
 // A fake scorer, so a test states the similarities it means instead of hoping a
 // fixture of real embeddings happens to produce them.
-const classify = (candidates) =>
+const classify = (candidates, { profileSpeechS = 60 } = {}) =>
   classifyRetroactiveMatch(
     null,
-    candidates.map((c) => ({ speakerId: c.speakerId, mapped: !!c.mapped, embedding: c })),
-    (_profile, candidate) => candidate.score
+    candidates.map((c) => ({
+      speakerId: c.speakerId,
+      mapped: !!c.mapped,
+      speechS: c.speechS ?? 60,
+      embedding: c,
+    })),
+    (_profile, candidate) => candidate.score,
+    { profileSpeechS }
   );
 
 test("a clear winner is matched", () => {
@@ -22,12 +34,10 @@ test("a clear winner is matched", () => {
   assert.ok(Math.abs(r.confidence - 0.9) < 1e-9);
 });
 
-// 0.9 vs 0.82 is a gap of 0.08, well over MATCH_MARGIN, so this MATCHES. The
-// first draft of the plan asserted null here and was arithmetically wrong;
-// worse, two mutation proofs pointed at it, so neither proved anything.
+// 0.95 vs 0.82 is a gap of 0.13, over MARGIN, so this MATCHES.
 test("a clear winner still wins when a third speaker also clears the threshold", () => {
   const r = classify([
-    { speakerId: "speaker_0", score: 0.9 },
+    { speakerId: "speaker_0", score: 0.95 },
     { speakerId: "speaker_1", score: 0.82 },
     { speakerId: "speaker_2", score: 0.7 },
   ]);
@@ -36,7 +46,22 @@ test("a clear winner still wins when a third speaker also clears the threshold",
 });
 
 test("nothing below the threshold is returned", () => {
-  assert.equal(classify([{ speakerId: "speaker_0", score: 0.64 }]), null);
+  assert.equal(classify([{ speakerId: "speaker_0", score: 0.69 }]), null);
+});
+
+test("retroactive matching uses the shared calibrated thresholds", () => {
+  assert.equal(CONFIRM_THRESHOLD, 0.7);
+  assert.equal(MARGIN, 0.1);
+  assert.equal(classify([{ speakerId: "speaker_0", score: CONFIRM_THRESHOLD }]).outcome, "match");
+  assert.equal(classify([{ speakerId: "speaker_0", score: CONFIRM_THRESHOLD - 0.001 }]), null);
+});
+
+test("a gap inside the margin is a suggestion", () => {
+  const r = classify([
+    { speakerId: "speaker_0", score: 0.85 },
+    { speakerId: "speaker_1", score: 0.76 },
+  ]);
+  assert.equal(r.outcome, "suggest");
 });
 
 // The over-split case: one person became two clusters and both score high.
@@ -61,8 +86,8 @@ test("the margin is not waived at high confidence, unlike live matching", () => 
 
 test("a winner clearing the margin is matched", () => {
   const r = classify([
-    { speakerId: "speaker_0", score: 0.75 },
-    { speakerId: "speaker_1", score: 0.7 },
+    { speakerId: "speaker_0", score: 0.85 },
+    { speakerId: "speaker_1", score: 0.74 },
   ]);
   assert.equal(r.outcome, "match");
 });
@@ -137,23 +162,70 @@ test("a mapped speaker still counts as the runner-up", () => {
 });
 
 test("exactly at the threshold is a match, just under is not", () => {
-  assert.equal(classify([{ speakerId: "s", score: 0.65 }]).outcome, "match");
-  assert.equal(classify([{ speakerId: "s", score: 0.6499 }]), null);
+  assert.equal(classify([{ speakerId: "s", score: 0.7 }]).outcome, "match");
+  assert.equal(classify([{ speakerId: "s", score: 0.6999 }]), null);
 });
 
 test("a gap of exactly the margin is a match, just under is a suggestion", () => {
   assert.equal(
     classify([
-      { speakerId: "a", score: 0.73 },
+      { speakerId: "a", score: 0.8 },
       { speakerId: "b", score: 0.7 },
     ]).outcome,
     "match"
   );
   assert.equal(
     classify([
-      { speakerId: "a", score: 0.7299 },
+      { speakerId: "a", score: 0.7999 },
       { speakerId: "b", score: 0.7 },
     ]).outcome,
     "suggest"
   );
+});
+
+test("a clear winner with too little speech in the note is only suggested", () => {
+  const r = classify([
+    { speakerId: "speaker_0", score: 0.9, speechS: MIN_CLUSTER_SPEECH_S - 0.1 },
+    { speakerId: "speaker_1", score: 0.2 },
+  ]);
+  assert.equal(r.outcome, "suggest");
+  assert.equal(r.speakerId, "speaker_0");
+});
+
+test("a clear winner against a profile with too little enrolled speech is only suggested", () => {
+  const r = classify(
+    [
+      { speakerId: "speaker_0", score: 0.9 },
+      { speakerId: "speaker_1", score: 0.2 },
+    ],
+    { profileSpeechS: MIN_PROFILE_SPEECH_S - 0.1 }
+  );
+  assert.equal(r.outcome, "suggest");
+});
+
+test("exactly the minimum speech on both sides is enough to match", () => {
+  const r = classify(
+    [
+      { speakerId: "speaker_0", score: 0.9, speechS: MIN_CLUSTER_SPEECH_S },
+      { speakerId: "speaker_1", score: 0.2 },
+    ],
+    { profileSpeechS: MIN_PROFILE_SPEECH_S }
+  );
+  assert.equal(r.outcome, "match");
+});
+
+test("unknown speech time on either side is never enough to match", () => {
+  const unknownCluster = classifyRetroactiveMatch(
+    null,
+    [{ speakerId: "speaker_0", mapped: false, embedding: { score: 0.9 } }],
+    (_p, c) => c.score,
+    { profileSpeechS: 60 }
+  );
+  assert.equal(unknownCluster.outcome, "suggest");
+  const unknownProfile = classifyRetroactiveMatch(
+    null,
+    [{ speakerId: "speaker_0", mapped: false, speechS: 60, embedding: { score: 0.9 } }],
+    (_p, c) => c.score
+  );
+  assert.equal(unknownProfile.outcome, "suggest");
 });

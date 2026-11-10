@@ -74,7 +74,7 @@ function createHandlers({ diarizeImpl, available = true, note } = {}) {
     broadcastToWindows: (channel, payload) => broadcasts.push({ channel, payload }),
     _asyncVectorUpsert: () => {},
     _asyncMirrorWrite: () => {},
-    _resolveSpeakerExpectation: () => ({ numSpeakers: 0, cap: null }),
+    _resolveSpeakerExpectation: () => ({ maxSpeakers: null }),
     _enqueuePostCallPipeline: () => {},
   });
 

@@ -5,12 +5,22 @@ const { getModelsDirForService } = require("./modelDirUtils");
 const onnxWorkerClient = require("./onnxWorkerClient");
 
 const SAMPLE_RATE = 16000;
-const EMBEDDING_DIM = 512;
 const MIN_SEGMENT_SECONDS = 1.5;
 const MIN_SEGMENT_SAMPLES = SAMPLE_RATE * MIN_SEGMENT_SECONDS;
 const MAX_EMBEDDING_SECONDS = 8;
 const MAX_EMBEDDING_SAMPLES = SAMPLE_RATE * MAX_EMBEDDING_SECONDS;
-const MODEL_FILE = "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx";
+const MODEL_FILE = "wespeaker_en_voxceleb_resnet293_LM.onnx";
+const MODEL_ID = "wespeaker-resnet293-lm";
+
+function l2Normalize(vec) {
+  let sumSquares = 0;
+  for (let i = 0; i < vec.length; i++) sumSquares += vec[i] * vec[i];
+  const out = new Float32Array(vec.length);
+  if (sumSquares === 0) return out;
+  const norm = Math.sqrt(sumSquares);
+  for (let i = 0; i < vec.length; i++) out[i] = vec[i] / norm;
+  return out;
+}
 
 class SpeakerEmbeddings {
   constructor() {
@@ -65,7 +75,7 @@ class SpeakerEmbeddings {
     });
 
     if (!embeddingBuffer) return null;
-    return new Float32Array(embeddingBuffer);
+    return l2Normalize(new Float32Array(embeddingBuffer));
   }
 
   async extractEmbeddingFromSamples(samples) {
@@ -126,21 +136,26 @@ class SpeakerEmbeddings {
   }
 
   computeCentroid(embeddings) {
-    if (embeddings.length === 0) return new Float32Array(EMBEDDING_DIM);
+    if (embeddings.length === 0) return new Float32Array(0);
 
-    const centroid = new Float32Array(EMBEDDING_DIM);
+    const dim = embeddings[0].length;
+    const sum = new Float32Array(dim);
     for (const emb of embeddings) {
-      for (let i = 0; i < EMBEDDING_DIM; i++) {
-        centroid[i] += emb[i];
+      if (emb.length !== dim) {
+        throw new RangeError(`Embedding dimension mismatch: ${emb.length} vs ${dim}`);
+      }
+      const unit = l2Normalize(emb);
+      for (let i = 0; i < dim; i++) {
+        sum[i] += unit[i];
       }
     }
-    for (let i = 0; i < EMBEDDING_DIM; i++) {
-      centroid[i] /= embeddings.length;
-    }
-    return centroid;
+    return l2Normalize(sum);
   }
 
   cosineSimilarity(a, b) {
+    if (a.length !== b.length) {
+      throw new RangeError(`Embedding dimension mismatch: ${a.length} vs ${b.length}`);
+    }
     let dot = 0;
     let normA = 0;
     let normB = 0;
@@ -158,3 +173,6 @@ const instance = new SpeakerEmbeddings();
 module.exports = instance;
 module.exports.SpeakerEmbeddings = SpeakerEmbeddings;
 module.exports.MAX_EMBEDDING_SECONDS = MAX_EMBEDDING_SECONDS;
+module.exports.MODEL_FILE = MODEL_FILE;
+module.exports.MODEL_ID = MODEL_ID;
+module.exports.l2Normalize = l2Normalize;

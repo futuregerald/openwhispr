@@ -41,7 +41,7 @@ function runPipeline(segments = fixture.segments) {
     _asyncVectorUpsert: () => {},
     _asyncMirrorWrite: () => {},
     _persistSpeakerEmbeddings: () => true,
-    _resolveSpeakerExpectation: () => ({ numSpeakers: 0, cap: null }),
+    _resolveSpeakerExpectation: () => ({ maxSpeakers: null }),
     _enqueuePostCallPipeline: () => {},
   });
 

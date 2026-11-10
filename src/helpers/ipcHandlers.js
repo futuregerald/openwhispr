@@ -55,6 +55,9 @@ const {
   isOriginUserAuthored,
 } = require("./speakerAssignmentPolicy");
 const { classifyRetroactiveMatch } = require("./retroactiveSpeakerMatch");
+const { assignClustersToProfiles } = require("./speakerAssignment");
+const { MIN_CLUSTER_SPEECH_S, ONE_ON_ONE_DOMINANT_SHARE } = require("./speakerThresholds");
+const { secondsBySpeaker } = require("./foldMinorSpeakers");
 const { downsample24kTo16k, pcm16ToWav } = require("../utils/audioUtils");
 const {
   createChunkBoundaryFinder,
@@ -496,16 +499,6 @@ class IPCHandlers {
     return participants.filter(
       (p) => p && p.self !== true && !googleEmails.has((p.email || "").toLowerCase())
     );
-  }
-
-  _getNoteNonSelfParticipants(noteId) {
-    if (!noteId) return [];
-    try {
-      const note = this.databaseManager.getNote(noteId);
-      return this._parseNonSelfParticipants(note?.participants);
-    } catch (_) {
-      return [];
-    }
   }
 
   _resolveOneOnOneOtherParticipant(participantsJson) {
@@ -7382,33 +7375,8 @@ class IPCHandlers {
 
     ipcMain.handle(
       "set-speaker-mapping",
-      async (_event, noteId, speakerId, displayName, email, profileId) => {
-        const embeddings = this.databaseManager.getNoteSpeakerEmbeddings(noteId);
-        const noteSpeakerEmbedding = embeddings.find((e) => e.speaker_id === speakerId);
-        const liveSpeakerEmbedding = liveSpeakerIdentifier.getSpeakerEmbedding(speakerId);
-        const speakerEmbeddingBuffer =
-          noteSpeakerEmbedding?.embedding ||
-          (liveSpeakerEmbedding ? Buffer.from(liveSpeakerEmbedding.buffer) : null);
-
-        let resolvedProfileId = profileId ?? null;
-        if (speakerEmbeddingBuffer) {
-          const profile = this.databaseManager.upsertSpeakerProfile(
-            displayName,
-            email || null,
-            speakerEmbeddingBuffer,
-            resolvedProfileId
-          );
-          resolvedProfileId = profile.id;
-          this._retroactiveMapping(profile);
-        }
-
-        this.databaseManager.setSpeakerMapping(noteId, speakerId, resolvedProfileId, displayName, {
-          origin: "manual",
-        });
-        liveSpeakerIdentifier.mapSpeaker(speakerId, resolvedProfileId, displayName, noteId);
-        this.notesRegenerationScheduler?.schedule(noteId);
-        return { success: true, profileId: resolvedProfileId };
-      }
+      async (_event, noteId, speakerId, displayName, email, profileId) =>
+        this._setSpeakerMapping(noteId, speakerId, displayName, email, profileId)
     );
 
     ipcMain.handle("remove-speaker-mapping", async (_event, noteId, speakerId) => {
@@ -7991,6 +7959,7 @@ class IPCHandlers {
           const candidates = embeddings.map((emb) => ({
             speakerId: emb.speaker_id,
             mapped: mappedSpeakers.has(emb.speaker_id),
+            speechS: emb.speech_s,
             embedding: new Float32Array(
               emb.embedding.buffer,
               emb.embedding.byteOffset,
@@ -7998,8 +7967,11 @@ class IPCHandlers {
             ),
           }));
 
-          const decision = classifyRetroactiveMatch(profileEmb, candidates, (a, b) =>
-            speakerEmbeddings.cosineSimilarity(a, b)
+          const decision = classifyRetroactiveMatch(
+            profileEmb,
+            candidates,
+            (a, b) => speakerEmbeddings.cosineSimilarity(a, b),
+            { profileSpeechS: profile.total_speech_s }
           );
           if (!decision) continue;
 
@@ -8071,6 +8043,90 @@ class IPCHandlers {
     });
   }
 
+  _setSpeakerMapping(noteId, speakerId, displayName, email, profileId) {
+    const db = this.databaseManager;
+    const noteSpeakerEmbedding = db
+      .getNoteSpeakerEmbeddings(noteId)
+      .find((e) => e.speaker_id === speakerId);
+    const liveSpeakerEmbedding = liveSpeakerIdentifier.getSpeakerEmbedding(speakerId);
+    const speakerEmbeddingBuffer =
+      noteSpeakerEmbedding?.embedding ||
+      (liveSpeakerEmbedding ? Buffer.from(liveSpeakerEmbedding.buffer) : null);
+
+    let resolvedProfileId = profileId ?? null;
+    if (speakerEmbeddingBuffer) {
+      const previousMapping =
+        db.getSpeakerMappings(noteId).find((m) => m.speaker_id === speakerId) ?? null;
+      const previousProfileId = previousMapping?.profile_id ?? null;
+      const target =
+        resolvedProfileId != null
+          ? { profileId: resolvedProfileId, profileName: displayName }
+          : this._resolveNamedSpeakerProfile({
+              noteId,
+              speakerId,
+              displayName,
+              email,
+              previousMapping,
+            });
+      const profile = db.db.transaction(() => {
+        if (previousProfileId != null && previousProfileId !== target.profileId) {
+          db.removeSpeakerProfileSample(previousProfileId, noteId, speakerId);
+        }
+        return db.upsertSpeakerProfile(
+          target.profileName,
+          email || null,
+          speakerEmbeddingBuffer,
+          target.profileId,
+          { durationS: noteSpeakerEmbedding?.speech_s ?? 0, noteId, speakerId }
+        );
+      })();
+      resolvedProfileId = profile.id;
+      this._retroactiveMapping(profile);
+    }
+
+    db.setSpeakerMapping(noteId, speakerId, resolvedProfileId, displayName, {
+      origin: "manual",
+    });
+    liveSpeakerIdentifier.mapSpeaker(speakerId, resolvedProfileId, displayName, noteId);
+    this.notesRegenerationScheduler?.schedule(noteId);
+    return { success: true, profileId: resolvedProfileId };
+  }
+
+  _resolveNamedSpeakerProfile({ noteId, speakerId, displayName, email, previousMapping }) {
+    const db = this.databaseManager;
+    const newProfile = { profileId: null, profileName: displayName };
+    const byEmail = db.findSpeakerProfileByEmail(email);
+    if (byEmail) return { profileId: byEmail.id, profileName: displayName };
+
+    if (this._isRenameOfSpeakersOwnProfile({ noteId, speakerId, email, previousMapping })) {
+      return { profileId: previousMapping.profile_id, profileName: displayName };
+    }
+
+    if ((email || "").trim()) return newProfile;
+
+    const sameName = db.findSpeakerProfilesByName(displayName);
+    return sameName.length === 1
+      ? { profileId: sameName[0].id, profileName: sameName[0].display_name }
+      : newProfile;
+  }
+
+  _isRenameOfSpeakersOwnProfile({ noteId, speakerId, email, previousMapping }) {
+    const profileId = previousMapping?.profile_id ?? null;
+    if (profileId == null || !isOriginUserAuthored(previousMapping.origin)) return false;
+
+    const db = this.databaseManager;
+    const profile = db.getSpeakerProfiles().find((p) => p.id === profileId);
+    if (!profile) return false;
+    const profileEmail = (profile.email || "").trim().toLowerCase();
+    const suppliedEmail = (email || "").trim().toLowerCase();
+    if (profileEmail && profileEmail !== suppliedEmail) return false;
+
+    const samples = db.getSpeakerProfileSamples(profileId);
+    return (
+      samples.length > 0 && samples.every((s) => s.note_id === noteId && s.speaker_id === speakerId)
+    );
+  }
+
   _tryAutoLabelOneOnOne(noteId) {
     setImmediate(async () => {
       try {
@@ -8090,18 +8146,33 @@ class IPCHandlers {
           transcript.filter((s) => s.source !== "mic" && s.speaker).map((s) => s.speaker)
         );
 
-        const unmapped = embeddings.filter(
-          (e) => !mappedSpeakers.has(e.speaker_id) && systemSpeakers.has(e.speaker_id)
+        const remote = embeddings.filter((e) => systemSpeakers.has(e.speaker_id));
+        const remoteSpeechS = remote.reduce((sum, e) => sum + (e.speech_s ?? 0), 0);
+        const unmapped = remote.filter(
+          (e) =>
+            !mappedSpeakers.has(e.speaker_id) &&
+            (e.speech_s ?? 0) >= MIN_CLUSTER_SPEECH_S &&
+            (e.speech_s ?? 0) >= ONE_ON_ONE_DOMINANT_SHARE * remoteSpeechS
         );
         if (!unmapped.length) return;
 
         let profile = null;
         for (const emb of unmapped) {
+          const target = profile
+            ? { profileId: profile.id, profileName: profile.display_name }
+            : this._resolveNamedSpeakerProfile({
+                noteId,
+                speakerId: emb.speaker_id,
+                displayName,
+                email,
+                previousMapping: null,
+              });
           profile = this.databaseManager.upsertSpeakerProfile(
-            displayName,
+            target.profileName,
             email,
             emb.embedding,
-            profile?.id ?? null
+            target.profileId,
+            { durationS: emb.speech_s ?? 0, noteId, speakerId: emb.speaker_id }
           );
           this.databaseManager.setSpeakerMapping(noteId, emb.speaker_id, profile.id, displayName, {
             origin: "auto",
@@ -8268,12 +8339,22 @@ class IPCHandlers {
     return reconciledSpeakers;
   }
 
-  _resolveSpeakerExpectation({ sessionConfig, noteId, observedSpeakerIds }) {
-    // Let the diarization model auto-detect the number of speakers.
-    // No artificial caps — speakers are detected as they appear.
-    // The observedSpeakerIds from live identification can serve as a hint
-    // (not a hard cap) but we default to unconstrained auto-detection.
-    return { numSpeakers: -1, cap: null };
+  _resolveSpeakerExpectation({ noteId, engine }) {
+    const unbounded = { maxSpeakers: null };
+    if (!noteId) return unbounded;
+    let note = null;
+    try {
+      note = this.databaseManager.getNote(noteId);
+    } catch (_) {
+      return unbounded;
+    }
+    const userCount = Number(note?.expected_speaker_count);
+    if (Number.isInteger(userCount) && userCount > 0) {
+      return { maxSpeakers: userCount, userSetSpeakers: true };
+    }
+    if (engine !== "fluidaudio") return unbounded;
+    const others = this._parseNonSelfParticipants(note?.participants).length;
+    return others > 1 ? { maxSpeakers: others + 1 } : unbounded;
   }
 
   /**
@@ -8396,7 +8477,13 @@ class IPCHandlers {
   // The diarized result is computed in main and was, until now, saved only by a React
   // callback in the renderer — which is skipped whenever the window is gone, the note
   // has been switched, or the session id has already been cleared. Main writes it.
-  _persistDiarizedTranscript(noteId, segments, speakerEmbeddings, audioStartedAt) {
+  _persistDiarizedTranscript(
+    noteId,
+    segments,
+    speakerEmbeddings,
+    audioStartedAt,
+    speakerSpeechSeconds = null
+  ) {
     if (!noteId || !segments?.length) {
       debugLogger.notice("Diarization persist skipped", {
         noteId,
@@ -8445,12 +8532,12 @@ class IPCHandlers {
       // Deliberately outside the transcript's try: an embedding write that fails must
       // not discard a transcript that was already written, which would hand the renderer
       // the un-merged segments to save back over it.
-      this._persistSpeakerEmbeddings(noteId, speakerEmbeddings);
+      this._persistSpeakerEmbeddings(noteId, speakerEmbeddings, speakerSpeechSeconds);
 
       return merged;
     } catch (err) {
       debugLogger.error("Diarization transcript persist failed", { noteId, error: err.message });
-      this._persistSpeakerEmbeddings(noteId, speakerEmbeddings);
+      this._persistSpeakerEmbeddings(noteId, speakerEmbeddings, speakerSpeechSeconds);
       return segments;
     }
   }
@@ -8458,7 +8545,7 @@ class IPCHandlers {
   // The centroids are plain number arrays. better-sqlite3 binds a plain Array as a
   // parameter spread rather than a BLOB and throws, so they must be converted exactly
   // as the save-note-speaker-embeddings IPC handler does.
-  _persistSpeakerEmbeddings(noteId, speakerEmbeddings) {
+  _persistSpeakerEmbeddings(noteId, speakerEmbeddings, speakerSpeechSeconds = null) {
     if (!noteId || !speakerEmbeddings || !Object.keys(speakerEmbeddings).length) return false;
 
     try {
@@ -8466,7 +8553,7 @@ class IPCHandlers {
       for (const [speakerId, values] of Object.entries(speakerEmbeddings)) {
         buffers[speakerId] = Buffer.from(new Float32Array(values).buffer);
       }
-      this.databaseManager.saveNoteSpeakerEmbeddings(noteId, buffers);
+      this.databaseManager.saveNoteSpeakerEmbeddings(noteId, buffers, speakerSpeechSeconds ?? {});
       // Matches the IPC handler: a fresh embedding set is what makes a calendar
       // attendee auto-labellable on a 1:1.
       this._tryAutoLabelOneOnOne(noteId);
@@ -8482,6 +8569,97 @@ class IPCHandlers {
       });
       return false;
     }
+  }
+
+  _autoNameDiarizedSpeakers({
+    noteId,
+    speakerEmbeddingsMap,
+    speakerSpeechSeconds,
+    enrichedSegments,
+    reconciledSpeakers,
+    similarity,
+  }) {
+    const profiles = this.databaseManager.getSpeakerProfiles(true);
+    if (profiles.length === 0) return;
+
+    const noteMappings = noteId ? this.databaseManager.getSpeakerMappings(noteId) : [];
+    const mappedSpeakers = new Set(noteMappings.map((m) => m.speaker_id));
+    const mappedProfiles = new Set(
+      noteMappings.map((m) => m.profile_id).filter((id) => id != null)
+    );
+
+    const clusters = Object.entries(speakerEmbeddingsMap)
+      .filter(
+        ([speakerId]) =>
+          !reconciledSpeakers.has(speakerId) &&
+          !mappedSpeakers.has(speakerId) &&
+          !enrichedSegments.some((seg) => seg.speaker === speakerId && seg.speakerName)
+      )
+      .map(([speakerId, embedding]) => ({
+        speakerId,
+        embedding: new Float32Array(embedding),
+        speechS: speakerSpeechSeconds[speakerId] ?? 0,
+      }));
+
+    const candidates = profiles
+      .filter((profile) => !mappedProfiles.has(profile.id))
+      .map((profile) => ({
+        id: profile.id,
+        embedding: new Float32Array(
+          profile.embedding.buffer,
+          profile.embedding.byteOffset,
+          profile.embedding.byteLength / 4
+        ),
+        totalSpeechS: profile.total_speech_s ?? 0,
+      }));
+
+    const { confirmed, suggested } = assignClustersToProfiles({
+      clusters,
+      profiles: candidates,
+      similarity,
+    });
+    const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
+
+    for (const { speakerId, profileId, score } of confirmed) {
+      const profile = profileById.get(profileId);
+      for (const seg of enrichedSegments) {
+        if (seg.speaker !== speakerId) continue;
+        applyConfirmedSpeaker(seg, {
+          speakerName: profile.display_name,
+          speakerIsPlaceholder: false,
+          suggestedName: undefined,
+          suggestedProfileId: undefined,
+        });
+      }
+      if (noteId) {
+        this.databaseManager.setSpeakerMapping(noteId, speakerId, profileId, profile.display_name, {
+          origin: "auto",
+          confidence: score,
+        });
+      }
+    }
+
+    for (const { speakerId, profileId } of suggested) {
+      const profile = profileById.get(profileId);
+      for (const seg of enrichedSegments) {
+        if (seg.speaker !== speakerId || isSpeakerLocked(seg)) continue;
+        applySuggestedSpeaker(seg, {
+          suggestedName: profile.display_name,
+          suggestedProfileId: profile.id,
+        });
+      }
+    }
+
+    debugLogger.info(
+      "Post-call speaker auto-name",
+      {
+        noteId,
+        clusters: clusters.length,
+        confirmed: confirmed.length,
+        suggested: suggested.length,
+      },
+      "speaker"
+    );
   }
 
   _startOrSkipDiarization(
@@ -8545,27 +8723,14 @@ class IPCHandlers {
           });
         }
 
-        const { numSpeakers, cap } = this._resolveSpeakerExpectation({
-          sessionConfig,
+        const { maxSpeakers, userSetSpeakers } = this._resolveSpeakerExpectation({
           noteId,
-          observedSpeakerIds,
+          engine: this.diarizationManager.getDiarizationEngine?.(),
         });
-        // Fork: don't force an exact speaker count from the noisy live identifier —
-        // pass the expectation as an upper BOUND and let the engine auto-detect the
-        // real count below it. Forcing an exact count over/under-split speakers
-        // (e.g. collapsing several remote people into one). capSpeakerClusters
-        // below is the post-hoc safety net.
-        const maxBound = numSpeakers > 0 ? numSpeakers : undefined;
-        let diarizationSegments = await this.diarizationManager.diarize(
+        const diarizationSegments = await this.diarizationManager.diarize(
           tmpWav,
-          maxBound ? { maxSpeakers: maxBound } : {}
+          maxSpeakers ? { maxSpeakers, ...(userSetSpeakers ? { userSetSpeakers } : {}) } : {}
         );
-        if (cap != null) {
-          diarizationSegments = this.diarizationManager.capSpeakerClusters(
-            diarizationSegments,
-            cap
-          );
-        }
 
         const normalized = toRelativeSecondTimestamps(transcriptSegments, audioStartedAt);
 
@@ -8583,10 +8748,12 @@ class IPCHandlers {
         }
 
         let speakerEmbeddingsMap = null;
-        const speakerEmb = require("./speakerEmbeddings");
+        const speakerSpeechSeconds = {};
+        const speakerEmb = this.speakerEmbeddings ?? require("./speakerEmbeddings");
         try {
           if (speakerEmb.isAvailable() && tmpWav) {
             const speakerIds = [...new Set(diarizationSegments.map((s) => s.speaker))];
+            const speechByRawSpeaker = secondsBySpeaker(diarizationSegments);
             speakerEmbeddingsMap = {};
 
             for (const spk of speakerIds) {
@@ -8602,6 +8769,7 @@ class IPCHandlers {
                 const centroid = speakerEmb.computeCentroid(embeddings);
                 const mappedId = speakerRenumber.get(spk) || spk;
                 speakerEmbeddingsMap[mappedId] = Array.from(centroid);
+                speakerSpeechSeconds[mappedId] = speechByRawSpeaker.get(spk) ?? 0;
               }
             }
           }
@@ -8617,60 +8785,14 @@ class IPCHandlers {
 
         if (speakerEmbeddingsMap) {
           try {
-            const profiles = this.databaseManager.getSpeakerProfiles(true);
-
-            if (profiles.length > 0) {
-              for (const [mappedId, embArr] of Object.entries(speakerEmbeddingsMap)) {
-                const alreadyMapped = enrichedSegments.some(
-                  (segment) => segment.speaker === mappedId && segment.speakerName
-                );
-                if (reconciledSpeakers.has(mappedId) || alreadyMapped) {
-                  continue;
-                }
-
-                const emb = new Float32Array(embArr);
-                let bestProfile = null;
-                let bestSim = 0;
-
-                for (const profile of profiles) {
-                  const profileEmb = new Float32Array(
-                    profile.embedding.buffer,
-                    profile.embedding.byteOffset,
-                    profile.embedding.byteLength / 4
-                  );
-                  const sim = speakerEmb.cosineSimilarity(emb, profileEmb);
-                  if (sim > bestSim) {
-                    bestSim = sim;
-                    bestProfile = profile;
-                  }
-                }
-
-                if (bestProfile && bestSim > 0.6) {
-                  for (const seg of enrichedSegments) {
-                    if (seg.speaker === mappedId) {
-                      applyConfirmedSpeaker(seg, {
-                        speakerName: bestProfile.display_name,
-                        speakerIsPlaceholder: false,
-                        suggestedName: undefined,
-                        suggestedProfileId: undefined,
-                      });
-                    }
-                  }
-                } else if (bestProfile && bestSim > 0.5) {
-                  for (const seg of enrichedSegments) {
-                    if (seg.speaker === mappedId) {
-                      if (isSpeakerLocked(seg)) {
-                        continue;
-                      }
-                      applySuggestedSpeaker(seg, {
-                        suggestedName: bestProfile.display_name,
-                        suggestedProfileId: bestProfile.id,
-                      });
-                    }
-                  }
-                }
-              }
-            }
+            this._autoNameDiarizedSpeakers({
+              noteId,
+              speakerEmbeddingsMap,
+              speakerSpeechSeconds,
+              enrichedSegments,
+              reconciledSpeakers,
+              similarity: (a, b) => speakerEmb.cosineSimilarity(a, b),
+            });
           } catch (err) {
             debugLogger.debug("Auto speaker recognition skipped", { error: err.message });
           }
@@ -8680,7 +8802,8 @@ class IPCHandlers {
           noteId,
           enrichedSegments,
           speakerEmbeddingsMap,
-          audioStartedAt
+          audioStartedAt,
+          speakerSpeechSeconds
         );
         send({ segments: persistedSegments, speakerEmbeddings: speakerEmbeddingsMap });
         if (noteId) {

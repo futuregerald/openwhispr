@@ -51,12 +51,11 @@ test("retranscribe_outcome round-trips through updateNote and getNote", () => {
 test("pruneNoteSpeakerEmbeddings keeps only the speakers still in the transcript", () => {
   const db = createDb();
   const note = db.saveNote("Standup", "body").note;
-  const insert = db.db.prepare(
-    "INSERT INTO note_speaker_embeddings (note_id, speaker_id, embedding) VALUES (?, ?, ?)"
-  );
-  insert.run(note.id, "speaker_0", Buffer.from([1, 2, 3, 4]));
-  insert.run(note.id, "speaker_1", Buffer.from([5, 6, 7, 8]));
-  insert.run(note.id, "speaker_2", Buffer.from([9, 10, 11, 12]));
+  db.saveNoteSpeakerEmbeddings(note.id, {
+    speaker_0: Buffer.from([1, 2, 3, 4]),
+    speaker_1: Buffer.from([5, 6, 7, 8]),
+    speaker_2: Buffer.from([9, 10, 11, 12]),
+  });
 
   db.pruneNoteSpeakerEmbeddings(note.id, new Set(["speaker_0", "speaker_1"]));
 
@@ -70,11 +69,8 @@ test("pruneNoteSpeakerEmbeddings with an empty keep set clears the note's rows o
   const db = createDb();
   const kept = db.saveNote("Other note", "body").note;
   const pruned = db.saveNote("Standup", "body").note;
-  const insert = db.db.prepare(
-    "INSERT INTO note_speaker_embeddings (note_id, speaker_id, embedding) VALUES (?, ?, ?)"
-  );
-  insert.run(kept.id, "speaker_0", Buffer.from([1, 2, 3, 4]));
-  insert.run(pruned.id, "speaker_0", Buffer.from([1, 2, 3, 4]));
+  db.saveNoteSpeakerEmbeddings(kept.id, { speaker_0: Buffer.from([1, 2, 3, 4]) });
+  db.saveNoteSpeakerEmbeddings(pruned.id, { speaker_0: Buffer.from([1, 2, 3, 4]) });
 
   db.pruneNoteSpeakerEmbeddings(pruned.id, new Set());
 
