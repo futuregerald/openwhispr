@@ -35,7 +35,7 @@ function createHandlers() {
     broadcastToWindows: () => {},
     _asyncVectorUpsert: () => {},
     _asyncMirrorWrite: () => {},
-    _resolveSpeakerExpectation: () => ({ numSpeakers: 0, cap: null }),
+    _resolveSpeakerExpectation: () => ({ maxSpeakers: null }),
     _enqueuePostCallPipeline: () => {},
   });
   const win = { isDestroyed: () => true, webContents: { send: () => {} } };

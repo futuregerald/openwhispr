@@ -49,7 +49,7 @@ test("the calibrated thresholds are the values T4 measured", () => {
   assert.equal(thresholds.MARGIN, 0.1);
   assert.equal(thresholds.MIN_CLUSTER_SPEECH_S, 6);
   assert.equal(thresholds.MIN_PROFILE_SPEECH_S, 20);
-  assert.equal(thresholds.AUTO_MERGE_CLUSTERS, false);
+  assert.equal("AUTO_MERGE_CLUSTERS" in thresholds, false);
   assert.equal(thresholds.RETRANSCRIBE_MATCH_THRESHOLD, 0.6);
 });
 
@@ -61,7 +61,6 @@ test("a clear match with enough speech on both sides is confirmed with its score
   });
   assert.deepEqual(r.confirmed, [{ speakerId: "speaker_0", profileId: 1, score: 0.82 }]);
   assert.deepEqual(r.suggested, []);
-  assert.deepEqual(r.mergeCandidates, []);
 });
 
 test("a runner-up profile within the margin blocks the confirm and leaves a suggestion", () => {
@@ -160,10 +159,9 @@ test("two clusters that both pass for one profile: only the higher scorer is con
   });
   assert.deepEqual(ids(r.confirmed), [["speaker_1", 1]]);
   assert.deepEqual(ids(r.suggested), [["speaker_0", 1]]);
-  assert.deepEqual(r.mergeCandidates, []);
 });
 
-test("two clusters that pass for one profile and resemble each other are a merge candidate", () => {
+test("two clusters that pass for one profile and resemble each other: the dropped one is suggested", () => {
   const r = run({
     clusters: [{ id: "speaker_0" }, { id: "speaker_1" }],
     profiles: [{ id: 1 }],
@@ -171,10 +169,8 @@ test("two clusters that pass for one profile and resemble each other are a merge
     pairScores: { "speaker_0|speaker_1": 0.72 },
   });
   assert.deepEqual(ids(r.confirmed), [["speaker_1", 1]]);
-  assert.deepEqual(r.mergeCandidates, [
-    { keepSpeakerId: "speaker_1", dropSpeakerId: "speaker_0", profileId: 1 },
-  ]);
   assert.deepEqual(ids(r.suggested), [["speaker_0", 1]], "the dropped cluster is suggested");
+  assert.equal("mergeCandidates" in r, false);
 });
 
 // Cluster order is A, B, C. A first-come assignment gives profile X to A (0.75)
@@ -220,12 +216,12 @@ test("each profile is confirmed for at most one cluster and each cluster at most
 
 test("no profiles yields nothing", () => {
   const r = run({ clusters: [{ id: "speaker_0" }], profiles: [], scores: {} });
-  assert.deepEqual(r, { confirmed: [], suggested: [], mergeCandidates: [] });
+  assert.deepEqual(r, { confirmed: [], suggested: [] });
 });
 
 test("no clusters yields nothing", () => {
   const r = run({ clusters: [], profiles: [{ id: 1 }], scores: {} });
-  assert.deepEqual(r, { confirmed: [], suggested: [], mergeCandidates: [] });
+  assert.deepEqual(r, { confirmed: [], suggested: [] });
 });
 
 test("a non-finite score is ignored rather than winning", () => {

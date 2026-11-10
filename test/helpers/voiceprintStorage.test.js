@@ -559,7 +559,7 @@ test("post-call diarization hands each renumbered speaker's total speech to the 
       cosineSimilarity: () => 0,
     },
     databaseManager: { getSpeakerProfiles: () => [] },
-    _resolveSpeakerExpectation: () => ({ numSpeakers: 0, cap: null }),
+    _resolveSpeakerExpectation: () => ({ maxSpeakers: null }),
     _persistDiarizedTranscript: (...args) => {
       persisted.push(args);
       return [];
@@ -694,4 +694,303 @@ test("merging two profiles that both hold the same speaker keeps one sample for 
   const merged = db.mergeSpeakerProfiles(winner, loser);
   assert.equal(merged.sample_count, 1);
   assert.equal(merged.total_speech_s, 10);
+});
+
+function oneOnOneNote(db, attendee, embedding = [1, 0], speechS = 25) {
+  const noteId = insertNote(db, [{ text: "hi", source: "system", speaker: "speaker_0" }]);
+  db.db
+    .prepare("UPDATE notes SET participants = ? WHERE id = ?")
+    .run(JSON.stringify([attendee]), noteId);
+  db.saveNoteSpeakerEmbeddings(noteId, { speaker_0: embedding }, { speaker_0: speechS });
+  return noteId;
+}
+
+async function autoLabelOneOnOne(db, noteId) {
+  const h = Object.create(IPCHandlers.prototype);
+  Object.assign(h, {
+    databaseManager: db,
+    _retroactiveMapping: () => {},
+    broadcastToWindows: () => {},
+  });
+  h._tryAutoLabelOneOnOne(noteId);
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+const mappingOf = (db, noteId, speakerId = "speaker_0") =>
+  db.getSpeakerMappings(noteId).find((m) => m.speaker_id === speakerId);
+
+const DANA = { displayName: "Dana", email: "dana@x.com" };
+
+test("renaming an auto-labelled 1:1 speaker is a correction, so a later 1:1 with the attendee never reaches the new name", async () => {
+  const db = freshDatabase();
+  const note1 = oneOnOneNote(db, DANA);
+  await autoLabelOneOnOne(db, note1);
+  const danaId = mappingOf(db, note1).profile_id;
+  assert.equal(profileRow(db, danaId).email, "dana@x.com");
+
+  const eve = await handlersFor(db)._setSpeakerMapping(note1, "speaker_0", "Eve", null, null);
+
+  assert.notEqual(eve.profileId, danaId, "the attendee's profile was renamed to Eve");
+  assert.equal(profileRow(db, eve.profileId).display_name, "Eve");
+  assert.equal(profileRow(db, eve.profileId).email, null, "Eve inherited the attendee's email");
+  const danaAfter = profileRow(db, danaId);
+  if (danaAfter) {
+    assert.equal(danaAfter.display_name, "Dana");
+    assert.equal(danaAfter.email, "dana@x.com");
+    assert.equal(
+      samplesOf(db, danaId).some((s) => s.note_id === note1),
+      false
+    );
+  }
+
+  const note2 = oneOnOneNote(db, DANA);
+  await autoLabelOneOnOne(db, note2);
+  assert.notEqual(mappingOf(db, note2).profile_id, eve.profileId, "a 1:1 with Dana reached Eve");
+  assert.equal(profileRow(db, eve.profileId).display_name, "Eve");
+  assert.deepEqual(
+    samplesOf(db, eve.profileId).map((s) => s.note_id),
+    [note1]
+  );
+});
+
+test("correcting one of an attendee's 1:1 speakers keeps the attendee's name, email and other samples", async () => {
+  const db = freshDatabase();
+  const note0 = oneOnOneNote(db, DANA);
+  const note1 = oneOnOneNote(db, DANA);
+  await autoLabelOneOnOne(db, note0);
+  await autoLabelOneOnOne(db, note1);
+  const danaId = mappingOf(db, note0).profile_id;
+  assert.equal(mappingOf(db, note1).profile_id, danaId);
+
+  const eve = await handlersFor(db)._setSpeakerMapping(note1, "speaker_0", "Eve", null, null);
+
+  assert.notEqual(eve.profileId, danaId);
+  assert.equal(profileRow(db, danaId).display_name, "Dana");
+  assert.equal(profileRow(db, danaId).email, "dana@x.com");
+  assert.deepEqual(
+    samplesOf(db, danaId).map((s) => s.note_id),
+    [note0]
+  );
+});
+
+test("a speaker the user named can still be renamed when the supplied email is the profile's own", async () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+  db.saveNoteSpeakerEmbeddings(noteId, { speaker_0: [1, 0] }, { speaker_0: 20 });
+  const h = handlersFor(db);
+  const first = await h._setSpeakerMapping(noteId, "speaker_0", "Dana", "dana@x.com", null);
+  const second = await h._setSpeakerMapping(noteId, "speaker_0", "Dana S.", "dana@x.com", null);
+  assert.equal(second.profileId, first.profileId);
+  assert.equal(profileCount(db), 1);
+});
+
+const ALEX_A = { displayName: "Alex", email: "alex.a@x.com" };
+const ALEX_B = { displayName: "Alex", email: "alex.b@x.com" };
+
+function seedAlexA(db) {
+  const earlier = insertNote(db);
+  return db.upsertSpeakerProfile("Alex", ALEX_A.email, vec([1, 0]), null, {
+    durationS: 30,
+    noteId: earlier,
+    speakerId: "speaker_0",
+  });
+}
+
+test("a 1:1 with a different Alex never reuses or re-emails the existing Alex", async () => {
+  const db = freshDatabase();
+  const alexA = seedAlexA(db);
+  const noteId = oneOnOneNote(db, ALEX_B);
+  await autoLabelOneOnOne(db, noteId);
+  assert.notEqual(mappingOf(db, noteId).profile_id, alexA.id);
+  assert.equal(profileRow(db, alexA.id).email, ALEX_A.email);
+  assert.equal(samplesOf(db, alexA.id).length, 1);
+  assert.equal(profileCount(db), 2);
+});
+
+test("picking a participant Alex with another email creates a profile rather than reusing the existing Alex", async () => {
+  const db = freshDatabase();
+  const alexA = seedAlexA(db);
+  const noteId = insertNote(db);
+  db.saveNoteSpeakerEmbeddings(noteId, { speaker_0: [1, 0] }, { speaker_0: 20 });
+  const result = await handlersFor(db)._setSpeakerMapping(
+    noteId,
+    "speaker_0",
+    "Alex",
+    ALEX_B.email,
+    null
+  );
+  assert.notEqual(result.profileId, alexA.id);
+  assert.equal(profileRow(db, alexA.id).email, ALEX_A.email);
+  assert.equal(profileRow(db, result.profileId).email, ALEX_B.email);
+});
+
+// A typed name carries no email, so nothing says this is a different Alex. Creating a second
+// Alex here would give one voice two profiles, and the margin rule would then never name him.
+test("a typed name without an email reaches the one namesake, even one who has an email", async () => {
+  const db = freshDatabase();
+  const alexA = seedAlexA(db);
+  const noteId = insertNote(db);
+  db.saveNoteSpeakerEmbeddings(noteId, { speaker_0: [1, 0] }, { speaker_0: 20 });
+  const result = await handlersFor(db)._setSpeakerMapping(noteId, "speaker_0", "Alex", null, null);
+  assert.equal(result.profileId, alexA.id);
+  assert.equal(profileRow(db, alexA.id).email, ALEX_A.email);
+});
+
+test("removing a profile's last sample deletes the profile and keeps the names it gave notes", () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+  const p = db.upsertSpeakerProfile("Dana", null, vec([1, 0]), null, {
+    durationS: 10,
+    noteId,
+    speakerId: "speaker_0",
+  });
+  db.setSpeakerMapping(noteId, "speaker_0", p.id, "Dana", { origin: "manual" });
+
+  db.removeSpeakerProfileSample(p.id, noteId, "speaker_0");
+
+  assert.equal(profileRow(db, p.id), undefined, "a profile with no samples survived");
+  const mapping = mappingOf(db, noteId);
+  assert.equal(mapping.profile_id, null);
+  assert.equal(mapping.display_name, "Dana");
+});
+
+test("fixing a typo by picking the existing profile leaves no empty typo profile behind", async () => {
+  const db = freshDatabase();
+  const noteA = insertNote(db);
+  const noteB = insertNote(db);
+  db.saveNoteSpeakerEmbeddings(noteA, { speaker_0: [1, 0] }, { speaker_0: 20 });
+  db.saveNoteSpeakerEmbeddings(noteB, { speaker_0: [1, 0] }, { speaker_0: 20 });
+  const h = handlersFor(db);
+  const alex = await h._setSpeakerMapping(noteA, "speaker_0", "Alex", null, null);
+  const alx = await h._setSpeakerMapping(noteB, "speaker_0", "Alx", null, null);
+  assert.notEqual(alx.profileId, alex.profileId);
+
+  await h._setSpeakerMapping(noteB, "speaker_0", "Alex", null, alex.profileId);
+
+  assert.equal(profileRow(db, alx.profileId), undefined, "the typo profile survived empty");
+  assert.equal(profileCount(db), 1);
+  assert.equal(samplesOf(db, alex.profileId).length, 2);
+});
+
+test("a typed name reaches the one profile that differs only in case or accents, keeping its name", async () => {
+  const db = freshDatabase();
+  const noteA = insertNote(db);
+  const noteB = insertNote(db);
+  const noteC = insertNote(db);
+  for (const noteId of [noteA, noteB, noteC]) {
+    db.saveNoteSpeakerEmbeddings(noteId, { speaker_0: [1, 0] }, { speaker_0: 20 });
+  }
+  const h = handlersFor(db);
+  const alex = await h._setSpeakerMapping(noteA, "speaker_0", "Alex", null, null);
+  const zoe = await h._setSpeakerMapping(noteB, "speaker_0", "Zoë", null, null);
+
+  const lower = await h._setSpeakerMapping(noteC, "speaker_0", "alex", null, null);
+  assert.equal(lower.profileId, alex.profileId);
+  assert.equal(profileRow(db, alex.profileId).display_name, "Alex");
+
+  const noteD = insertNote(db);
+  db.saveNoteSpeakerEmbeddings(noteD, { speaker_0: [1, 0] }, { speaker_0: 20 });
+  const plain = await h._setSpeakerMapping(noteD, "speaker_0", "zoe", null, null);
+  assert.equal(plain.profileId, zoe.profileId);
+  assert.equal(profileCount(db), 2);
+});
+
+test("a correction whose new profile fails to save leaves the old sample and mapping in place", async () => {
+  const db = freshDatabase();
+  const note0 = insertNote(db);
+  const note1 = insertNote(db);
+  db.saveNoteSpeakerEmbeddings(note0, { speaker_0: [1, 0] }, { speaker_0: 20 });
+  db.saveNoteSpeakerEmbeddings(note1, { speaker_0: [1, 0] }, { speaker_0: 20 });
+  const h = handlersFor(db);
+  const dana = await h._setSpeakerMapping(note0, "speaker_0", "Dana", null, null);
+  await h._setSpeakerMapping(note1, "speaker_0", "Dana", null, null);
+  assert.equal(samplesOf(db, dana.profileId).length, 2);
+
+  db.upsertSpeakerProfile = () => {
+    throw new Error("disk full");
+  };
+  await assert.rejects(async () => h._setSpeakerMapping(note1, "speaker_0", "Sam", null, null));
+
+  assert.deepEqual(
+    samplesOf(db, dana.profileId).map((s) => s.note_id),
+    [note0, note1]
+  );
+  assert.equal(mappingOf(db, note1).display_name, "Dana");
+  assert.equal(mappingOf(db, note1).profile_id, dana.profileId);
+});
+
+test("a sample with no recorded speech time still pulls the profile toward its voice", () => {
+  const db = freshDatabase();
+  const noteA = insertNote(db);
+  const noteB = insertNote(db);
+  const p = db.upsertSpeakerProfile("Dana", null, vec([1, 0]), null, {
+    durationS: 10,
+    noteId: noteA,
+    speakerId: "speaker_0",
+  });
+  const after = db.upsertSpeakerProfile("Dana", null, vec([0, 1]), p.id, {
+    durationS: 0,
+    noteId: noteB,
+    speakerId: "speaker_0",
+  });
+  const norm = Math.hypot(10, 1);
+  assert.ok(
+    close(floatsOf(after.embedding), [10 / norm, 1 / norm]),
+    `profile was ${floatsOf(after.embedding)}`
+  );
+  assert.equal(after.total_speech_s, 10);
+});
+
+test("renaming a speaker the user linked to an attendee does not carry the attendee's email to the new name", async () => {
+  const db = freshDatabase();
+  const noteId = insertNote(db);
+  db.saveNoteSpeakerEmbeddings(noteId, { speaker_0: [1, 0] }, { speaker_0: 20 });
+  const h = handlersFor(db);
+  const dana = await h._setSpeakerMapping(noteId, "speaker_0", "Dana", "dana@x.com", null);
+
+  const eve = await h._setSpeakerMapping(noteId, "speaker_0", "Eve", null, null);
+
+  assert.notEqual(eve.profileId, dana.profileId);
+  assert.equal(profileRow(db, eve.profileId).email, null);
+  const danaAfter = profileRow(db, dana.profileId);
+  assert.ok(!danaAfter || danaAfter.display_name === "Dana", "the attendee's profile was renamed");
+});
+
+test("an email that no profile has creates a profile even when an email-less namesake exists", async () => {
+  const db = freshDatabase();
+  const earlier = insertNote(db);
+  const namesake = db.upsertSpeakerProfile("Alex", null, vec([1, 0]), null, {
+    durationS: 30,
+    noteId: earlier,
+    speakerId: "speaker_0",
+  });
+  const noteId = insertNote(db);
+  db.saveNoteSpeakerEmbeddings(noteId, { speaker_0: [1, 0] }, { speaker_0: 20 });
+  const result = await handlersFor(db)._setSpeakerMapping(
+    noteId,
+    "speaker_0",
+    "Alex",
+    ALEX_B.email,
+    null
+  );
+  assert.notEqual(result.profileId, namesake.id);
+  assert.equal(profileRow(db, namesake.id).email, null);
+  assert.equal(samplesOf(db, namesake.id).length, 1);
+});
+
+test("renaming a speaker the app labelled, even without an email, never renames the attendee's profile", async () => {
+  const db = freshDatabase();
+  const note1 = oneOnOneNote(db, { displayName: "Priya" });
+  await autoLabelOneOnOne(db, note1);
+  const priyaId = mappingOf(db, note1).profile_id;
+  assert.equal(mappingOf(db, note1).origin, "auto");
+
+  const eve = await handlersFor(db)._setSpeakerMapping(note1, "speaker_0", "Eve", null, null);
+
+  assert.notEqual(eve.profileId, priyaId, "the attendee's profile was renamed to Eve");
+  const note2 = oneOnOneNote(db, { displayName: "Priya" });
+  await autoLabelOneOnOne(db, note2);
+  assert.notEqual(mappingOf(db, note2).profile_id, eve.profileId, "a 1:1 with Priya reached Eve");
+  assert.equal(profileRow(db, eve.profileId).display_name, "Eve");
 });

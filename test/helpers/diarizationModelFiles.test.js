@@ -104,3 +104,27 @@ test("downloading skips an embedding model that is already present", async () =>
     [RESNET_FILE]
   );
 });
+
+async function sherpaArgsFor(options) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-diar-count-"));
+  seedSegmentation(dir);
+  fs.writeFileSync(path.join(dir, CAMPP_FILE), "campp");
+  fs.writeFileSync(path.join(dir, RESNET_FILE), "resnet");
+  const wavPath = path.join(dir, "input.wav");
+  fs.writeFileSync(wavPath, "wav");
+  const manager = managerWithModelsIn(dir);
+  manager.getDiarizationEngine = () => "sherpa";
+  spawnCalls.length = 0;
+  await manager._diarizeNow(wavPath, options);
+  return spawnCalls[0].args;
+}
+
+test("a speaker count the user set reaches sherpa as its exact cluster count", async () => {
+  const args = await sherpaArgsFor({ maxSpeakers: 3, userSetSpeakers: true });
+  assert.ok(args.includes("--clustering.num-clusters=3"), args.join(" "));
+});
+
+test("a calendar bound alone never becomes an exact count on sherpa", async () => {
+  const args = await sherpaArgsFor({ maxSpeakers: 4 });
+  assert.ok(args.includes("--clustering.num-clusters=-1"), args.join(" "));
+});

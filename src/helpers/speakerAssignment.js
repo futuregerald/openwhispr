@@ -53,22 +53,8 @@ function assignClustersToProfiles({ clusters = [], profiles = [], similarity, th
   eligible.sort((a, b) => b.score - a.score);
   const confirmedByCluster = new Map();
   const confirmedByProfile = new Map();
-  const mergeCandidates = [];
   for (const pair of eligible) {
-    const holder = confirmedByProfile.get(pair.profile.id);
-    if (holder) {
-      const resemblance = finiteOrNegInfinity(
-        similarity(holder.cluster.embedding, pair.cluster.embedding)
-      );
-      if (resemblance >= confirm) {
-        mergeCandidates.push({
-          keepSpeakerId: holder.cluster.speakerId,
-          dropSpeakerId: pair.cluster.speakerId,
-          profileId: pair.profile.id,
-        });
-      }
-      continue;
-    }
+    if (confirmedByProfile.has(pair.profile.id)) continue;
     confirmedByCluster.set(pair.cluster.speakerId, pair);
     confirmedByProfile.set(pair.profile.id, pair);
   }
@@ -95,7 +81,7 @@ function assignClustersToProfiles({ clusters = [], profiles = [], similarity, th
     }
   }
 
-  return { confirmed, suggested, mergeCandidates };
+  return { confirmed, suggested };
 }
 
 module.exports = { assignClustersToProfiles, DEFAULT_THRESHOLDS };

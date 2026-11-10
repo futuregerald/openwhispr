@@ -2,15 +2,26 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { classifyRetroactiveMatch } = require("../../src/helpers/retroactiveSpeakerMatch");
-const { CONFIRM_THRESHOLD, MARGIN } = require("../../src/helpers/speakerThresholds");
+const {
+  CONFIRM_THRESHOLD,
+  MARGIN,
+  MIN_CLUSTER_SPEECH_S,
+  MIN_PROFILE_SPEECH_S,
+} = require("../../src/helpers/speakerThresholds");
 
 // A fake scorer, so a test states the similarities it means instead of hoping a
 // fixture of real embeddings happens to produce them.
-const classify = (candidates) =>
+const classify = (candidates, { profileSpeechS = 60 } = {}) =>
   classifyRetroactiveMatch(
     null,
-    candidates.map((c) => ({ speakerId: c.speakerId, mapped: !!c.mapped, embedding: c })),
-    (_profile, candidate) => candidate.score
+    candidates.map((c) => ({
+      speakerId: c.speakerId,
+      mapped: !!c.mapped,
+      speechS: c.speechS ?? 60,
+      embedding: c,
+    })),
+    (_profile, candidate) => candidate.score,
+    { profileSpeechS }
   );
 
 test("a clear winner is matched", () => {
@@ -170,4 +181,51 @@ test("a gap of exactly the margin is a match, just under is a suggestion", () =>
     ]).outcome,
     "suggest"
   );
+});
+
+test("a clear winner with too little speech in the note is only suggested", () => {
+  const r = classify([
+    { speakerId: "speaker_0", score: 0.9, speechS: MIN_CLUSTER_SPEECH_S - 0.1 },
+    { speakerId: "speaker_1", score: 0.2 },
+  ]);
+  assert.equal(r.outcome, "suggest");
+  assert.equal(r.speakerId, "speaker_0");
+});
+
+test("a clear winner against a profile with too little enrolled speech is only suggested", () => {
+  const r = classify(
+    [
+      { speakerId: "speaker_0", score: 0.9 },
+      { speakerId: "speaker_1", score: 0.2 },
+    ],
+    { profileSpeechS: MIN_PROFILE_SPEECH_S - 0.1 }
+  );
+  assert.equal(r.outcome, "suggest");
+});
+
+test("exactly the minimum speech on both sides is enough to match", () => {
+  const r = classify(
+    [
+      { speakerId: "speaker_0", score: 0.9, speechS: MIN_CLUSTER_SPEECH_S },
+      { speakerId: "speaker_1", score: 0.2 },
+    ],
+    { profileSpeechS: MIN_PROFILE_SPEECH_S }
+  );
+  assert.equal(r.outcome, "match");
+});
+
+test("unknown speech time on either side is never enough to match", () => {
+  const unknownCluster = classifyRetroactiveMatch(
+    null,
+    [{ speakerId: "speaker_0", mapped: false, embedding: { score: 0.9 } }],
+    (_p, c) => c.score,
+    { profileSpeechS: 60 }
+  );
+  assert.equal(unknownCluster.outcome, "suggest");
+  const unknownProfile = classifyRetroactiveMatch(
+    null,
+    [{ speakerId: "speaker_0", mapped: false, speechS: 60, embedding: { score: 0.9 } }],
+    (_p, c) => c.score
+  );
+  assert.equal(unknownProfile.outcome, "suggest");
 });

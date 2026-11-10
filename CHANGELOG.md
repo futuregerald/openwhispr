@@ -22,22 +22,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   match one saved person clearly better than anyone else, there has to be enough
   speech to judge, and two speakers in one meeting can never both be given the
   same person. When it is less sure it suggests a name instead of applying it.
-- A name the app picked by itself no longer changes that person's saved voice.
-  Only names you give or confirm do, so one wrong guess cannot spread.
-- Renaming a speaker updates that speaker's saved voice instead of creating a
-  second person, and correcting a wrong name removes that speaker's voice from
+- A name the app recognised from someone's voice no longer changes that
+  person's saved voice. Only names you give, and the one-on-one rule below
+  (which uses the calendar invite, not the voice), do, so one wrong guess
+  cannot spread.
+- Renaming a speaker you named yourself renames that person instead of creating
+  a second one. Correcting a name the app chose removes that speaker's voice from
   the person it was wrongly given to.
 - In a one-on-one, the attendee's name goes only to the person who did most of
   the talking on the other side, not to every remote voice.
-- The number of people on the calendar invite now limits how many speakers a
-  meeting can be split into.
+- On macOS, when a meeting invite has two or more other people, the number of
+  people on it now limits how many speakers the meeting can be split into. A
+  count you set yourself always takes precedence, on every platform.
 - Speaker separation on macOS uses FluidAudio 0.18.3.
 
 ### Fixed
 
 - Re-transcribing a meeting failed whenever the speaker model was installed.
-- Typing a name that someone else already had silently merged the two people's
-  voices.
+- Typing a name silently merged voices with whoever already had that name, even
+  when their email showed they were a different person. A typed name now joins an
+  existing person only when exactly one person has it (ignoring case and accents)
+  and their email does not say otherwise.
+- The speaker count you set for a meeting was ignored.
 
 ## [1.37.0] - 2026-10-16
 

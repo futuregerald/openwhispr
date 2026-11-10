@@ -59,7 +59,7 @@ function createHandlers({ diarization, voiceAt, profiles, mappings = [] }) {
       setSpeakerMapping: (...args) => mappingWrites.push(args),
       upsertSpeakerProfile: (...args) => upserts.push(args),
     },
-    _resolveSpeakerExpectation: () => ({ numSpeakers: -1, cap: null }),
+    _resolveSpeakerExpectation: () => ({ maxSpeakers: null }),
     _persistDiarizedTranscript: (noteId, segments, embeddings, _startedAt, speech) => {
       persisted.push({ noteId, segments, embeddings, speech });
       return segments;
@@ -87,12 +87,12 @@ const PRIYA = [1, 0, 0];
 const OMAR = [0, 1, 0];
 const STRANGER = [0, 0, 1];
 
-const profile = (id, name, embedding, totalSpeechS = 60, sampleCount = 3) => ({
+const profile = (id, name, embedding, totalSpeechS = 60) => ({
   id,
   display_name: name,
   embedding: vec(embedding),
   total_speech_s: totalSpeechS,
-  sample_count: sampleCount,
+  sample_count: 3,
 });
 
 // raw_a speaks 0-10 and 12-20 (18 s); raw_b speaks 30-40 (10 s).
@@ -143,19 +143,6 @@ test("a profile with too little enrolled speech only suggests its name", async (
   const segs = segmentsOf(persisted, "speaker_0");
   assert.ok(segs.every((s) => !s.speakerName));
   assert.ok(segs.every((s) => s.suggestedName === "Priya" && s.suggestedProfileId === 1));
-});
-
-test("a profile with no samples left only suggests, whatever its stored speech total", async () => {
-  const { handlers, mappingWrites, persisted } = createHandlers({
-    diarization: TWO_SPEAKERS,
-    voiceAt: (start) => (start < 30 ? PRIYA : STRANGER),
-    profiles: [profile(1, "Priya", PRIYA, 60, 0)],
-  });
-
-  await run(handlers);
-
-  assert.equal(mappingWrites.length, 0);
-  assert.ok(segmentsOf(persisted, "speaker_0").every((s) => s.suggestedName === "Priya"));
 });
 
 test("a cluster with too little speech is suggested, not named", async () => {

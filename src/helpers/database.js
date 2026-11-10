@@ -3454,11 +3454,7 @@ class DatabaseManager {
     const totalSpeechS = samples.reduce((sum, s) => sum + s.duration_s, 0);
 
     if (!samples.length) {
-      this.db
-        .prepare(
-          "UPDATE speaker_profiles SET sample_count = 0, total_speech_s = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-        )
-        .run(profileId);
+      this.db.prepare("DELETE FROM speaker_profiles WHERE id = ?").run(profileId);
       return;
     }
 
@@ -3468,7 +3464,7 @@ class DatabaseManager {
       )
     );
     const dim = vectors[0].length;
-    const weights = totalSpeechS > 0 ? samples.map((s) => s.duration_s) : samples.map(() => 1);
+    const weights = samples.map((s) => (s.duration_s > 0 ? s.duration_s : 1));
     const sum = new Float32Array(dim);
     vectors.forEach((v, index) => {
       if (v.length !== dim) {
@@ -3547,9 +3543,12 @@ class DatabaseManager {
   findSpeakerProfilesByName(displayName) {
     try {
       if (!this.db) throw new Error("Database not initialized");
+      const wantedName = peopleResolver.normalizeName(displayName);
+      if (!wantedName) return [];
       return this.db
-        .prepare("SELECT * FROM speaker_profiles WHERE display_name = ? AND model_id = ?")
-        .all(displayName, SPEAKER_MODEL_ID);
+        .prepare("SELECT * FROM speaker_profiles WHERE model_id = ?")
+        .all(SPEAKER_MODEL_ID)
+        .filter((profile) => peopleResolver.normalizeName(profile.display_name) === wantedName);
     } catch (error) {
       debugLogger.error(
         "Error finding speaker profiles by name",
@@ -3632,13 +3631,13 @@ class DatabaseManager {
           "UPDATE speaker_profiles SET display_name = ?, email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
         )
         .run(finalName, finalEmail, winner.id);
-      this._rebuildSpeakerProfile(winner.id);
       this.db
         .prepare(
           "UPDATE speaker_mappings SET profile_id = ?, display_name = ?, confidence = NULL WHERE profile_id = ?"
         )
         .run(winner.id, finalName, loser.id);
       this.db.prepare("DELETE FROM speaker_profiles WHERE id = ?").run(loser.id);
+      this._rebuildSpeakerProfile(winner.id);
     });
     tx();
 
