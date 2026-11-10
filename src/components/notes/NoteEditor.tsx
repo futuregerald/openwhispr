@@ -51,6 +51,11 @@ import {
 } from "../../helpers/transcriptSpeakerState";
 import { externalRenameUpdate } from "../../helpers/speakerMappingBroadcast";
 import { foldSpeakersInto } from "../../helpers/speakerFold";
+import {
+  defaultNoteViewMode,
+  hasGeneratedNotes,
+  shouldOpenArrivedNotes,
+} from "../../helpers/meetingViewMode";
 import NoteParticipants from "./NoteParticipants";
 import CallSplitBanner from "./CallSplitBanner";
 import MeetingTypePicker from "./MeetingTypePicker";
@@ -156,7 +161,20 @@ export default function NoteEditor({
 }: NoteEditorProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const [viewMode, setViewMode] = useState<MeetingViewMode>("raw");
+  const [viewMode, setViewMode] = useState<MeetingViewMode>(() =>
+    defaultNoteViewMode(note.note_type, note.enhanced_content)
+  );
+  const userChoseViewRef = useRef(false);
+  const markViewChosen = useCallback(() => {
+    userChoseViewRef.current = true;
+  }, []);
+  const chooseView = useCallback(
+    (mode: MeetingViewMode) => {
+      markViewChosen();
+      setViewMode(mode);
+    },
+    [markViewChosen]
+  );
   const [chatMode, setChatMode] = useState<EmbeddedChatMode>("hidden");
   const [folderSearch, setFolderSearch] = useState("");
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
@@ -320,6 +338,7 @@ export default function NoteEditor({
     });
   }, []);
 
+  const hasEnhancement = !!enhancement;
   const updateSegmentIndicator = useCallback(() => {
     const container = segmentContainerRef.current;
     if (!container) return;
@@ -340,7 +359,7 @@ export default function NoteEditor({
 
   useEffect(() => {
     updateSegmentIndicator();
-  }, [updateSegmentIndicator]);
+  }, [updateSegmentIndicator, hasEnhancement]);
 
   useEffect(() => {
     const observer = new ResizeObserver(() => updateSegmentIndicator());
@@ -662,7 +681,8 @@ export default function NoteEditor({
       const text = titleRef.current.textContent || "";
       onTitleChange(text);
     }
-  }, [onTitleChange]);
+    markViewChosen();
+  }, [onTitleChange, markViewChosen]);
 
   const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
@@ -676,6 +696,28 @@ export default function NoteEditor({
     const text = e.clipboardData.getData("text/plain").replace(/\n/g, " ");
     document.execCommand("insertText", false, text);
   }, []);
+
+  const hadGeneratedNotesRef = useRef(hasGeneratedNotes(enhancement?.content));
+  const enhancementContent = enhancement?.content;
+  useEffect(() => {
+    const hasNotesNow = hasGeneratedNotes(enhancementContent);
+    const open = shouldOpenArrivedNotes({
+      noteType: note.note_type,
+      hadGeneratedNotes: hadGeneratedNotesRef.current,
+      hasGeneratedNotes: hasNotesNow,
+      viewMode,
+      userChoseView: userChoseViewRef.current,
+      isRecording,
+    });
+    if (!open) {
+      hadGeneratedNotesRef.current = hasNotesNow;
+      return;
+    }
+    return scheduleUiUpdate(() => {
+      hadGeneratedNotesRef.current = hasNotesNow;
+      setViewMode("enhanced");
+    });
+  }, [enhancementContent, note.note_type, viewMode, isRecording, scheduleUiUpdate]);
 
   const prevRecordingRef = useRef(false);
   useEffect(() => {
@@ -892,7 +934,7 @@ export default function NoteEditor({
                     <button
                       data-segment-button
                       data-segment-value="transcript"
-                      onClick={() => setViewMode("transcript")}
+                      onClick={() => chooseView("transcript")}
                       className={cn(
                         "relative z-1 px-1.5 h-5 rounded text-xs font-medium transition-colors duration-150 flex items-center gap-1",
                         viewMode === "transcript"
@@ -907,7 +949,7 @@ export default function NoteEditor({
                   <button
                     data-segment-button
                     data-segment-value="raw"
-                    onClick={() => setViewMode("raw")}
+                    onClick={() => chooseView("raw")}
                     className={cn(
                       "relative z-1 px-1.5 h-5 rounded text-xs font-medium transition-colors duration-150 flex items-center gap-1",
                       viewMode === "raw"
@@ -922,7 +964,7 @@ export default function NoteEditor({
                     <button
                       data-segment-button
                       data-segment-value="enhanced"
-                      onClick={() => setViewMode("enhanced")}
+                      onClick={() => chooseView("enhanced")}
                       className={cn(
                         "relative z-1 px-1.5 h-5 rounded text-xs font-medium transition-colors duration-150 flex items-center gap-1",
                         viewMode === "enhanced"
@@ -1054,7 +1096,11 @@ export default function NoteEditor({
         </div>
 
         <div className="flex-1 relative min-h-0">
-          <div className="h-full overflow-y-auto">
+          <div
+            className="h-full overflow-y-auto"
+            onPointerDownCapture={markViewChosen}
+            onKeyDownCapture={markViewChosen}
+          >
             {viewMode === "transcript" && (hasChatSegments || isRecording) ? (
               <MeetingTranscriptChat
                 noteId={note.id}
@@ -1083,7 +1129,11 @@ export default function NoteEditor({
             ) : viewMode === "transcript" && hasMeetingTranscript ? (
               <RichTextEditor value={effectiveTranscript} disabled />
             ) : viewMode === "enhanced" && enhancement ? (
-              <RichTextEditor value={enhancement.content} onChange={handleEnhancedChange} />
+              <RichTextEditor
+                value={enhancement.content}
+                onChange={handleEnhancedChange}
+                editorRef={editorRef}
+              />
             ) : (
               <RichTextEditor
                 value={note.content}

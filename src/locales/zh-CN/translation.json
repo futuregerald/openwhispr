@@ -1792,6 +1792,7 @@
       "newNote": "新建笔记",
       "untitled": "无标题",
       "untitledNote": "无标题笔记",
+      "resizeHandle": "调整笔记列表宽度",
       "timeNow": "刚刚",
       "minutesAgo": "{{count}} 分钟前",
       "hoursAgo": "{{count}} 小时前",

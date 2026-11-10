@@ -1792,6 +1792,7 @@
       "newNote": "Новая заметка",
       "untitled": "Без названия",
       "untitledNote": "Заметка без названия",
+      "resizeHandle": "Изменить ширину списка заметок",
       "timeNow": "Только что",
       "minutesAgo": "{{count}} мин. назад",
       "hoursAgo": "{{count}} ч. назад",

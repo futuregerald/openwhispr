@@ -1792,6 +1792,7 @@
       "newNote": "新增筆記",
       "untitled": "未命名",
       "untitledNote": "未命名筆記",
+      "resizeHandle": "調整筆記列表寬度",
       "timeNow": "剛剛",
       "minutesAgo": "{{count}} 分鐘前",
       "hoursAgo": "{{count}} 小時前",
