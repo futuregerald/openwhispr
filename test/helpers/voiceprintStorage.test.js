@@ -994,3 +994,43 @@ test("renaming a speaker the app labelled, even without an email, never renames 
   assert.notEqual(mappingOf(db, note2).profile_id, eve.profileId, "a 1:1 with Priya reached Eve");
   assert.equal(profileRow(db, eve.profileId).display_name, "Eve");
 });
+
+test("attaching an email that another person already has folds this speaker into them, keeping every sample", () => {
+  const db = freshDatabase();
+  const noteA = insertNote(db);
+  const noteB = insertNote(db);
+  const holder = db.upsertSpeakerProfile("Dana", "dana@x.com", vec([1, 0]), null, {
+    durationS: 30,
+    noteId: noteA,
+    speakerId: "speaker_0",
+  });
+  const unnamed = db.upsertSpeakerProfile("D.", null, vec([0, 1]), null, {
+    durationS: 10,
+    noteId: noteB,
+    speakerId: "speaker_1",
+  });
+  db.setSpeakerMapping(noteB, "speaker_1", unnamed.id, "D.", { origin: "manual" });
+
+  const merged = db.attachEmailToProfile(unnamed.id, "dana@x.com");
+
+  assert.equal(merged.id, holder.id);
+  assert.equal(profileRow(db, unnamed.id), undefined);
+  assert.equal(samplesOf(db, holder.id).length, 2);
+  assert.equal(profileRow(db, holder.id).total_speech_s, 40);
+  const mapping = db.getSpeakerMappings(noteB).find((m) => m.speaker_id === "speaker_1");
+  assert.equal(mapping.profile_id, holder.id);
+  assert.equal(mapping.display_name, "Dana");
+});
+
+test("attaching a fresh email to a person sets it without touching their voice", () => {
+  const db = freshDatabase();
+  const noteA = insertNote(db);
+  const p = db.upsertSpeakerProfile("Eve", null, vec([1, 0]), null, {
+    durationS: 25,
+    noteId: noteA,
+    speakerId: "speaker_0",
+  });
+  const updated = db.attachEmailToProfile(p.id, "Eve@X.com");
+  assert.equal(updated.email, "eve@x.com");
+  assert.equal(samplesOf(db, p.id).length, 1);
+});
