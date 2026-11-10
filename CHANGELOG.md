@@ -18,7 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   days.
 - On macOS, a meeting recording now stops about 24 seconds after its call ends,
   however you started it, as long as the app actually saw the call: your camera
-  in use, or a meeting page open in your browser. A card then says "Call ended —
+  in use, or the call itself running in your browser (Google Meet, or Zoom or
+  Teams in the browser). A page that only opens the Zoom or Teams app doesn't
+  count, so closing it never stops your recording. A card then says "Call ended —
   recording stopped" with **Resume** for 10 seconds; Resume starts a new note
   called "(continued)".
 - Recordings with no call to watch, such as an in-person meeting or a desktop
