@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.38.0] - 2026-11-10
+
+### Changed
+
+- Speakers are recognised by a new voice model that tells people apart far more
+  reliably. On real call audio it confuses your voice with someone else's about
+  four times less often than before.
+- **Saved voices are reset once.** Voiceprints made by the old model cannot be
+  compared with the new one, and many of them had absorbed other people's
+  voices. Speaker names already on your notes stay as they are. Name a speaker
+  again in your next meeting and the app starts recognising them from there.
+- The app now names a speaker on its own only when it is sure: the voice has to
+  match one saved person clearly better than anyone else, there has to be enough
+  speech to judge, and two speakers in one meeting can never both be given the
+  same person. When it is less sure it suggests a name instead of applying it.
+- A name the app picked by itself no longer changes that person's saved voice.
+  Only names you give or confirm do, so one wrong guess cannot spread.
+- Renaming a speaker updates that speaker's saved voice instead of creating a
+  second person, and correcting a wrong name removes that speaker's voice from
+  the person it was wrongly given to.
+- In a one-on-one, the attendee's name goes only to the person who did most of
+  the talking on the other side, not to every remote voice.
+- The number of people on the calendar invite now limits how many speakers a
+  meeting can be split into.
+- Speaker separation on macOS uses FluidAudio 0.18.3.
+
+### Fixed
+
+- Re-transcribing a meeting failed whenever the speaker model was installed.
+- Typing a name that someone else already had silently merged the two people's
+  voices.
+
 ## [1.37.0] - 2026-10-16
 
 ### Added

@@ -92,7 +92,7 @@ const FLUIDAUDIO_OFFLINE_THRESHOLD = 0.5;
 function buildFluidAudioArgs({ wavPath, outJson, mode, numSpeakers = -1, maxSpeakers = -1 }) {
   const args = ["process", wavPath, "--mode", mode, "--output", outJson];
   if (mode === "offline") {
-    args.push("--threshold", String(FLUIDAUDIO_OFFLINE_THRESHOLD));
+    args.push("--threshold", String(FLUIDAUDIO_OFFLINE_THRESHOLD), "--exclusive-segments");
   }
   if (numSpeakers > 0) {
     // Exact speaker count requested (rare).

@@ -24,8 +24,8 @@ const os = require("os");
 const path = require("path");
 
 const FLUIDAUDIO_REPO = "https://github.com/FluidInference/FluidAudio.git";
-const FLUIDAUDIO_TAG = "v0.15.7";
-const FLUIDAUDIO_COMMIT = "41540ea237350afe5117a082b5c28eda642d0612";
+const FLUIDAUDIO_TAG = "v0.18.3";
+const FLUIDAUDIO_COMMIT = "c8b41f98eae668794dd0083bbe028fe7e6585051";
 
 const force = process.argv.includes("--force");
 const checkOnly = process.argv.includes("--check");

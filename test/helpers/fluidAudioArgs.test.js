@@ -62,3 +62,17 @@ test("parses real FluidAudio v0.15.7 output into start/end/speaker segments", ()
   const distinctSpeakers = new Set(result.map((s) => s.speaker));
   assert.equal(distinctSpeakers.size, 2);
 });
+
+test("offline mode asks for exclusive segments, so voiceprint clips never carry a second voice", () => {
+  assert.equal(
+    buildFluidAudioArgs({ ...base, mode: "offline" }).includes("--exclusive-segments"),
+    true
+  );
+});
+
+test("streaming mode does not pass the offline-only exclusive-segments flag", () => {
+  assert.equal(
+    buildFluidAudioArgs({ ...base, mode: "streaming" }).includes("--exclusive-segments"),
+    false
+  );
+});

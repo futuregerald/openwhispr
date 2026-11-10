@@ -167,7 +167,7 @@ test("staleEngineWarning: message when the installed engine is stale", () => {
     installedCommit: "0000000000000000000000000000000000000000",
   });
   assert.match(message, /0000000000000000000000000000000000000000/);
-  assert.match(message, /v0\.15\.7/);
+  assert.match(message, /v0\.18\.3/);
   assert.match(message, /npm run setup:fluidaudio/);
 });
 
@@ -232,4 +232,9 @@ test("dirtyCloneError: an override with no expected commit skips the check even 
     }),
     null
   );
+});
+
+test("FluidAudio is pinned to v0.18.3", () => {
+  assert.equal(FLUIDAUDIO_TAG, "v0.18.3");
+  assert.equal(FLUIDAUDIO_COMMIT, "c8b41f98eae668794dd0083bbe028fe7e6585051");
 });
