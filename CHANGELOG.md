@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.39.0] - 2026-11-10
+
+### Added
+
+- Meeting recordings now have a 2-hour limit. Five minutes before it, a small
+  card appears on top of whatever you're doing: "Recording ends in 4:59", with
+  **Keep recording** (another 2 hours) and **Stop now**. If you ignore it, the
+  recording stops at 2 hours, so a forgotten recording can no longer run for
+  days.
+- On macOS, a meeting recording now stops about 24 seconds after its call ends,
+  however you started it, as long as the app actually saw the call: your camera
+  in use, or a meeting page open in your browser. A card then says "Call ended —
+  recording stopped" with **Resume** for 10 seconds; Resume starts a new note
+  called "(continued)".
+- Recordings with no call to watch, such as an in-person meeting or a desktop
+  call with the camera off, are never stopped this way; the 2-hour limit
+  catches them instead.
+
+### Fixed
+
+- Starting or stopping a dictation during a meeting recording turned off the
+  meeting's automatic stop.
+- An automatic stop was lost if you weren't on the Notes screen when it
+  happened, so the recording kept going. Stops, and saving the transcript, now
+  work from any screen.
+
 ## [1.38.0] - 2026-11-10
 
 ### Changed
