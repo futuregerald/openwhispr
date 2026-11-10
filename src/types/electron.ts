@@ -708,7 +708,9 @@ declare global {
 
       // Note event listeners
       onNoteAdded?: (callback: (note: NoteItem) => void) => () => void;
-      onMeetingAutoStopRequest?: (callback: () => void) => () => void;
+      onMeetingAutoStopRequest?: (
+        callback: (data: { reason: "call-ended" | "cap" | "cap-user" }) => void
+      ) => () => void;
       onNoteUpdated?: (callback: (note: NoteItem) => void) => () => void;
       onNoteDeleted?: (callback: (payload: { id: number }) => void) => () => void;
 
@@ -1732,6 +1734,20 @@ declare global {
       } | null>;
       updateNotificationReady?: () => Promise<void>;
       updateNotificationRespond?: (action: string) => Promise<{ success: boolean }>;
+      onRecordingNoticeData?: (
+        callback: (
+          data:
+            | { kind: "cap-warning"; endsAt: number }
+            | { kind: "call-ended"; noteId: number | null; until: number }
+        ) => void
+      ) => () => void;
+      getRecordingNoticeData?: () => Promise<
+        | { kind: "cap-warning"; endsAt: number }
+        | { kind: "call-ended"; noteId: number | null; until: number }
+        | null
+      >;
+      recordingNoticeReady?: () => Promise<void>;
+      recordingNoticeRespond?: (action: "keep" | "stop" | "resume" | "dismiss") => Promise<unknown>;
       onPreviewText?: (callback: (text: string) => void) => () => void;
       onPreviewAppend?: (callback: (text: string) => void) => () => void;
       onPreviewHold?: (callback: (payload: { showCleanup: boolean }) => void) => () => void;

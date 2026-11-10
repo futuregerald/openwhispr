@@ -65,6 +65,10 @@ function setup() {
     meetingRecordingStopComplete: () => calls.push({ name: "stopComplete" }),
     endMeetingSession: (reason) => calls.push({ name: "endSession", reason }),
     setUserRecording: (active) => calls.push({ name: "setUserRecording", active }),
+    handleRecordingNoticeResponse: (action) => {
+      calls.push({ name: "noticeResponse", action });
+      return action === "resume" ? Promise.resolve("resumed") : undefined;
+    },
   };
 
   const handlers = Object.create(IPCHandlers.prototype);
@@ -110,4 +114,22 @@ test("the stop handler tells the engine the stop is complete, even when stopping
   const names = calls.map((c) => c.name);
   assert.deepEqual(names, ["endSession", "stopComplete"]);
   assert.equal(calls[0].reason, "meeting-transcription-stop");
+});
+
+test("recording-notice-respond forwards the action to the engine", async () => {
+  const { calls } = setup();
+
+  await invoke("recording-notice-respond", "keep");
+  await invoke("recording-notice-respond", "stop");
+
+  assert.deepEqual(
+    calls.filter((c) => c.name === "noticeResponse").map((c) => c.action),
+    ["keep", "stop"]
+  );
+});
+
+test("recording-notice-respond returns the engine's result for resume", async () => {
+  setup();
+
+  assert.equal(await invoke("recording-notice-respond", "resume"), "resumed");
 });

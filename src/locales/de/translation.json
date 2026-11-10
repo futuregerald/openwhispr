@@ -2505,6 +2505,15 @@
       "dismiss": "Schließen"
     }
   },
+  "recordingNotice": {
+    "capTitle": "Aufnahme endet in {{time}}",
+    "keep": "Aufnahme fortsetzen",
+    "keepHint": "+2 Std.",
+    "stop": "Jetzt stoppen",
+    "callEnded": "Anruf beendet – Aufnahme gestoppt",
+    "resume": "Fortsetzen",
+    "continuedSuffix": "(fortgesetzt)"
+  },
   "updateNotification": {
     "title": "OpenWhispr-Update verfügbar",
     "body": "Version {{version}} steht zum Download bereit",

@@ -2505,6 +2505,15 @@
       "dismiss": "Cerrar"
     }
   },
+  "recordingNotice": {
+    "capTitle": "La grabación termina en {{time}}",
+    "keep": "Seguir grabando",
+    "keepHint": "+2 h",
+    "stop": "Detener ahora",
+    "callEnded": "Llamada terminada: grabación detenida",
+    "resume": "Reanudar",
+    "continuedSuffix": "(continuación)"
+  },
   "updateNotification": {
     "title": "Actualización de OpenWhispr disponible",
     "body": "La versión {{version}} está lista para descargar",

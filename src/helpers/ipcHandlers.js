@@ -7266,6 +7266,18 @@ class IPCHandlers {
       this.windowManager?.showUpdateNotificationWindow();
     });
 
+    ipcMain.handle("get-recording-notice-data", async () => {
+      return this.windowManager?._pendingRecordingNoticeData ?? null;
+    });
+
+    ipcMain.handle("recording-notice-ready", async () => {
+      this.windowManager?.showRecordingNoticeWindow();
+    });
+
+    ipcMain.handle("recording-notice-respond", async (_event, action) => {
+      return this.meetingDetectionEngine?.handleRecordingNoticeResponse(action);
+    });
+
     ipcMain.handle("update-notification-respond", async (_event, action) => {
       this.windowManager?.dismissUpdateNotification();
       if (action === "update") {

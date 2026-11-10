@@ -2505,6 +2505,15 @@
       "dismiss": "Dismiss"
     }
   },
+  "recordingNotice": {
+    "capTitle": "Recording ends in {{time}}",
+    "keep": "Keep recording",
+    "keepHint": "+2 h",
+    "stop": "Stop now",
+    "callEnded": "Call ended — recording stopped",
+    "resume": "Resume",
+    "continuedSuffix": "(continued)"
+  },
   "updateNotification": {
     "title": "OpenWhispr Update Available",
     "body": "Version {{version}} is ready to download",

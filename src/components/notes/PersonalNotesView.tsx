@@ -55,7 +55,6 @@ import { MEETINGS_FOLDER_NAME, findDefaultFolder } from "./shared";
 import logger from "../../utils/logger";
 import { parseTranscriptSegments } from "../../utils/parseTranscriptSegments";
 import { buildNoteActionInput } from "../../utils/noteActionInput";
-import { serializeTranscriptSegments } from "../../helpers/transcriptSpeakerState";
 import { resolveExpectedSpeakerCount } from "../../utils/participants";
 import { useNotesListWidth } from "../../hooks/useNotesListWidth";
 import {
@@ -618,49 +617,6 @@ export default function PersonalNotesView({
     });
     onMeetingRecordingRequestHandled?.();
   }, [meetingRecordingRequest, activeNoteId, notes, onMeetingRecordingRequestHandled]);
-
-  // Auto-stop: the main process asks us to stop when an auto-started call ends.
-  useEffect(() => {
-    const unsubscribe = window.electronAPI.onMeetingAutoStopRequest?.(() => {
-      if (useMeetingRecordingStore.getState().isRecording) {
-        storeStopRecording();
-      }
-    });
-    return () => unsubscribe?.();
-  }, []);
-
-  const prevTranscribingRef = useRef(false);
-
-  useEffect(() => {
-    if (
-      prevTranscribingRef.current &&
-      !isTranscribing &&
-      (realtimeTranscript || realtimeSegments.length > 0)
-    ) {
-      const transcript =
-        realtimeSegments.length > 0
-          ? serializeTranscriptSegments(realtimeSegments)
-          : realtimeTranscript;
-
-      if (recordingNoteId && transcript) {
-        window.electronAPI.updateNote(recordingNoteId, { transcript });
-      }
-    }
-    prevTranscribingRef.current = isTranscribing;
-  }, [isTranscribing, realtimeTranscript, realtimeSegments, recordingNoteId]);
-
-  useEffect(() => {
-    if (!isTranscribing) return;
-
-    const interval = setInterval(() => {
-      if (!recordingNoteId || realtimeSegments.length === 0) return;
-      window.electronAPI.updateNote(recordingNoteId, {
-        transcript: serializeTranscriptSegments(realtimeSegments),
-      });
-    }, 30_000);
-
-    return () => clearInterval(interval);
-  }, [isTranscribing, realtimeSegments, recordingNoteId]);
 
   const isLocalSynced = syncedNoteId === activeNote?.id;
   const isActiveNoteRecording = isTranscribing && recordingNoteId === activeNote?.id;
