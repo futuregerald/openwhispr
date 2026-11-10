@@ -1,6 +1,6 @@
 "use strict";
 
-const { MATCH_THRESHOLD, MATCH_MARGIN } = require("./liveSpeakerMatching");
+const { CONFIRM_THRESHOLD: MATCH_THRESHOLD, MARGIN: MATCH_MARGIN } = require("./speakerThresholds");
 
 /**
  * Classifies one speaker profile against the unmapped speakers of one note, and

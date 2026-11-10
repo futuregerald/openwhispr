@@ -365,3 +365,48 @@ test("preserved outcomes never write and never lose the old transcript", async (
 
   assert.deepEqual(updates, []);
 });
+
+// The old transcript's Alice spoke at 100 s, nowhere near the new words, so time
+// overlap cannot carry her identity across; only her stored voiceprint can.
+async function matchByVoiceprint(similarity) {
+  const ctx = createDeps({
+    note: {
+      system_audio_path: "/audio/system.opus",
+      transcript: JSON.stringify([
+        segment({ speaker: "speaker_5", speakerName: "Alice", timestamp: 100 }),
+      ]),
+    },
+    diarizationAvailable: true,
+    diarizeResult: [{ speaker: "raw_a", start: 0, end: 4 }],
+    storedEmbeddings: [
+      {
+        speaker_id: "speaker_5",
+        embedding: Buffer.from(
+          Float32Array.from([similarity, Math.sqrt(1 - similarity * similarity)]).buffer
+        ),
+      },
+    ],
+  });
+  ctx.deps.speakerEmbeddings = {
+    isAvailable: () => true,
+    extractEmbedding: async () => Float32Array.from([1, 0]),
+    computeCentroid: (embeddings) => embeddings[0],
+  };
+  const result = await retranscribeNoteTranscript(ctx.deps);
+  assert.equal(result.outcome, "written");
+  return JSON.parse(result.transcript).filter((s) => s.source === "system");
+}
+
+test("a re-transcribed cluster just above the voiceprint threshold keeps the old identity", async () => {
+  const { RETRANSCRIBE_MATCH_THRESHOLD } = require("../../src/helpers/speakerThresholds");
+  const written = await matchByVoiceprint(RETRANSCRIBE_MATCH_THRESHOLD + 0.01);
+  assert.ok(written.length > 0);
+  assert.ok(written.every((s) => s.speaker === "speaker_5" && s.speakerName === "Alice"));
+});
+
+test("a re-transcribed cluster just below the voiceprint threshold gets a fresh identity", async () => {
+  const { RETRANSCRIBE_MATCH_THRESHOLD } = require("../../src/helpers/speakerThresholds");
+  const written = await matchByVoiceprint(RETRANSCRIBE_MATCH_THRESHOLD - 0.01);
+  assert.ok(written.length > 0);
+  assert.ok(written.every((s) => s.speaker !== "speaker_5" && s.speakerName !== "Alice"));
+});

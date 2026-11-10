@@ -100,6 +100,15 @@
       "extractDir": "sherpa-onnx-pyannote-segmentation-3-0",
       "descriptionKey": "models.descriptions.diarization.segmentation"
     },
+    "3dspeaker-campplus-en": {
+      "name": "CAM++ Speaker Embedding (English)",
+      "description": "Speaker clustering for diarization",
+      "size": "28.2 MB",
+      "sizeMb": 28.2,
+      "downloadUrl": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx",
+      "fileName": "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx",
+      "descriptionKey": "models.descriptions.diarization.embedding_en"
+    },
     "wespeaker-resnet293-lm": {
       "name": "WeSpeaker ResNet293-LM Speaker Embedding (English)",
       "description": "Speaker voice fingerprinting for identification",

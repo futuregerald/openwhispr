@@ -10,6 +10,7 @@ const { getModelsDirForService } = require("./modelDirUtils");
 const { convertToWav } = require("./ffmpegUtils");
 const { getSafeTempDir } = require("./safeTempDir");
 const { applyConfirmedSpeaker } = require("./speakerAssignmentPolicy");
+const { MODEL_FILE: VOICEPRINT_EMBEDDING_ONNX } = require("./speakerEmbeddings");
 const {
   foldMinorSpeakers,
   foldFloorFor,
@@ -56,19 +57,24 @@ const markMicEchoOfSystem = (segments) => {
 
 const SEGMENTATION_MODEL_URL =
   "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2";
-const EMBEDDING_MODEL_URL =
-  "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet293_LM.onnx";
+const SPEAKER_MODELS_RELEASE_URL =
+  "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models";
 const SILERO_VAD_MODEL_URL =
   "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx";
 
 const SEGMENTATION_DIR = "sherpa-onnx-pyannote-segmentation-3-0";
 const SEGMENTATION_ONNX = path.join(SEGMENTATION_DIR, "model.onnx");
-const EMBEDDING_ONNX = "wespeaker_en_voxceleb_resnet293_LM.onnx";
-const LEGACY_EMBEDDING_ONNXS = ["3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx"];
+const CLUSTERING_EMBEDDING_ONNX = "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx";
+const EMBEDDING_ONNXS = [CLUSTERING_EMBEDDING_ONNX, VOICEPRINT_EMBEDDING_ONNX];
 const SEGMENTATION_MODEL_BYTES = 6_600_000;
-const EMBEDDING_MODEL_BYTES = 114_336_527;
+const CLUSTERING_EMBEDDING_MODEL_BYTES = 29_596_978;
+const VOICEPRINT_EMBEDDING_MODEL_BYTES = 114_336_527;
 const VAD_MODEL_BYTES = 2_000_000;
-const MODEL_DOWNLOAD_BYTES = SEGMENTATION_MODEL_BYTES + EMBEDDING_MODEL_BYTES + VAD_MODEL_BYTES;
+const MODEL_DOWNLOAD_BYTES =
+  SEGMENTATION_MODEL_BYTES +
+  CLUSTERING_EMBEDDING_MODEL_BYTES +
+  VOICEPRINT_EMBEDDING_MODEL_BYTES +
+  VAD_MODEL_BYTES;
 const SILERO_VAD_ONNX = "silero_vad.onnx";
 
 // --- FluidAudio (optional macOS CoreML/ANE diarization backend) ---
@@ -197,9 +203,9 @@ class DiarizationManager {
   }
 
   isModelDownloaded() {
-    const segPath = this._resolveModelPath(SEGMENTATION_ONNX);
-    const embPath = this._resolveModelPath(EMBEDDING_ONNX);
-    return fs.existsSync(segPath) && fs.existsSync(embPath);
+    return [SEGMENTATION_ONNX, ...EMBEDDING_ONNXS].every((file) =>
+      fs.existsSync(this._resolveModelPath(file))
+    );
   }
 
   getVadModelPath() {
@@ -268,11 +274,10 @@ class DiarizationManager {
         }
       }
 
-      // Download embedding model (.onnx directly)
-      const embModelPath = path.join(modelsDir, EMBEDDING_ONNX);
-
-      if (!fs.existsSync(embModelPath)) {
-        await downloadFile(EMBEDDING_MODEL_URL, embModelPath, {
+      for (const file of EMBEDDING_ONNXS) {
+        const embModelPath = path.join(modelsDir, file);
+        if (fs.existsSync(embModelPath)) continue;
+        await downloadFile(`${SPEAKER_MODELS_RELEASE_URL}/${file}`, embModelPath, {
           timeout: 600000,
           signal,
           onProgress: (downloadedBytes, totalBytes) => {
@@ -646,7 +651,7 @@ class DiarizationManager {
     }
 
     const segPath = this._resolveModelPath(SEGMENTATION_ONNX);
-    const embPath = this._resolveModelPath(EMBEDDING_ONNX);
+    const embPath = this._resolveModelPath(CLUSTERING_EMBEDDING_ONNX);
 
     const threads = resolveDiarizationThreads();
     const args = [
@@ -922,17 +927,16 @@ class DiarizationManager {
   async deleteModels() {
     const modelsDir = this.getModelsDir();
     const segDir = path.join(modelsDir, SEGMENTATION_DIR);
-    const embPath = path.join(modelsDir, EMBEDDING_ONNX);
     const vadPath = this.getVadModelPath();
 
     if (fs.existsSync(segDir)) {
       await fsPromises.rm(segDir, { recursive: true, force: true });
     }
-    if (fs.existsSync(embPath)) {
-      await fsPromises.unlink(embPath);
-    }
-    for (const legacyFile of LEGACY_EMBEDDING_ONNXS) {
-      await fsPromises.unlink(path.join(modelsDir, legacyFile)).catch(() => {});
+    for (const file of EMBEDDING_ONNXS) {
+      const embPath = path.join(modelsDir, file);
+      if (fs.existsSync(embPath)) {
+        await fsPromises.unlink(embPath);
+      }
     }
     if (fs.existsSync(vadPath)) {
       await fsPromises.unlink(vadPath);
@@ -953,5 +957,6 @@ class DiarizationManager {
 module.exports = DiarizationManager;
 module.exports.buildFluidAudioArgs = buildFluidAudioArgs;
 module.exports.FLUIDAUDIO_OFFLINE_THRESHOLD = FLUIDAUDIO_OFFLINE_THRESHOLD;
-module.exports.EMBEDDING_ONNX = EMBEDDING_ONNX;
+module.exports.CLUSTERING_EMBEDDING_ONNX = CLUSTERING_EMBEDDING_ONNX;
+module.exports.VOICEPRINT_EMBEDDING_ONNX = VOICEPRINT_EMBEDDING_ONNX;
 module.exports.MODEL_DOWNLOAD_BYTES = MODEL_DOWNLOAD_BYTES;

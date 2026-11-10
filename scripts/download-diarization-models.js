@@ -10,9 +10,12 @@ const SEGMENTATION_URL =
 const SEGMENTATION_DIR = "sherpa-onnx-pyannote-segmentation-3-0";
 const SEGMENTATION_FILE = "model.onnx";
 
-const EMBEDDING_URL =
-  "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet293_LM.onnx";
-const EMBEDDING_FILE = "wespeaker_en_voxceleb_resnet293_LM.onnx";
+const SPEAKER_MODELS_RELEASE_URL =
+  "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models";
+const EMBEDDING_FILES = [
+  "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx",
+  "wespeaker_en_voxceleb_resnet293_LM.onnx",
+];
 const VAD_URL =
   "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx";
 const VAD_FILE = "silero_vad.onnx";
@@ -46,11 +49,10 @@ async function main() {
   const modelDir = getModelDir();
 
   const segModelPath = path.join(modelDir, SEGMENTATION_DIR, SEGMENTATION_FILE);
-  const embModelPath = path.join(modelDir, EMBEDDING_FILE);
+  const embModelPaths = EMBEDDING_FILES.map((file) => path.join(modelDir, file));
   const vadModelPath = path.join(modelDir, VAD_FILE);
 
-  const allExist =
-    fs.existsSync(segModelPath) && fs.existsSync(embModelPath) && fs.existsSync(vadModelPath);
+  const allExist = [segModelPath, ...embModelPaths, vadModelPath].every((p) => fs.existsSync(p));
   if (allExist && !args.isForce) {
     console.log("[diarization-models] Model files already exist (use --force to re-download)\n");
     return;
@@ -100,23 +102,29 @@ async function main() {
     console.log(`[diarization-models] Segmentation model already exists, skipping`);
   }
 
-  // Download embedding model (direct .onnx file)
-  if (!fs.existsSync(embModelPath) || args.isForce) {
-    console.log(`[diarization-models] Downloading embedding model from ${EMBEDDING_URL}`);
+  for (const embModelPath of embModelPaths) {
+    const embFile = path.basename(embModelPath);
+    if (fs.existsSync(embModelPath) && !args.isForce) {
+      console.log(`[diarization-models] Embedding model ${embFile} already exists, skipping`);
+      continue;
+    }
+
+    const embUrl = `${SPEAKER_MODELS_RELEASE_URL}/${embFile}`;
+    console.log(`[diarization-models] Downloading embedding model from ${embUrl}`);
 
     try {
-      await downloadFile(EMBEDDING_URL, embModelPath);
+      await downloadFile(embUrl, embModelPath);
       const stats = fs.statSync(embModelPath);
       const sizeMB = (stats.size / 1024 / 1024).toFixed(1);
-      console.log(`[diarization-models] Embedding model downloaded (${sizeMB}MB)`);
+      console.log(`[diarization-models] Embedding model ${embFile} downloaded (${sizeMB}MB)`);
     } catch (error) {
-      console.error(`[diarization-models] Failed to download embedding model: ${error.message}`);
+      console.error(
+        `[diarization-models] Failed to download embedding model ${embFile}: ${error.message}`
+      );
       if (fs.existsSync(embModelPath)) fs.unlinkSync(embModelPath);
       process.exitCode = 1;
       return;
     }
-  } else {
-    console.log(`[diarization-models] Embedding model already exists, skipping`);
   }
 
   if (!fs.existsSync(vadModelPath) || args.isForce) {

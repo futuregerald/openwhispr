@@ -106,17 +106,28 @@ function seedSegmentation(dir) {
   fs.writeFileSync(path.join(segDir, "model.onnx"), "seg");
 }
 
-test("diarization models do not count as downloaded when only the old CAM++ file is present", () => {
+test("diarization models count as downloaded only when both the clustering and voiceprint models exist", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-diar-models-"));
   seedSegmentation(dir);
   fs.writeFileSync(path.join(dir, CAMPP_FILE), "campp");
-  assert.equal(managerWithModelsIn(dir).isModelDownloaded(), false);
+  assert.equal(managerWithModelsIn(dir).isModelDownloaded(), false, "CAM++ alone counted");
 
+  fs.rmSync(path.join(dir, CAMPP_FILE));
   fs.writeFileSync(path.join(dir, RESNET_FILE), "resnet");
+  assert.equal(managerWithModelsIn(dir).isModelDownloaded(), false, "ResNet293 alone counted");
+
+  fs.writeFileSync(path.join(dir, CAMPP_FILE), "campp");
   assert.equal(managerWithModelsIn(dir).isModelDownloaded(), true);
 });
 
-test("deleting diarization models also removes a leftover CAM++ file", async () => {
+test("diarization models do not count as downloaded without the segmentation model", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-diar-models-"));
+  fs.writeFileSync(path.join(dir, CAMPP_FILE), "campp");
+  fs.writeFileSync(path.join(dir, RESNET_FILE), "resnet");
+  assert.equal(managerWithModelsIn(dir).isModelDownloaded(), false);
+});
+
+test("deleting diarization models removes both the clustering and the voiceprint model", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-diar-models-"));
   seedSegmentation(dir);
   fs.writeFileSync(path.join(dir, CAMPP_FILE), "campp");
@@ -126,13 +137,17 @@ test("deleting diarization models also removes a leftover CAM++ file", async () 
   assert.equal(fs.existsSync(path.join(dir, RESNET_FILE)), false, "ResNet293 left behind");
 });
 
-test("the speaker extractor and the diarizer agree on the embedding model file", () => {
-  assert.equal(DiarizationManager.EMBEDDING_ONNX, MODEL_FILE);
+test("the speaker extractor and the diarizer agree on the voiceprint model file", () => {
+  assert.equal(DiarizationManager.VOICEPRINT_EMBEDDING_ONNX, MODEL_FILE);
 });
 
-test("the disk-space precheck covers the ResNet293 download", () => {
+test("sherpa clustering keeps the CAM++ model, not the voiceprint model", () => {
+  assert.equal(DiarizationManager.CLUSTERING_EMBEDDING_ONNX, CAMPP_FILE);
+});
+
+test("the disk-space precheck covers both embedding models and the segmentation model", () => {
   assert.ok(
-    DiarizationManager.MODEL_DOWNLOAD_BYTES >= 114_336_527 + 6_600_000,
+    DiarizationManager.MODEL_DOWNLOAD_BYTES >= 114_336_527 + 29_596_978 + 6_600_000,
     `precheck was ${DiarizationManager.MODEL_DOWNLOAD_BYTES}`
   );
 });
