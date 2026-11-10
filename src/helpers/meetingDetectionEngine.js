@@ -185,7 +185,11 @@ class MeetingDetectionEngine {
     if (!this._meetingRecording) return;
     debugLogger.info(
       "Call ended — requesting recording stop",
-      { autoStarted: this._autoStarted, noteId: this._meetingRecording.noteId },
+      {
+        autoStarted: this._autoStarted,
+        noteId: this._meetingRecording.noteId,
+        callObserved: this.callStateDetector?.hasObservedCall?.() ?? null,
+      },
       "meeting"
     );
     this._requestStop("call-ended");

@@ -7267,7 +7267,7 @@ class IPCHandlers {
     });
 
     ipcMain.handle("get-recording-notice-data", async () => {
-      return this.windowManager?._pendingRecordingNoticeData ?? null;
+      return this.windowManager?.getRecordingNoticeData?.() ?? null;
     });
 
     ipcMain.handle("recording-notice-ready", async () => {

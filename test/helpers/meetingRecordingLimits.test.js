@@ -223,17 +223,42 @@ test("turning auto-start off mid-recording waits for the recording to stop", () 
   assert.equal(detectorCalls.at(-1), "stop");
 });
 
-test("a failed start that never reaches the recording never arms the cap or the detector", (t) => {
+test("Keep recording on the notice card pushes the stop back and closes the card", (t) => {
   useTimers(t);
-  const { engine, broadcasts, detectorCalls, notices } = createEngine();
+  const { engine, broadcasts, dismissals } = createEngine();
+  engine.meetingRecordingStarted({ noteId: 3 });
 
-  engine.meetingRecordingStopped("start-failed");
-  t.mock.timers.tick(CAP_MS);
+  t.mock.timers.tick(CAP_MS - WARN_LEAD_MS + 60_000);
+  engine.handleRecordingNoticeResponse("keep");
+  t.mock.timers.tick(WARN_LEAD_MS);
 
-  assert.equal(engine._meetingRecording, null);
   assert.equal(stopRequests(broadcasts).length, 0);
-  assert.equal(notices.length, 0);
-  assert.equal(detectorCalls.includes("start"), false);
+  assert.equal(dismissals.length, 1);
+});
+
+test("Stop now on the notice card asks the renderer to stop and closes the card", (t) => {
+  useTimers(t);
+  const { engine, broadcasts, dismissals } = createEngine();
+  engine.meetingRecordingStarted({ noteId: 3 });
+
+  engine.handleRecordingNoticeResponse("stop");
+
+  assert.deepEqual(
+    stopRequests(broadcasts).map((b) => b.data),
+    [{ reason: "cap-user" }]
+  );
+  assert.equal(dismissals.length, 1);
+});
+
+test("closing the notice card any other way only closes it", (t) => {
+  useTimers(t);
+  const { engine, broadcasts, dismissals } = createEngine();
+  engine.meetingRecordingStarted({ noteId: 3 });
+
+  engine.handleRecordingNoticeResponse("dismiss");
+
+  assert.equal(stopRequests(broadcasts).length, 0);
+  assert.equal(dismissals.length, 1);
 });
 
 test("a call-ended stop shows the notice and Resume continues the note", async (t) => {
