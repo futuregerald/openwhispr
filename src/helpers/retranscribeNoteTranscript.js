@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const debugLogger = require("./debugLogger");
+const { secondsBySpeaker } = require("./foldMinorSpeakers");
 
 // Whisper re-segments the audio, so a rewritten transcript can only keep its speaker
 // identities by re-deriving them. Everything here exists to make that possible, or to
@@ -298,6 +299,7 @@ function persistSpeakerState({
   finalSegments,
   segmentsWithClusters,
   clusterEmbeddings,
+  clusterSpeechSeconds = {},
   hadOldSegments,
 }) {
   if (!databaseManager) return;
@@ -310,13 +312,21 @@ function persistSpeakerState({
 
   if (clusterEmbeddings) {
     const resolvedEmbeddings = {};
+    const resolvedSpeechSeconds = {};
     for (const seg of segmentsWithClusters) {
       if (!seg.speaker || !seg.originCluster) continue;
       const embedding = clusterEmbeddings[seg.originCluster];
-      if (embedding) resolvedEmbeddings[seg.speaker] = embedding;
+      if (embedding) {
+        resolvedEmbeddings[seg.speaker] = embedding;
+        resolvedSpeechSeconds[seg.speaker] = clusterSpeechSeconds[seg.originCluster];
+      }
     }
     if (Object.keys(resolvedEmbeddings).length) {
-      databaseManager.saveNoteSpeakerEmbeddings?.(noteId, resolvedEmbeddings);
+      databaseManager.saveNoteSpeakerEmbeddings?.(
+        noteId,
+        resolvedEmbeddings,
+        resolvedSpeechSeconds
+      );
     }
   }
 
@@ -409,6 +419,7 @@ async function retranscribeNoteTranscript({
     }));
 
     let clusterEmbeddings = null;
+    let clusterSpeechSeconds = {};
     let diarized = false;
 
     if (track.source === "system" && diarizationManager?.isAvailable?.()) {
@@ -426,13 +437,20 @@ async function retranscribeNoteTranscript({
             newSegments = built;
             diarized = true;
             const rawIds = [...new Set(diarizationSegments.map((s) => s.speaker))];
+            const clusterIdFor = (rawId) => `cluster_${rawIds.indexOf(rawId)}`;
+            clusterSpeechSeconds = Object.fromEntries(
+              [...secondsBySpeaker(diarizationSegments)].map(([rawId, seconds]) => [
+                clusterIdFor(rawId),
+                seconds,
+              ])
+            );
             clusterEmbeddings = await extractClusterEmbeddings({
               // Required here rather than at module load: it pulls in the ONNX worker,
               // and only the diarized path ever needs it.
               speakerEmbeddings: speakerEmbeddings || require("./speakerEmbeddings"),
               wavPath: tmpWav,
               diarizationSegments,
-              clusterIdFor: (rawId) => `cluster_${rawIds.indexOf(rawId)}`,
+              clusterIdFor,
             });
           }
         }
@@ -497,6 +515,7 @@ async function retranscribeNoteTranscript({
       finalSegments,
       segmentsWithClusters: newSegments,
       clusterEmbeddings,
+      clusterSpeechSeconds,
       hadOldSegments: effectiveOldSegments.length > 0,
     });
 

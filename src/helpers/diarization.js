@@ -57,13 +57,18 @@ const markMicEchoOfSystem = (segments) => {
 const SEGMENTATION_MODEL_URL =
   "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2";
 const EMBEDDING_MODEL_URL =
-  "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx";
+  "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet293_LM.onnx";
 const SILERO_VAD_MODEL_URL =
   "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx";
 
 const SEGMENTATION_DIR = "sherpa-onnx-pyannote-segmentation-3-0";
 const SEGMENTATION_ONNX = path.join(SEGMENTATION_DIR, "model.onnx");
-const EMBEDDING_ONNX = "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx";
+const EMBEDDING_ONNX = "wespeaker_en_voxceleb_resnet293_LM.onnx";
+const LEGACY_EMBEDDING_ONNXS = ["3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx"];
+const SEGMENTATION_MODEL_BYTES = 6_600_000;
+const EMBEDDING_MODEL_BYTES = 114_336_527;
+const VAD_MODEL_BYTES = 2_000_000;
+const MODEL_DOWNLOAD_BYTES = SEGMENTATION_MODEL_BYTES + EMBEDDING_MODEL_BYTES + VAD_MODEL_BYTES;
 const SILERO_VAD_ONNX = "silero_vad.onnx";
 
 // --- FluidAudio (optional macOS CoreML/ANE diarization backend) ---
@@ -216,7 +221,7 @@ class DiarizationManager {
       return { success: true, path: modelsDir };
     }
 
-    const requiredBytes = modelsReady ? 2 * 1_000_000 : 37 * 1_000_000;
+    const requiredBytes = modelsReady ? VAD_MODEL_BYTES : MODEL_DOWNLOAD_BYTES;
     const spaceCheck = await checkDiskSpace(modelsDir, requiredBytes * 2.5);
     if (!spaceCheck.ok) {
       throw new Error(
@@ -926,6 +931,9 @@ class DiarizationManager {
     if (fs.existsSync(embPath)) {
       await fsPromises.unlink(embPath);
     }
+    for (const legacyFile of LEGACY_EMBEDDING_ONNXS) {
+      await fsPromises.unlink(path.join(modelsDir, legacyFile)).catch(() => {});
+    }
     if (fs.existsSync(vadPath)) {
       await fsPromises.unlink(vadPath);
     }
@@ -945,3 +953,5 @@ class DiarizationManager {
 module.exports = DiarizationManager;
 module.exports.buildFluidAudioArgs = buildFluidAudioArgs;
 module.exports.FLUIDAUDIO_OFFLINE_THRESHOLD = FLUIDAUDIO_OFFLINE_THRESHOLD;
+module.exports.EMBEDDING_ONNX = EMBEDDING_ONNX;
+module.exports.MODEL_DOWNLOAD_BYTES = MODEL_DOWNLOAD_BYTES;

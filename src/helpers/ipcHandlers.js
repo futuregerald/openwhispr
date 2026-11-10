@@ -55,6 +55,7 @@ const {
   isOriginUserAuthored,
 } = require("./speakerAssignmentPolicy");
 const { classifyRetroactiveMatch } = require("./retroactiveSpeakerMatch");
+const { secondsBySpeaker } = require("./foldMinorSpeakers");
 const { downsample24kTo16k, pcm16ToWav } = require("../utils/audioUtils");
 const {
   createChunkBoundaryFinder,
@@ -7382,33 +7383,8 @@ class IPCHandlers {
 
     ipcMain.handle(
       "set-speaker-mapping",
-      async (_event, noteId, speakerId, displayName, email, profileId) => {
-        const embeddings = this.databaseManager.getNoteSpeakerEmbeddings(noteId);
-        const noteSpeakerEmbedding = embeddings.find((e) => e.speaker_id === speakerId);
-        const liveSpeakerEmbedding = liveSpeakerIdentifier.getSpeakerEmbedding(speakerId);
-        const speakerEmbeddingBuffer =
-          noteSpeakerEmbedding?.embedding ||
-          (liveSpeakerEmbedding ? Buffer.from(liveSpeakerEmbedding.buffer) : null);
-
-        let resolvedProfileId = profileId ?? null;
-        if (speakerEmbeddingBuffer) {
-          const profile = this.databaseManager.upsertSpeakerProfile(
-            displayName,
-            email || null,
-            speakerEmbeddingBuffer,
-            resolvedProfileId
-          );
-          resolvedProfileId = profile.id;
-          this._retroactiveMapping(profile);
-        }
-
-        this.databaseManager.setSpeakerMapping(noteId, speakerId, resolvedProfileId, displayName, {
-          origin: "manual",
-        });
-        liveSpeakerIdentifier.mapSpeaker(speakerId, resolvedProfileId, displayName, noteId);
-        this.notesRegenerationScheduler?.schedule(noteId);
-        return { success: true, profileId: resolvedProfileId };
-      }
+      async (_event, noteId, speakerId, displayName, email, profileId) =>
+        this._setSpeakerMapping(noteId, speakerId, displayName, email, profileId)
     );
 
     ipcMain.handle("remove-speaker-mapping", async (_event, noteId, speakerId) => {
@@ -8071,6 +8047,68 @@ class IPCHandlers {
     });
   }
 
+  _setSpeakerMapping(noteId, speakerId, displayName, email, profileId) {
+    const db = this.databaseManager;
+    const noteSpeakerEmbedding = db
+      .getNoteSpeakerEmbeddings(noteId)
+      .find((e) => e.speaker_id === speakerId);
+    const liveSpeakerEmbedding = liveSpeakerIdentifier.getSpeakerEmbedding(speakerId);
+    const speakerEmbeddingBuffer =
+      noteSpeakerEmbedding?.embedding ||
+      (liveSpeakerEmbedding ? Buffer.from(liveSpeakerEmbedding.buffer) : null);
+
+    let resolvedProfileId = profileId ?? null;
+    if (speakerEmbeddingBuffer) {
+      const previousProfileId =
+        db.getSpeakerMappings(noteId).find((m) => m.speaker_id === speakerId)?.profile_id ?? null;
+      const targetProfileId =
+        resolvedProfileId ??
+        this._resolveNamedSpeakerProfileId({
+          noteId,
+          speakerId,
+          displayName,
+          email,
+          previousProfileId,
+        });
+      if (previousProfileId != null && previousProfileId !== targetProfileId) {
+        db.removeSpeakerProfileSample(previousProfileId, noteId, speakerId);
+      }
+      const profile = db.upsertSpeakerProfile(
+        displayName,
+        email || null,
+        speakerEmbeddingBuffer,
+        targetProfileId,
+        { durationS: noteSpeakerEmbedding?.speech_s ?? 0, noteId, speakerId }
+      );
+      resolvedProfileId = profile.id;
+      this._retroactiveMapping(profile);
+    }
+
+    db.setSpeakerMapping(noteId, speakerId, resolvedProfileId, displayName, {
+      origin: "manual",
+    });
+    liveSpeakerIdentifier.mapSpeaker(speakerId, resolvedProfileId, displayName, noteId);
+    this.notesRegenerationScheduler?.schedule(noteId);
+    return { success: true, profileId: resolvedProfileId };
+  }
+
+  _resolveNamedSpeakerProfileId({ noteId, speakerId, displayName, email, previousProfileId }) {
+    const db = this.databaseManager;
+    const byEmail = db.findSpeakerProfileByEmail(email);
+    if (byEmail) return byEmail.id;
+
+    if (previousProfileId != null) {
+      const samples = db.getSpeakerProfileSamples(previousProfileId);
+      const createdForThisSpeaker =
+        samples.length > 0 &&
+        samples.every((s) => s.note_id === noteId && s.speaker_id === speakerId);
+      if (createdForThisSpeaker) return previousProfileId;
+    }
+
+    const sameName = db.findSpeakerProfilesByName(displayName);
+    return sameName.length === 1 ? sameName[0].id : null;
+  }
+
   _tryAutoLabelOneOnOne(noteId) {
     setImmediate(async () => {
       try {
@@ -8101,7 +8139,15 @@ class IPCHandlers {
             displayName,
             email,
             emb.embedding,
-            profile?.id ?? null
+            profile?.id ??
+              this._resolveNamedSpeakerProfileId({
+                noteId,
+                speakerId: emb.speaker_id,
+                displayName,
+                email,
+                previousProfileId: null,
+              }),
+            { durationS: emb.speech_s ?? 0, noteId, speakerId: emb.speaker_id }
           );
           this.databaseManager.setSpeakerMapping(noteId, emb.speaker_id, profile.id, displayName, {
             origin: "auto",
@@ -8396,7 +8442,13 @@ class IPCHandlers {
   // The diarized result is computed in main and was, until now, saved only by a React
   // callback in the renderer — which is skipped whenever the window is gone, the note
   // has been switched, or the session id has already been cleared. Main writes it.
-  _persistDiarizedTranscript(noteId, segments, speakerEmbeddings, audioStartedAt) {
+  _persistDiarizedTranscript(
+    noteId,
+    segments,
+    speakerEmbeddings,
+    audioStartedAt,
+    speakerSpeechSeconds = null
+  ) {
     if (!noteId || !segments?.length) {
       debugLogger.notice("Diarization persist skipped", {
         noteId,
@@ -8445,12 +8497,12 @@ class IPCHandlers {
       // Deliberately outside the transcript's try: an embedding write that fails must
       // not discard a transcript that was already written, which would hand the renderer
       // the un-merged segments to save back over it.
-      this._persistSpeakerEmbeddings(noteId, speakerEmbeddings);
+      this._persistSpeakerEmbeddings(noteId, speakerEmbeddings, speakerSpeechSeconds);
 
       return merged;
     } catch (err) {
       debugLogger.error("Diarization transcript persist failed", { noteId, error: err.message });
-      this._persistSpeakerEmbeddings(noteId, speakerEmbeddings);
+      this._persistSpeakerEmbeddings(noteId, speakerEmbeddings, speakerSpeechSeconds);
       return segments;
     }
   }
@@ -8458,7 +8510,7 @@ class IPCHandlers {
   // The centroids are plain number arrays. better-sqlite3 binds a plain Array as a
   // parameter spread rather than a BLOB and throws, so they must be converted exactly
   // as the save-note-speaker-embeddings IPC handler does.
-  _persistSpeakerEmbeddings(noteId, speakerEmbeddings) {
+  _persistSpeakerEmbeddings(noteId, speakerEmbeddings, speakerSpeechSeconds = null) {
     if (!noteId || !speakerEmbeddings || !Object.keys(speakerEmbeddings).length) return false;
 
     try {
@@ -8466,7 +8518,7 @@ class IPCHandlers {
       for (const [speakerId, values] of Object.entries(speakerEmbeddings)) {
         buffers[speakerId] = Buffer.from(new Float32Array(values).buffer);
       }
-      this.databaseManager.saveNoteSpeakerEmbeddings(noteId, buffers);
+      this.databaseManager.saveNoteSpeakerEmbeddings(noteId, buffers, speakerSpeechSeconds ?? {});
       // Matches the IPC handler: a fresh embedding set is what makes a calendar
       // attendee auto-labellable on a 1:1.
       this._tryAutoLabelOneOnOne(noteId);
@@ -8583,10 +8635,12 @@ class IPCHandlers {
         }
 
         let speakerEmbeddingsMap = null;
-        const speakerEmb = require("./speakerEmbeddings");
+        const speakerSpeechSeconds = {};
+        const speakerEmb = this.speakerEmbeddings ?? require("./speakerEmbeddings");
         try {
           if (speakerEmb.isAvailable() && tmpWav) {
             const speakerIds = [...new Set(diarizationSegments.map((s) => s.speaker))];
+            const speechByRawSpeaker = secondsBySpeaker(diarizationSegments);
             speakerEmbeddingsMap = {};
 
             for (const spk of speakerIds) {
@@ -8602,6 +8656,7 @@ class IPCHandlers {
                 const centroid = speakerEmb.computeCentroid(embeddings);
                 const mappedId = speakerRenumber.get(spk) || spk;
                 speakerEmbeddingsMap[mappedId] = Array.from(centroid);
+                speakerSpeechSeconds[mappedId] = speechByRawSpeaker.get(spk) ?? 0;
               }
             }
           }
@@ -8680,7 +8735,8 @@ class IPCHandlers {
           noteId,
           enrichedSegments,
           speakerEmbeddingsMap,
-          audioStartedAt
+          audioStartedAt,
+          speakerSpeechSeconds
         );
         send({ segments: persistedSegments, speakerEmbeddings: speakerEmbeddingsMap });
         if (noteId) {
