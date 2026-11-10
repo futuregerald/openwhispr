@@ -2514,7 +2514,8 @@
   "recordingNotice": {
     "capTitle": "Запись закончится через {{time}}",
     "keep": "Продолжить запись",
-    "keepHint": "+2 ч",
+    "keepHint": "+{{hours}} ч",
+    "keepHintMinutes": "+{{minutes}} мин",
     "stop": "Остановить сейчас",
     "callEnded": "Звонок завершён: запись остановлена",
     "resume": "Возобновить",

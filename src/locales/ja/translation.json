@@ -2508,7 +2508,8 @@
   "recordingNotice": {
     "capTitle": "録音は{{time}}後に終了します",
     "keep": "録音を続ける",
-    "keepHint": "+2時間",
+    "keepHint": "+{{hours}}時間",
+    "keepHintMinutes": "+{{minutes}}分",
     "stop": "今すぐ停止",
     "callEnded": "通話が終了しました。録音を停止しました",
     "resume": "再開",

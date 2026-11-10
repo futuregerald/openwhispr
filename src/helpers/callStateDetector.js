@@ -297,6 +297,10 @@ class CallStateDetector extends EventEmitter {
       this._urlMatchStreak = 0;
       return true;
     }
+    if (match?.matched === true && match.kind !== "web-call") {
+      this._urlMatchStreak = 0;
+      return true;
+    }
     if (match?.matched === true) {
       this._urlMatchStreak += 1;
       if (this._urlMatchStreak >= URL_EVIDENCE_STREAK) this._callObserved = true;

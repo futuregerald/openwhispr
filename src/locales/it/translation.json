@@ -2508,7 +2508,8 @@
   "recordingNotice": {
     "capTitle": "La registrazione termina tra {{time}}",
     "keep": "Continua a registrare",
-    "keepHint": "+2 h",
+    "keepHint": "+{{hours}} h",
+    "keepHintMinutes": "+{{minutes}} min",
     "stop": "Ferma ora",
     "callEnded": "Chiamata terminata: registrazione interrotta",
     "resume": "Riprendi",

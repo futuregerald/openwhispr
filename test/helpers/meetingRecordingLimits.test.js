@@ -9,6 +9,7 @@ const { CAP_MS, WARN_LEAD_MS, CALL_ENDED_NOTICE_MS } = require("../../src/helper
 const START = 1_000_000;
 const MINUTE = 60 * 1000;
 const COOLDOWN_MS = 2500;
+const NOTICE_LOAD_MARGIN_MS = 3000;
 
 function createEngine({ autoStartRecording = false, detectorRunning = false } = {}) {
   const noop = () => {};
@@ -116,6 +117,7 @@ test("a recording warns five minutes before the two hour cap and then asks to st
   assert.equal(notices.length, 1);
   assert.equal(notices[0].kind, "cap-warning");
   assert.equal(notices[0].endsAt, START + CAP_MS);
+  assert.equal(notices[0].capMs, CAP_MS);
   assert.equal(notices[0].at, START + CAP_MS - WARN_LEAD_MS);
   assert.equal(stopRequests(broadcasts).length, 0);
 
@@ -400,7 +402,9 @@ test("queued prompts wait out the call-ended notice, but only 2.5 s after a norm
   stopRecording(callEnded.engine);
   t.mock.timers.tick(COOLDOWN_MS);
   assert.equal(callEnded.prompts.length, 0, "a prompt would replace the call-ended notice");
-  t.mock.timers.tick(CALL_ENDED_NOTICE_MS - COOLDOWN_MS);
+  t.mock.timers.tick(CALL_ENDED_NOTICE_MS + NOTICE_LOAD_MARGIN_MS - COOLDOWN_MS - 1);
+  assert.equal(callEnded.prompts.length, 0, "the card needs time to load before a prompt may show");
+  t.mock.timers.tick(1);
   assert.equal(callEnded.prompts.length, 1);
 });
 
@@ -448,4 +452,120 @@ test("the published latches are unchanged by a meeting recording", () => {
     "meetingModeActive",
     "userRecording",
   ]);
+});
+
+test("a stop completing for an earlier recording leaves the next recording's cap armed", (t) => {
+  useTimers(t);
+  const { engine, broadcasts } = createEngine();
+  engine.meetingRecordingStarted({ noteId: 3 });
+  engine.endMeetingSession();
+  engine.meetingRecordingStarted({ noteId: 4 });
+
+  engine.meetingRecordingStopComplete();
+  t.mock.timers.tick(CAP_MS);
+
+  assert.equal(engine._meetingRecording?.noteId, 4);
+  assert.equal(stopRequests(broadcasts).length, 1, "recording 4 must still hit its own cap");
+});
+
+test("a call ending while the user's stop is in flight changes nothing", (t) => {
+  useTimers(t);
+  const { engine, notices, broadcasts } = createEngine();
+  engine.meetingRecordingStarted({ noteId: 3 });
+  engine.endMeetingSession("meeting-transcription-stop");
+
+  engine._handleCallEnded();
+  engine.meetingRecordingStopComplete();
+
+  assert.equal(stopRequests(broadcasts).length, 0);
+  assert.equal(notices.length, 0);
+});
+
+test("a recording that is still starting counts as recording and blocks a second auto-start", () => {
+  const { engine, saved, prompts } = createEngine({ autoStartRecording: true });
+
+  engine.meetingRecordingStarting();
+  engine._handleCallActive({ urlMatch: { matched: true, kind: "web-call" } });
+  engine._handleDetection("audio", "sustained-audio", {});
+
+  assert.equal(engine._userRecording, true);
+  assert.equal(saved.length, 0);
+  assert.equal(prompts.length, 0);
+});
+
+test("a start that settles without recording releases the latch and flushes queued prompts", (t) => {
+  useTimers(t);
+  const { engine, prompts } = createEngine();
+
+  engine.meetingRecordingStarting();
+  engine._handleDetection("audio", "sustained-audio", {});
+  engine.meetingRecordingStartSettled();
+  t.mock.timers.tick(COOLDOWN_MS);
+
+  assert.equal(engine._userRecording, false);
+  assert.equal(prompts.length, 1);
+});
+
+test("a start that settles after confirming leaves the recording in place", (t) => {
+  useTimers(t);
+  const { engine } = createEngine();
+
+  engine.meetingRecordingStarting();
+  engine.meetingRecordingStarted({ noteId: 3 });
+  engine.meetingRecordingStartSettled();
+
+  assert.equal(engine._userRecording, true);
+});
+
+test("the cap warning's end time is measured from when it shows, so a sleeping laptop does not shorten it", (t) => {
+  useTimers(t);
+  const { engine, notices } = createEngine();
+  engine.meetingRecordingStarted({ noteId: 3 });
+
+  t.mock.timers.setTime(START + 30 * MINUTE);
+  t.mock.timers.tick(CAP_MS - WARN_LEAD_MS);
+
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].endsAt, notices[0].at + WARN_LEAD_MS);
+});
+
+test("Keep recording closes the card even when nothing is recording", (t) => {
+  useTimers(t);
+  const { engine, dismissals } = createEngine();
+
+  engine.handleRecordingNoticeResponse("keep");
+
+  assert.equal(dismissals.length, 1);
+});
+
+test("a notice that fails to show is logged and never an unhandled rejection", async (t) => {
+  useTimers(t);
+  const debugLogger = require("../../src/helpers/debugLogger");
+  const warn = t.mock.method(debugLogger, "warn", () => {});
+  const { engine } = createEngine();
+  engine.windowManager.showRecordingNotice = () => Promise.reject(new Error("window gone"));
+  engine.meetingRecordingStarted({ noteId: 3 });
+  engine._handleCallEnded();
+
+  stopRecording(engine);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const failure = warn.mock.calls.find((c) => c.arguments[0] === "Recording notice failed to show");
+  assert.ok(failure);
+  assert.deepEqual(failure.arguments[1], { kind: "call-ended", error: "window gone" });
+});
+
+test("a newer recording's call ending still stops it while an older stop is finishing", (t) => {
+  useTimers(t);
+  const { engine, broadcasts } = createEngine();
+  engine.meetingRecordingStarted({ noteId: 3 });
+  engine.endMeetingSession("meeting-transcription-stop");
+  engine.meetingRecordingStarted({ noteId: 4 });
+
+  engine._handleCallEnded();
+
+  assert.deepEqual(
+    stopRequests(broadcasts).map((b) => b.data),
+    [{ reason: "call-ended" }]
+  );
 });

@@ -55,13 +55,15 @@ process.env.NODE_ENV = "test";
 
 const IPCHandlers = require(path.join(__dirname, "../../src/helpers/ipcHandlers.js"));
 
-function setup() {
+function setup(overrides = {}) {
   userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-recording-ipc-"));
   registered.clear();
 
   const calls = [];
   const engine = {
     meetingRecordingStarted: (arg) => calls.push({ name: "started", arg }),
+    meetingRecordingStarting: () => calls.push({ name: "starting" }),
+    meetingRecordingStartSettled: () => calls.push({ name: "settled" }),
     meetingRecordingStopComplete: () => calls.push({ name: "stopComplete" }),
     endMeetingSession: (reason) => calls.push({ name: "endSession", reason }),
     setUserRecording: (active) => calls.push({ name: "setUserRecording", active }),
@@ -74,11 +76,13 @@ function setup() {
   const handlers = Object.create(IPCHandlers.prototype);
   Object.assign(handlers, {
     databaseManager: {},
+    windowManager: { controlPanelWindow: null },
     meetingDetectionEngine: engine,
     broadcastToWindows: () => {},
     _noteFilesEnabled: false,
     _asyncVectorUpsert: () => {},
     _asyncMirrorWrite: () => {},
+    ...overrides,
   });
   handlers.setupHandlers();
   return { calls };
@@ -103,6 +107,10 @@ test("a start that fails without throwing never tells the engine a recording beg
   assert.deepEqual(
     calls.filter((c) => c.name === "started" || c.name === "setUserRecording"),
     []
+  );
+  assert.deepEqual(
+    calls.map((c) => c.name),
+    ["starting", "settled"]
   );
 });
 
@@ -132,4 +140,68 @@ test("recording-notice-respond returns the engine's result for resume", async ()
   setup();
 
   assert.equal(await invoke("recording-notice-respond", "resume"), "resumed");
+});
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+function fakeTap(startImpl = async () => {}) {
+  return { isSupported: () => true, start: startImpl, stop: async () => {} };
+}
+
+const LOCAL_START = { provider: "local", noteId: 12 };
+
+test("a successful local start tells the engine which note is recording", async () => {
+  const { calls } = setup({
+    audioTapManager: fakeTap(),
+    activeMeetingSpeakerConfig: {},
+  });
+
+  const result = await invoke("meeting-transcription-start", LOCAL_START);
+  await invoke("meeting-transcription-stop", {});
+
+  assert.equal(result.success, true);
+  assert.deepEqual(
+    calls.filter((c) => c.name === "started"),
+    [{ name: "started", arg: { noteId: 12 } }]
+  );
+});
+
+test("a stop that lands while a start is still opening never confirms the recording", async () => {
+  const gate = deferred();
+  const { calls } = setup({
+    audioTapManager: fakeTap(() => gate.promise),
+    activeMeetingSpeakerConfig: {},
+  });
+
+  const starting = invoke("meeting-transcription-start", LOCAL_START);
+  await new Promise((resolve) => setImmediate(resolve));
+  const stopping = invoke("meeting-transcription-stop", {});
+  gate.resolve();
+  const [startResult] = await Promise.all([starting, stopping]);
+
+  assert.equal(startResult.success, false);
+  assert.equal(
+    calls.filter((c) => c.name === "started").length,
+    0,
+    "the engine must not be told a recording began after the stop"
+  );
+});
+
+test("a start tells the engine it is starting until it settles, whatever the outcome", async () => {
+  const { calls } = setup({
+    audioTapManager: fakeTap(),
+    activeMeetingSpeakerConfig: {},
+  });
+
+  await invoke("meeting-transcription-start", LOCAL_START);
+  await invoke("meeting-transcription-stop", {});
+
+  const names = calls.map((c) => c.name);
+  assert.deepEqual(names.slice(0, 3), ["starting", "started", "settled"]);
 });

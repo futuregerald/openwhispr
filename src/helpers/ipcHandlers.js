@@ -4143,6 +4143,7 @@ class IPCHandlers {
     });
 
     let meetingTranscriptionStartInProgress = false;
+    let meetingStopGeneration = 0;
     let meetingTranscriptionPrepareInProgress = false;
     let meetingTranscriptionPreparePromise = null;
 
@@ -5810,12 +5811,22 @@ class IPCHandlers {
       }
 
       meetingTranscriptionStartInProgress = true;
+      this.meetingDetectionEngine?.meetingRecordingStarting();
       meetingStartedAt = Date.now();
       meetingConnectionOptions = options;
       meetingConnectionWin = BrowserWindow.fromWebContents(event.sender);
       meetingReconnectCount = 0;
-      const confirmRecordingStarted = () =>
+      const stopGenerationAtStart = meetingStopGeneration;
+      const confirmRecordingStarted = async () => {
+        if (meetingStopGeneration !== stopGenerationAtStart) {
+          await rollbackMeetingTranscriptionStart();
+          debugLogger.info("Meeting transcription start superseded by a stop", {}, "meeting");
+          return false;
+        }
         this.meetingDetectionEngine?.meetingRecordingStarted({ noteId: options.noteId ?? null });
+        return true;
+      };
+      const stoppedWhileStarting = { success: false, error: "Stopped while starting" };
       try {
         const systemAudioPlan = await getMeetingSystemAudioPlan();
         let { mode: systemAudioMode, strategy: systemAudioStrategy } = systemAudioPlan;
@@ -5847,7 +5858,7 @@ class IPCHandlers {
             systemAudioStrategy,
             "during warm-start reuse"
           ));
-          confirmRecordingStarted();
+          if (!(await confirmRecordingStarted())) return stoppedWhileStarting;
           return {
             success: true,
             systemAudioMode,
@@ -5888,7 +5899,7 @@ class IPCHandlers {
             systemAudioStrategy,
           });
 
-          confirmRecordingStarted();
+          if (!(await confirmRecordingStarted())) return stoppedWhileStarting;
           return {
             success: true,
             systemAudioMode,
@@ -5910,7 +5921,7 @@ class IPCHandlers {
           systemAudioStrategy,
           "in realtime mode"
         ));
-        confirmRecordingStarted();
+        if (!(await confirmRecordingStarted())) return stoppedWhileStarting;
         return {
           success: true,
           systemAudioMode,
@@ -5923,6 +5934,7 @@ class IPCHandlers {
         return { success: false, error: error.message };
       } finally {
         meetingTranscriptionStartInProgress = false;
+        this.meetingDetectionEngine?.meetingRecordingStartSettled();
       }
     });
 
@@ -6116,6 +6128,7 @@ class IPCHandlers {
     });
 
     ipcMain.handle("meeting-transcription-stop", async (_event, options = {}) => {
+      meetingStopGeneration += 1;
       this.meetingDetectionEngine?.endMeetingSession("meeting-transcription-stop");
       try {
         if (this.audioTapManager) {

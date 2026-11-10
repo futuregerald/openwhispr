@@ -2508,7 +2508,8 @@
   "recordingNotice": {
     "capTitle": "Recording ends in {{time}}",
     "keep": "Keep recording",
-    "keepHint": "+2 h",
+    "keepHint": "+{{hours}} h",
+    "keepHintMinutes": "+{{minutes}} min",
     "stop": "Stop now",
     "callEnded": "Call ended — recording stopped",
     "resume": "Resume",

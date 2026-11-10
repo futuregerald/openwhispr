@@ -2508,7 +2508,8 @@
   "recordingNotice": {
     "capTitle": "Aufnahme endet in {{time}}",
     "keep": "Aufnahme fortsetzen",
-    "keepHint": "+2 Std.",
+    "keepHint": "+{{hours}} Std.",
+    "keepHintMinutes": "+{{minutes}} Min.",
     "stop": "Jetzt stoppen",
     "callEnded": "Anruf beendet – Aufnahme gestoppt",
     "resume": "Fortsetzen",

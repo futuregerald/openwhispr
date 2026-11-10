@@ -1737,12 +1737,12 @@ declare global {
       onRecordingNoticeData?: (
         callback: (
           data:
-            | { kind: "cap-warning"; endsAt: number }
+            | { kind: "cap-warning"; endsAt: number; capMs: number }
             | { kind: "call-ended"; noteId: number | null; until: number }
         ) => void
       ) => () => void;
       getRecordingNoticeData?: () => Promise<
-        | { kind: "cap-warning"; endsAt: number }
+        | { kind: "cap-warning"; endsAt: number; capMs: number }
         | { kind: "call-ended"; noteId: number | null; until: number }
         | null
       >;

@@ -41,7 +41,8 @@ async function poll(t, times) {
 const camera = (detector, active) =>
   detector._onData(`${JSON.stringify({ device: "camera", active })}\n`);
 
-const MATCH = { matched: true };
+const MATCH = { matched: true, kind: "web-call" };
+const LAUNCHER = { matched: true, kind: "launcher" };
 const NO_MATCH = { matched: false };
 
 test("a call that held the camera ends once the camera is released", async (t) => {
@@ -172,4 +173,26 @@ test("matches that are not consecutive never add up to a call", async (t) => {
   await poll(t, 9);
 
   assert.equal(ended.length, 0);
+});
+
+test("a launcher page left open is neither evidence of a call nor of its end", async (t) => {
+  const { detector, ended } = createDetector(t, [
+    ...Array(6).fill(LAUNCHER),
+    ...Array(6).fill(NO_MATCH),
+  ]);
+  detector.setSelfRecording(true);
+
+  await poll(t, 12);
+
+  assert.equal(ended.length, 0);
+  assert.equal(detector.hasObservedCall(), false);
+});
+
+test("web-call evidence followed by no match ends the recording", async (t) => {
+  const { detector, ended } = createDetector(t, [MATCH, MATCH, NO_MATCH, NO_MATCH]);
+  detector.setSelfRecording(true);
+
+  await poll(t, 4);
+
+  assert.equal(ended.length, 1);
 });

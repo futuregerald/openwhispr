@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 
 type RecordingNoticeData =
-  | { kind: "cap-warning"; endsAt: number }
+  | { kind: "cap-warning"; endsAt: number; capMs: number }
   | { kind: "call-ended"; noteId: number | null; until: number };
 
 const MONO_FONT = "ui-monospace, SFMono-Regular, Menlo, monospace";
@@ -14,12 +14,26 @@ function formatCountdown(remainingMs: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
+const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+const RESUME_FAILED_CLOSE_MS = 1500;
+
+function keepHintFor(capMs: number, t: (key: string, options: Record<string, number>) => string) {
+  if (capMs >= HOUR_MS && capMs % HOUR_MS === 0) {
+    return t("recordingNotice.keepHint", { hours: capMs / HOUR_MS });
+  }
+  return t("recordingNotice.keepHintMinutes", {
+    minutes: Math.max(1, Math.round(capMs / MINUTE_MS)),
+  });
+}
+
 export default function RecordingNoticeOverlay() {
   const { t } = useTranslation();
   const [data, setData] = useState<RecordingNoticeData | null>(null);
   const [isVisible, setIsVisible] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [hasResponded, setHasResponded] = useState(false);
+  const [resumeFailed, setResumeFailed] = useState(false);
 
   useEffect(() => {
     let shown = false;
@@ -51,10 +65,17 @@ export default function RecordingNoticeOverlay() {
   }, [data]);
 
   const respond = useCallback(
-    (action: "keep" | "stop" | "resume" | "dismiss") => {
+    async (action: "keep" | "stop" | "resume" | "dismiss") => {
       if (hasResponded) return;
       setHasResponded(true);
-      window.electronAPI?.recordingNoticeRespond?.(action);
+      const result = await window.electronAPI?.recordingNoticeRespond?.(action);
+      if (action === "resume" && !result) {
+        setResumeFailed(true);
+        setTimeout(
+          () => window.electronAPI?.recordingNoticeRespond?.("dismiss"),
+          RESUME_FAILED_CLOSE_MS
+        );
+      }
     },
     [hasResponded]
   );
@@ -85,11 +106,11 @@ export default function RecordingNoticeOverlay() {
             >
               {t("recordingNotice.capTitle", { time: formatCountdown(data.endsAt - now) })}
             </p>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button onClick={() => respond("keep")} className={primaryButtonClass}>
                 {t("recordingNotice.keep")}
                 <span className="ml-1.5 text-[12px] font-medium" style={{ fontFamily: MONO_FONT }}>
-                  {t("recordingNotice.keepHint")}
+                  {keepHintFor(data.capMs, t)}
                 </span>
               </button>
               <button onClick={() => respond("stop")} className={secondaryButtonClass}>
@@ -100,7 +121,7 @@ export default function RecordingNoticeOverlay() {
         )}
 
         {data?.kind === "call-ended" && (
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
             <p
               className="text-[14px] font-semibold text-warning leading-tight"
               style={{ fontFamily: MONO_FONT }}
@@ -109,7 +130,7 @@ export default function RecordingNoticeOverlay() {
             </p>
             <button
               onClick={() => respond("resume")}
-              disabled={resumeExpired}
+              disabled={resumeExpired || resumeFailed}
               className={primaryButtonClass}
             >
               {t("recordingNotice.resume")}

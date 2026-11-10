@@ -2508,7 +2508,8 @@
   "recordingNotice": {
     "capTitle": "A gravação termina em {{time}}",
     "keep": "Continuar gravando",
-    "keepHint": "+2 h",
+    "keepHint": "+{{hours}} h",
+    "keepHintMinutes": "+{{minutes}} min",
     "stop": "Parar agora",
     "callEnded": "Chamada encerrada: gravação interrompida",
     "resume": "Retomar",

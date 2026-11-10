@@ -13,6 +13,7 @@ const {
   CONTROL_PANEL_CONFIG,
   AGENT_OVERLAY_CONFIG,
   NOTIFICATION_WINDOW_CONFIG,
+  RECORDING_NOTICE_WINDOW_CONFIG,
   TRANSCRIPTION_PREVIEW_CONFIG,
   TRANSCRIPTION_PREVIEW_SIZE_LIMITS,
   WINDOW_SIZES,
@@ -1351,10 +1352,13 @@ class WindowManager {
     this.dismissRecordingNotice();
 
     const display = screen.getPrimaryDisplay();
-    const position = WindowPositionUtil.getNotificationPosition(display);
+    const position = WindowPositionUtil.getNotificationPosition(
+      display,
+      RECORDING_NOTICE_WINDOW_CONFIG
+    );
 
     const noticeWindow = new BrowserWindow({
-      ...NOTIFICATION_WINDOW_CONFIG,
+      ...RECORDING_NOTICE_WINDOW_CONFIG,
       ...position,
     });
     this.recordingNoticeWindow = noticeWindow;
