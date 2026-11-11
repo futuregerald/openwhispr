@@ -13,15 +13,35 @@
 const { execFile } = require("child_process");
 const debugLogger = require("./debugLogger");
 
-// Active-meeting URL patterns (a meeting *code*, not a landing page).
-const MEETING_URL_PATTERNS = [
-  // meet.google.com/abc-defg-hij
+const WEB_CALL_URL_PATTERNS = [
   /^https:\/\/meet\.google\.com\/[a-z]{3,4}-[a-z]{4}-[a-z]{3,4}(?:[/?#]|$)/i,
-  // zoom web client: *.zoom.us/wc/<id>/... or /wc/join/<id> or /j/<id>
-  /^https:\/\/[\w.-]*zoom\.us\/(?:wc\/(?:join\/)?|j\/)\d{3,}/i,
-  // teams web meeting join
-  /^https:\/\/teams\.(?:microsoft|live)\.com\/.*(?:meetup-join|\/meet\/|meetingjoin)/i,
+  /^https:\/\/[\w.-]*zoom\.us\/wc\/(?:join\/)?\d{3,}/i,
+  /^https:\/\/teams\.(?:microsoft|live)\.com\/.*meetingjoin/i,
 ];
+
+const LAUNCHER_URL_PATTERNS = [
+  /^https:\/\/[\w.-]*zoom\.us\/j\/\d{3,}/i,
+  /^https:\/\/teams\.(?:microsoft|live)\.com\/.*meetup-join/i,
+  /^https:\/\/teams\.(?:microsoft|live)\.com\/(?:.*\/)?meet\//i,
+];
+
+const MEETING_URL_PATTERNS = [...WEB_CALL_URL_PATTERNS, ...LAUNCHER_URL_PATTERNS];
+
+function classifyMeetingUrl(url) {
+  if (WEB_CALL_URL_PATTERNS.some((re) => re.test(url))) return "web-call";
+  if (LAUNCHER_URL_PATTERNS.some((re) => re.test(url))) return "launcher";
+  return null;
+}
+
+function pickMeetingUrl(urls) {
+  let launcher = null;
+  for (const url of urls) {
+    const kind = classifyMeetingUrl(url);
+    if (kind === "web-call") return { url, kind };
+    if (kind === "launcher" && !launcher) launcher = { url, kind };
+  }
+  return launcher;
+}
 
 const BROWSERS = ["Google Chrome", "Brave Browser", "Microsoft Edge", "Arc", "Safari"];
 
@@ -47,13 +67,14 @@ function runOsascript(script) {
 }
 
 /**
- * @returns {Promise<{matched:boolean, url?:string, browser?:string, denied?:boolean}>}
+ * @returns {Promise<{matched:boolean, kind?:"web-call"|"launcher", url?:string, browser?:string, denied?:boolean}>}
  */
 async function checkForActiveMeetingUrl() {
   if (process.platform !== "darwin") return { matched: false };
   if (automationDenied) return { matched: false, denied: true };
 
   let anyBrowserResponded = false;
+  let launcherMatch = null;
   for (const app of BROWSERS) {
     const res = await runOsascript(tabsScript(app));
     if (res.denied) {
@@ -72,12 +93,13 @@ async function checkForActiveMeetingUrl() {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-    for (const url of urls) {
-      if (MEETING_URL_PATTERNS.some((re) => re.test(url))) {
-        return { matched: true, url, browser: app };
-      }
+    const picked = pickMeetingUrl(urls);
+    if (picked && picked.kind === "web-call") {
+      return { matched: true, ...picked, browser: app };
     }
+    if (picked && !launcherMatch) launcherMatch = { matched: true, ...picked, browser: app };
   }
+  if (launcherMatch) return launcherMatch;
   // No match — but was it a confident "no meeting" or an inconclusive failure?
   return anyBrowserResponded
     ? { matched: false }
@@ -93,4 +115,10 @@ function resetAutomationDenied() {
   return true;
 }
 
-module.exports = { checkForActiveMeetingUrl, MEETING_URL_PATTERNS, resetAutomationDenied };
+module.exports = {
+  checkForActiveMeetingUrl,
+  classifyMeetingUrl,
+  pickMeetingUrl,
+  MEETING_URL_PATTERNS,
+  resetAutomationDenied,
+};

@@ -2505,6 +2505,16 @@
       "dismiss": "關閉"
     }
   },
+  "recordingNotice": {
+    "capTitle": "錄音將在 {{time}} 後結束",
+    "keep": "繼續錄音",
+    "keepHint": "+{{hours}} 小時",
+    "keepHintMinutes": "+{{minutes}} 分鐘",
+    "stop": "立即停止",
+    "callEnded": "通話已結束，錄音已停止",
+    "resume": "恢復",
+    "continuedSuffix": "（續）"
+  },
   "updateNotification": {
     "title": "OpenWhispr 有可用更新",
     "body": "版本 {{version}} 已可下載",

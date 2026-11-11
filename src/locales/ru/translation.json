@@ -2511,6 +2511,16 @@
       "dismiss": "Закрыть"
     }
   },
+  "recordingNotice": {
+    "capTitle": "Запись закончится через {{time}}",
+    "keep": "Продолжить запись",
+    "keepHint": "+{{hours}} ч",
+    "keepHintMinutes": "+{{minutes}} мин",
+    "stop": "Остановить сейчас",
+    "callEnded": "Звонок завершён: запись остановлена",
+    "resume": "Возобновить",
+    "continuedSuffix": "(продолжение)"
+  },
   "updateNotification": {
     "title": "Доступно обновление OpenWhispr",
     "body": "Версия {{version}} готова к загрузке",

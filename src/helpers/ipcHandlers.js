@@ -4143,6 +4143,7 @@ class IPCHandlers {
     });
 
     let meetingTranscriptionStartInProgress = false;
+    let meetingStopGeneration = 0;
     let meetingTranscriptionPrepareInProgress = false;
     let meetingTranscriptionPreparePromise = null;
 
@@ -5810,11 +5811,22 @@ class IPCHandlers {
       }
 
       meetingTranscriptionStartInProgress = true;
+      this.meetingDetectionEngine?.meetingRecordingStarting();
       meetingStartedAt = Date.now();
       meetingConnectionOptions = options;
       meetingConnectionWin = BrowserWindow.fromWebContents(event.sender);
       meetingReconnectCount = 0;
-      this.meetingDetectionEngine?.setUserRecording(true);
+      const stopGenerationAtStart = meetingStopGeneration;
+      const confirmRecordingStarted = async () => {
+        if (meetingStopGeneration !== stopGenerationAtStart) {
+          await rollbackMeetingTranscriptionStart();
+          debugLogger.info("Meeting transcription start superseded by a stop", {}, "meeting");
+          return false;
+        }
+        this.meetingDetectionEngine?.meetingRecordingStarted({ noteId: options.noteId ?? null });
+        return true;
+      };
+      const stoppedWhileStarting = { success: false, error: "Stopped while starting" };
       try {
         const systemAudioPlan = await getMeetingSystemAudioPlan();
         let { mode: systemAudioMode, strategy: systemAudioStrategy } = systemAudioPlan;
@@ -5846,6 +5858,7 @@ class IPCHandlers {
             systemAudioStrategy,
             "during warm-start reuse"
           ));
+          if (!(await confirmRecordingStarted())) return stoppedWhileStarting;
           return {
             success: true,
             systemAudioMode,
@@ -5886,6 +5899,7 @@ class IPCHandlers {
             systemAudioStrategy,
           });
 
+          if (!(await confirmRecordingStarted())) return stoppedWhileStarting;
           return {
             success: true,
             systemAudioMode,
@@ -5907,6 +5921,7 @@ class IPCHandlers {
           systemAudioStrategy,
           "in realtime mode"
         ));
+        if (!(await confirmRecordingStarted())) return stoppedWhileStarting;
         return {
           success: true,
           systemAudioMode,
@@ -5915,11 +5930,11 @@ class IPCHandlers {
         };
       } catch (error) {
         await rollbackMeetingTranscriptionStart();
-        this.meetingDetectionEngine?.setUserRecording(false);
         debugLogger.error("Meeting transcription start error", { error: error.message });
         return { success: false, error: error.message };
       } finally {
         meetingTranscriptionStartInProgress = false;
+        this.meetingDetectionEngine?.meetingRecordingStartSettled();
       }
     });
 
@@ -6113,6 +6128,7 @@ class IPCHandlers {
     });
 
     ipcMain.handle("meeting-transcription-stop", async (_event, options = {}) => {
+      meetingStopGeneration += 1;
       this.meetingDetectionEngine?.endMeetingSession("meeting-transcription-stop");
       try {
         if (this.audioTapManager) {
@@ -6207,6 +6223,8 @@ class IPCHandlers {
       } catch (error) {
         debugLogger.error("Meeting transcription stop error", { error: error.message });
         return { success: false, error: error.message };
+      } finally {
+        this.meetingDetectionEngine?.meetingRecordingStopComplete();
       }
     });
 
@@ -7259,6 +7277,18 @@ class IPCHandlers {
 
     ipcMain.handle("update-notification-ready", async () => {
       this.windowManager?.showUpdateNotificationWindow();
+    });
+
+    ipcMain.handle("get-recording-notice-data", async () => {
+      return this.windowManager?.getRecordingNoticeData?.() ?? null;
+    });
+
+    ipcMain.handle("recording-notice-ready", async () => {
+      this.windowManager?.showRecordingNoticeWindow();
+    });
+
+    ipcMain.handle("recording-notice-respond", async (_event, action) => {
+      return this.meetingDetectionEngine?.handleRecordingNoticeResponse(action);
     });
 
     ipcMain.handle("update-notification-respond", async (_event, action) => {

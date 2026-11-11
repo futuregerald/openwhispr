@@ -120,6 +120,8 @@ const NOTIFICATION_WINDOW_CONFIG = {
   type: FLOATING_OVERLAY_TYPE,
 };
 
+const RECORDING_NOTICE_WINDOW_CONFIG = { ...NOTIFICATION_WINDOW_CONFIG, height: 160 };
+
 const TRANSCRIPTION_PREVIEW_SIZE_LIMITS = {
   minWidth: 400,
   defaultWidth: 460,
@@ -173,8 +175,8 @@ class WindowPositionUtil {
     return { x, y, width, height };
   }
 
-  static getNotificationPosition(display) {
-    const { width, height } = NOTIFICATION_WINDOW_CONFIG;
+  static getNotificationPosition(display, windowConfig = NOTIFICATION_WINDOW_CONFIG) {
+    const { width, height } = windowConfig;
     const MARGIN = 16;
     const workArea = display.workArea || display.bounds;
     const x = Math.max(0, workArea.x + workArea.width - width - MARGIN);
@@ -263,6 +265,7 @@ module.exports = {
   CONTROL_PANEL_CONFIG,
   AGENT_OVERLAY_CONFIG,
   NOTIFICATION_WINDOW_CONFIG,
+  RECORDING_NOTICE_WINDOW_CONFIG,
   TRANSCRIPTION_PREVIEW_CONFIG,
   TRANSCRIPTION_PREVIEW_SIZE_LIMITS,
   WINDOW_SIZES,

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import App from "./App.jsx";
 import MeetingNotificationOverlay from "./components/MeetingNotificationOverlay.tsx";
 import TranscriptionPreviewOverlay from "./components/TranscriptionPreviewOverlay.tsx";
+import RecordingNoticeOverlay from "./components/RecordingNoticeOverlay.tsx";
 import UpdateNotificationOverlay from "./components/UpdateNotificationOverlay.tsx";
 import { useTheme } from "./hooks/useTheme";
 
@@ -20,6 +21,10 @@ export default function AppRouter() {
 
   if (params.includes("update-notification=true")) {
     return <UpdateNotificationOverlay />;
+  }
+
+  if (params.includes("recording-notice=true")) {
+    return <RecordingNoticeOverlay />;
   }
 
   if (params.includes("transcription-preview=true")) {

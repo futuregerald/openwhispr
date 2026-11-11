@@ -588,6 +588,14 @@ Detects meetings via three independent sources, orchestrated by `MeetingDetectio
 - Calendar-aware: if an ongoing or imminent calendar event exists, the prompt shows the event name and links the note to the event
 - Active meeting recording (meeting mode): all detections suppressed
 
+**Automatic stop (every meeting recording)**:
+
+- Meeting recording state lives in `MeetingDetectionEngine` (`meetingRecordingStarted` / `meetingRecordingStopComplete`), separate from dictation (`setUserRecording` is dictation-only), so a dictation can't cancel a meeting's limits
+- For manual testing, `OPENWHISPR_RECORDING_CAP_MS=240000` shortens the cap (minimum 2 min; the warning then comes halfway). Read once at startup
+- 2-hour cap from `src/helpers/recordingLimits.js`: always-on-top recording notice at 1 h 55 m (Keep recording re-arms 2 h; Stop now), stop at 2 h. Notice window: `windowManager.showRecordingNotice`, renderer `RecordingNoticeOverlay.tsx`
+- Call end (macOS): the call-state detector runs for every meeting recording, but a recording stops only when this recording saw a call — camera on at or after start, or a meeting URL matched on two consecutive polls. Denied/unavailable URL checks are no evidence
+- Stop requests (`meeting-auto-stop-request`, `{ reason }`) and transcript saves are handled in `MeetingRecordingMount` (always mounted). `endMeetingSession` runs first in the stop handler; the engine treats the stop as complete only in the handler's `finally`, so Resume (a new "(continued)" note) can't race it
+
 **Binary Distribution**:
 
 - macOS: Compiled from Swift source via `scripts/build-macos-mic-listener.js` during `compile:native`

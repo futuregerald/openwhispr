@@ -86,13 +86,10 @@ export declare const MIN_PIECE_SECONDS: 300;
  * `4 * 60 * 60` — four hours in seconds. A boundary is dropped when either of
  * its own adjacent pieces is longer than this.
  *
- * Grounded in the app's own behaviour, not a guess:
- * `src/helpers/meetingDetectionEngine.js` sets
- * `MAX_AUTO_RECORD_MS = 4 * 60 * 60 * 1000` as the safety cap for an
- * auto-started recording, so a *single* call piece longer than four hours
- * cannot be one auto-recorded call — it is still-welded audio. The number is
- * redeclared here rather than imported, because that module is main-process
- * code with Electron dependencies and this one must stay pure.
+ * Independent of the 2-hour recording cap in `recordingLimits.js`: "Keep
+ * recording" extends that cap, so a single real call can run past two hours
+ * (a measured one ran 7206 s). A single piece longer than four hours is still
+ * treated as welded audio rather than one call.
  *
  * Measured over all 90 notes in the real library: every piece the detector
  * produces is under 7210s (2h01m) except note 14, whose after-piece is 332296s

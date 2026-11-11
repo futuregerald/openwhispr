@@ -455,7 +455,7 @@ test("the max-piece guard runs after the five-minute loop, on the pieces it sett
   assert.equal(result.pieces[0].indices.length, segments.length);
 });
 
-test("the max piece duration is four hours, matching the auto-record safety cap", async () => {
+test("the max piece duration stays four hours, independent of the recording cap", async () => {
   const { MAX_PIECE_SECONDS } = await load();
 
   assert.equal(MAX_PIECE_SECONDS, 14400);

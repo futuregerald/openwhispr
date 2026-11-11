@@ -6,12 +6,14 @@ const DragManager = require("./dragManager");
 const MenuManager = require("./menuManager");
 const DevServerManager = require("./devServerManager");
 const { i18nMain } = require("./i18nMain");
+const { CALL_ENDED_NOTICE_MS } = require("./recordingLimits");
 const { DEV_SERVER_PORT } = DevServerManager;
 const {
   MAIN_WINDOW_CONFIG,
   CONTROL_PANEL_CONFIG,
   AGENT_OVERLAY_CONFIG,
   NOTIFICATION_WINDOW_CONFIG,
+  RECORDING_NOTICE_WINDOW_CONFIG,
   TRANSCRIPTION_PREVIEW_CONFIG,
   TRANSCRIPTION_PREVIEW_SIZE_LIMITS,
   WINDOW_SIZES,
@@ -1344,6 +1346,95 @@ class WindowManager {
       this.updateNotificationWindow.close();
     }
     this.updateNotificationWindow = null;
+  }
+
+  async showRecordingNotice(data) {
+    this.dismissRecordingNotice();
+
+    const display = screen.getPrimaryDisplay();
+    const position = WindowPositionUtil.getNotificationPosition(
+      display,
+      RECORDING_NOTICE_WINDOW_CONFIG
+    );
+
+    const noticeWindow = new BrowserWindow({
+      ...RECORDING_NOTICE_WINDOW_CONFIG,
+      ...position,
+    });
+    this.recordingNoticeWindow = noticeWindow;
+
+    noticeWindow.setContentProtection(true);
+    WindowPositionUtil.setupAlwaysOnTop(noticeWindow);
+
+    this._pendingRecordingNoticeData = data;
+
+    if (process.env.NODE_ENV === "development") {
+      await DevServerManager.waitForDevServer();
+      await noticeWindow.loadURL(`${DevServerManager.DEV_SERVER_URL}?recording-notice=true`);
+    } else {
+      const fileInfo = DevServerManager.getAppFilePath(false);
+      await noticeWindow.loadFile(fileInfo.path, {
+        query: { ...fileInfo.query, "recording-notice": "true" },
+      });
+    }
+
+    if (this.recordingNoticeWindow !== noticeWindow || noticeWindow.isDestroyed()) return;
+
+    this._recordingNoticeReadyFallback = setTimeout(() => {
+      this._recordingNoticeReadyFallback = null;
+      if (this.recordingNoticeWindow === noticeWindow && !noticeWindow.isDestroyed()) {
+        noticeWindow.webContents.send("recording-notice-data", this._pendingRecordingNoticeData);
+        noticeWindow.showInactive();
+      }
+    }, 3000);
+
+    if (data?.kind === "call-ended") {
+      this._recordingNoticeAutoDismiss = setTimeout(() => {
+        this.dismissRecordingNotice();
+      }, CALL_ENDED_NOTICE_MS);
+    }
+
+    noticeWindow.on("closed", () => {
+      if (this.recordingNoticeWindow === noticeWindow) {
+        this.recordingNoticeWindow = null;
+        this._clearRecordingNoticeTimers();
+      }
+    });
+  }
+
+  showRecordingNoticeWindow() {
+    if (this._recordingNoticeReadyFallback) {
+      clearTimeout(this._recordingNoticeReadyFallback);
+      this._recordingNoticeReadyFallback = null;
+    }
+    if (this.recordingNoticeWindow && !this.recordingNoticeWindow.isDestroyed()) {
+      this.recordingNoticeWindow.showInactive();
+    }
+  }
+
+  getRecordingNoticeData() {
+    return this._pendingRecordingNoticeData ?? null;
+  }
+
+  dismissRecordingNotice() {
+    this._pendingRecordingNoticeData = null;
+    this._clearRecordingNoticeTimers();
+    const noticeWindow = this.recordingNoticeWindow;
+    this.recordingNoticeWindow = null;
+    if (noticeWindow && !noticeWindow.isDestroyed()) {
+      noticeWindow.close();
+    }
+  }
+
+  _clearRecordingNoticeTimers() {
+    if (this._recordingNoticeReadyFallback) {
+      clearTimeout(this._recordingNoticeReadyFallback);
+      this._recordingNoticeReadyFallback = null;
+    }
+    if (this._recordingNoticeAutoDismiss) {
+      clearTimeout(this._recordingNoticeAutoDismiss);
+      this._recordingNoticeAutoDismiss = null;
+    }
   }
 
   sendToControlPanel(channel, data) {

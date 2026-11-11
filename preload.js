@@ -203,7 +203,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.removeListener("note-deleted", listener);
   },
   onMeetingAutoStopRequest: (callback) => {
-    const listener = () => callback?.();
+    const listener = (_event, data) => callback?.(data);
     ipcRenderer.on("meeting-auto-stop-request", listener);
     return () => ipcRenderer.removeListener("meeting-auto-stop-request", listener);
   },
@@ -869,4 +869,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getUpdateNotificationData: () => ipcRenderer.invoke("get-update-notification-data"),
   updateNotificationReady: () => ipcRenderer.invoke("update-notification-ready"),
   updateNotificationRespond: (action) => ipcRenderer.invoke("update-notification-respond", action),
+
+  onRecordingNoticeData: registerListener(
+    "recording-notice-data",
+    (callback) => (_event, data) => callback(data)
+  ),
+  getRecordingNoticeData: () => ipcRenderer.invoke("get-recording-notice-data"),
+  recordingNoticeReady: () => ipcRenderer.invoke("recording-notice-ready"),
+  recordingNoticeRespond: (action) => ipcRenderer.invoke("recording-notice-respond", action),
 });
