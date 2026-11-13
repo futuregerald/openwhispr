@@ -114,6 +114,20 @@ class JobStore {
       .run(String(error?.message || error || "unknown"), id);
   }
 
+  hasActivePostCallJob(noteId) {
+    return (
+      this.db
+        .prepare(
+          `SELECT 1 FROM jobs
+           WHERE kind = 'post-call-pipeline'
+             AND status IN ('${PENDING}', '${RUNNING}')
+             AND json_extract(payload, '$.noteId') = ?
+           LIMIT 1`
+        )
+        .get(noteId) !== undefined
+    );
+  }
+
   pending() {
     return this.db.prepare(`SELECT * FROM jobs WHERE status = '${PENDING}' ORDER BY id ASC`).all();
   }

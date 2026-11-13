@@ -447,6 +447,28 @@ class IPCHandlers {
     this._asyncMirrorWrite(note);
   }
 
+  _addRecordingMarker({ noteId, now = Date.now() }) {
+    if (noteId == null) return { success: false, reason: "no-recording" };
+    return this.databaseManager.addRecordingMark(noteId, now);
+  }
+
+  _recordMarkZeros({ noteId, systemStartedAt, micStartedAt, firstLineTimestamp }) {
+    if (noteId == null) return;
+    try {
+      this.databaseManager.setRecordingMarkZeros(noteId, {
+        system: systemStartedAt,
+        mic: micStartedAt,
+        firstLine: firstLineTimestamp,
+      });
+    } catch (error) {
+      debugLogger.warn(
+        "Could not record the NEXT mark zeros; the marks will be kept uncut",
+        { noteId, error: error.message },
+        "meeting"
+      );
+    }
+  }
+
   // A note write that skips this loses the `note-updated` broadcast, and the renderer's
   // note store has no other live refresh path — it would keep serving the pre-write
   // transcript and write it back over this one on the next speaker edit.
@@ -3988,6 +4010,12 @@ class IPCHandlers {
         this._asyncVectorUpsert(note);
         this._asyncMirrorWrite(note);
       },
+      enqueueChildPipeline: (childNoteId) =>
+        this.backgroundJobQueue.enqueueKind(
+          `post-call-retry-${childNoteId}`,
+          JOB_KINDS.POST_CALL_PIPELINE,
+          { noteId: childNoteId, fromStep: "classify" }
+        ),
     });
 
     const { digestGeneratedNotes } = require("./generatedNotesDigest");
@@ -4486,6 +4514,12 @@ class IPCHandlers {
       const diarizationSegments = meetingDiarizationSegments;
       const diarizationStartedAt = meetingDiarizationStartedAt;
       const micPcmPath = meetingMicPcmPath;
+      this._recordMarkZeros({
+        noteId: meetingNoteId,
+        systemStartedAt: diarizationStartedAt,
+        micStartedAt: meetingMicStartedAt,
+        firstLineTimestamp: diarizationSegments[0]?.timestamp ?? null,
+      });
       meetingMicPcmPath = null; // Clear so resetMeetingLocalState doesn't double-unlink
       if (meetingDiarizationStream) {
         await new Promise((resolve) => meetingDiarizationStream.end(resolve));
@@ -4495,6 +4529,7 @@ class IPCHandlers {
         await new Promise((resolve) => meetingMicPcmStream.end(resolve));
         meetingMicPcmStream = null;
       }
+      meetingMicStartedAt = null;
       meetingDiarizationPath = null;
       meetingDiarizationStartedAt = null;
       meetingDiarizationSegments = [];
@@ -4905,6 +4940,7 @@ class IPCHandlers {
     let meetingDroppedAudioSpans = [];
     let meetingCeilingNoticeSent = false;
     let meetingMicPcmStream = null;
+    let meetingMicStartedAt = null;
     let meetingMicPcmPath = null;
     let meetingLiveSpeakerActive = false;
     let meetingLiveSpeakerState = null;
@@ -5522,6 +5558,7 @@ class IPCHandlers {
         fs.unlink(meetingMicPcmPath, () => {});
         meetingMicPcmPath = null;
       }
+      meetingMicStartedAt = null;
       meetingDiarizationStartedAt = null;
       meetingDiarizationSegments = [];
       meetingDroppedAudioSpans = [];
@@ -6027,6 +6064,7 @@ class IPCHandlers {
         if (!meetingMicPcmStream) {
           meetingMicPcmPath = path.join(os.tmpdir(), `ow-mic-raw-${Date.now()}.pcm`);
           meetingMicPcmStream = fs.createWriteStream(meetingMicPcmPath);
+          meetingMicStartedAt = Date.now();
         }
         meetingMicPcmStream.write(outboundBuffer);
 
@@ -6160,6 +6198,10 @@ class IPCHandlers {
 
     ipcMain.on("meeting-transcription-send", (_event, audioBuffer, source) => {
       sendMeetingAudio(audioBuffer, source);
+    });
+
+    ipcMain.handle("meeting-add-marker", async () => {
+      return this._addRecordingMarker({ noteId: meetingNoteId });
     });
 
     ipcMain.handle("meeting-transcription-stop", async (_event, options = {}) => {
@@ -7499,6 +7541,9 @@ class IPCHandlers {
     });
 
     ipcMain.handle("split-note-calls", async (_event, noteId) => {
+      if (this.backgroundJobQueue.hasActivePostCallJob(noteId)) {
+        return { success: false, reason: "pipeline-running" };
+      }
       const { splitNoteCalls } = require("./noteCallSplit.js");
       const result = await splitNoteCalls({
         databaseManager: this.databaseManager,
@@ -7522,6 +7567,44 @@ class IPCHandlers {
       }
       return result;
     });
+
+    ipcMain.handle(
+      "split-note-at-line",
+      async (_event, noteId, lineIndex, titles = {}, expectedText) => {
+        if (this.backgroundJobQueue.hasActivePostCallJob(noteId)) {
+          return { success: false, reason: "pipeline-running" };
+        }
+        const { splitNoteAtLine } = require("./noteCallSplit.js");
+        const result = await splitNoteAtLine({
+          databaseManager: this.databaseManager,
+          noteId,
+          lineIndex,
+          firstTitle: titles?.firstTitle,
+          secondTitle: titles?.secondTitle,
+          expectedText,
+          onNoteCreated: (note) => this._notifyNoteCreated(note),
+          onNoteChanged: (note) => this._notifyNoteChanged(note),
+        });
+        if (!result.success) return result;
+
+        this.backgroundJobQueue.enqueueKind(
+          `regenerate-notes-${result.parentNoteId}`,
+          JOB_KINDS.REGENERATE_NOTES,
+          { noteId: result.parentNoteId }
+        );
+        for (const id of result.childNoteIds) {
+          this.backgroundJobQueue.enqueueKind(
+            `post-call-retry-${id}`,
+            JOB_KINDS.POST_CALL_PIPELINE,
+            {
+              noteId: id,
+              fromStep: "classify",
+            }
+          );
+        }
+        return result;
+      }
+    );
 
     ipcMain.handle("dismiss-note-call-split", async (_event, noteId) => {
       const result = this._updateNoteAndNotify(noteId, { call_split_dismissed: 1 });

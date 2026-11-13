@@ -2096,13 +2096,50 @@
       "failedUnanchored": "Las marcas de tiempo de esta grabación no coinciden con su audio, así que dividirla no es seguro.",
       "failedStale": "La transcripción cambió mientras se comprobaba. Vuelve a abrir la nota e inténtalo de nuevo.",
       "failedPartway": "Algo falló a mitad del proceso. Puede que algunas llamadas ya sean notas separadas: vuelve a abrir la nota para verlo.",
-      "failedUnknown": "No se pudo completar la división."
+      "failedPipelineRunning": "Todavía se están generando notas para esta grabación. Inténtalo de nuevo cuando termine.",
+      "failedUnknown": "No se pudo completar la división.",
+      "failedUnsafe": "La sincronización de esta grabación no permite dividirla de forma fiable, así que no se cambió nada."
     },
     "reprocessAll": {
       "label": "Reprocesar todas las reuniones",
       "confirm": "¿Reprocesar todas las reuniones? Esto sobrescribe las notas existentes.",
       "queued": "{{count}} reuniones en cola para reprocesar",
       "none": "No hay reuniones con audio guardado para reprocesar"
+    },
+    "recorderDeck": {
+      "label": "Grabadora",
+      "rec": "REC",
+      "elapsed": "Tiempo de grabación",
+      "next": "Siguiente",
+      "nextHint": "Marca dónde empieza la siguiente llamada. La nota se divide aquí cuando detengas la grabación.",
+      "stop": "Detener",
+      "tracks": "Pistas",
+      "refused": {
+        "no-recording": "No hay ninguna reunión grabándose.",
+        "too-soon": "Espera unos segundos antes de la siguiente marca.",
+        "limit-reached": "Se alcanzó el límite de pistas (8 marcas).",
+        "note-not-found": "Esta nota ya no existe.",
+        "invalid-time": "No se pudo marcar ese momento.",
+        "unknown": "No se pudo añadir la marca."
+      }
+    },
+    "splitAtLine": {
+      "title": "Dividir en dos notas",
+      "description": "La segunda parte se convierte en una nota propia, con sus propias notas y fecha. Las notas generadas, los nombres de los hablantes y el tipo de reunión se quedan con la primera parte. Esto no se puede deshacer.",
+      "suggestion": "Sugerencia: una pausa de {{gap}} en {{at}}",
+      "useThis": "Usar esta",
+      "firstPart": "Primera parte",
+      "secondPart": "Segunda parte",
+      "partSummary": "Líneas: {{lines}} · {{range}}",
+      "firstPlaceholder": "Título de la nota",
+      "secondPlaceholder": "Llamada nueva: se nombra tras generar las notas",
+      "startsWith": "La segunda parte empieza con: «{{text}}»",
+      "failedInvalidLine": "Esa línea no puede iniciar una nota nueva. Elige una línea posterior.",
+      "failedTranscriptChanged": "La transcripción cambió desde que abriste esto. Vuelve a abrir la nota y elige la línea otra vez.",
+      "outOfOrder": "Algunas líneas están fuera de orden temporal y van a la parte que les corresponde por su hora.",
+      "commit": "Dividir en dos notas",
+      "splitHere": "Dividir aquí",
+      "unsafe": "La sincronización de esta grabación no permite dividirla de forma fiable"
     }
   },
   "dictionary": {

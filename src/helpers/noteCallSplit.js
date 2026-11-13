@@ -48,8 +48,10 @@ async function splitNoteCalls({
   onNoteChanged,
   childTitle = "",
   maxSplits = MAX_CALL_SPLITS,
+  reportFor = null,
 }) {
   const { detectCallBoundaries } = await import("./callBoundaries.js");
+  const reportOf = reportFor ?? ((segments) => detectCallBoundaries(segments));
   const childNoteIds = [];
   let lastRefusal = "no-boundary";
 
@@ -66,7 +68,7 @@ async function splitNoteCalls({
       break;
     }
 
-    const report = detectCallBoundaries(segments);
+    const report = reportOf(segments, note);
     if (boundaryCountOf(report) === 0) break;
 
     let result;
@@ -103,4 +105,56 @@ async function splitNoteCalls({
   return { success: true, parentNoteId: noteId, childNoteIds };
 }
 
-module.exports = { MAX_CALL_SPLITS, scanNoteCallBoundaries, splitNoteCalls };
+const titleOrEmpty = (title) => (typeof title === "string" ? title.trim() : "");
+
+async function splitNoteAtLine({
+  databaseManager,
+  noteId,
+  lineIndex,
+  firstTitle,
+  secondTitle,
+  expectedText,
+  onNoteCreated,
+  onNoteChanged,
+}) {
+  const note = databaseManager.getNote(noteId);
+  if (!note) return { success: false, reason: "note-not-found" };
+
+  const { splitSafetyOf } = await import("./splitSafety.js");
+  const safety = splitSafetyOf(note);
+  if (!safety.ok) return { success: false, reason: "unsafe-timing", safetyReason: safety.reason };
+
+  const segments = parseSegments(note.transcript);
+  const { cutReportAt, timePositionOfIndex } = await import("./lineCut.js");
+  const position = timePositionOfIndex(segments, lineIndex);
+  if (position < 1) return { success: false, reason: "invalid-line" };
+  if (typeof expectedText === "string" && segments[lineIndex]?.text !== expectedText) {
+    return { success: false, reason: "transcript-changed" };
+  }
+
+  let result;
+  try {
+    result = splitNoteAtBoundary({
+      databaseManager,
+      noteId,
+      report: cutReportAt(segments, [position]),
+      boundaryIndex: 0,
+      onNoteCreated,
+      childTitle: titleOrEmpty(secondTitle),
+      createdAtAnchorMs: createdAtAnchorMsOf(note.created_at),
+    });
+  } catch (err) {
+    return { success: false, reason: "split-failed", error: err.message };
+  }
+  if (result.success !== true) return { success: false, reason: result.reason };
+
+  const renamedParent = titleOrEmpty(firstTitle);
+  if (renamedParent !== "" && renamedParent !== note.title) {
+    databaseManager.updateNote(noteId, { title: renamedParent });
+  }
+  if (onNoteChanged) onNoteChanged(databaseManager.getNote(noteId));
+
+  return { success: true, parentNoteId: noteId, childNoteIds: [result.childNoteId] };
+}
+
+module.exports = { MAX_CALL_SPLITS, scanNoteCallBoundaries, splitNoteCalls, splitNoteAtLine };

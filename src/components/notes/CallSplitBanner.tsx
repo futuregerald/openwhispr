@@ -4,19 +4,16 @@ import { Scissors } from "lucide-react";
 import { useToast } from "../ui/useToast";
 import { ConfirmDialog } from "../ui/dialog.js";
 import type { NoteItem } from "../../types/electron";
+import { splitSafetyOf } from "../../helpers/splitSafety";
+import { splitFailureKey } from "../../helpers/lineSplit";
 
-const FAILURE_KEY_BY_REASON: Record<string, string> = {
-  "no-boundary": "notes.callSplit.failed",
-  "note-not-found": "notes.callSplit.failedMissing",
-  "unreadable-transcript": "notes.callSplit.failedUnreadable",
-  "unresolvable-slice-bounds": "notes.callSplit.failedUnanchored",
-  "transcript-does-not-match-report": "notes.callSplit.failedStale",
-  "report-refused": "notes.callSplit.failedStale",
-  "empty-piece": "notes.callSplit.failedStale",
-  "split-failed-partway": "notes.callSplit.failedPartway",
-};
-
-export default function CallSplitBanner({ note }: { note: NoteItem }) {
+export default function CallSplitBanner({
+  note,
+  pipelineRunning,
+}: {
+  note: NoteItem;
+  pipelineRunning: boolean;
+}) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [callCount, setCallCount] = useState(1);
@@ -57,8 +54,7 @@ export default function CallSplitBanner({ note }: { note: NoteItem }) {
         });
         return;
       }
-      const key = FAILURE_KEY_BY_REASON[result?.reason ?? ""] ?? "notes.callSplit.failedUnknown";
-      toast({ title: t(key), variant: "destructive" });
+      toast({ title: t(splitFailureKey(result?.reason)), variant: "destructive" });
     } catch (error) {
       toast({
         title: t("notes.callSplit.failedUnknown"),
@@ -70,16 +66,28 @@ export default function CallSplitBanner({ note }: { note: NoteItem }) {
     }
   }, [note.id, t, toast]);
 
+  const safety = splitSafetyOf(note);
+  const isSplitUnsafe = !safety.ok;
+  const showUnsafeReason = isSplitUnsafe && safety.reason !== "pending";
+
   if (isDismissed || callCount < 2) return null;
 
   return (
     <div className="mx-5 mt-3 flex items-center gap-2 rounded-md border border-blue-500/30 bg-blue-500/8 px-3 py-2 text-[11px] leading-relaxed text-foreground/70">
       <Scissors size={12} className="shrink-0 text-blue-500/70" />
-      <span className="flex-1">{t("notes.callSplit.message", { count: callCount })}</span>
+      <span className="flex-1">
+        {t("notes.callSplit.message", { count: callCount })}
+        {showUnsafeReason && (
+          <span id="call-split-unsafe" className="block text-foreground/50">
+            {t("notes.splitAtLine.unsafe")}
+          </span>
+        )}
+      </span>
       <button
         className="shrink-0 h-6 px-2 rounded-md bg-foreground/5 hover:bg-foreground/10 text-foreground/70 disabled:opacity-40 disabled:pointer-events-none"
         onClick={() => setConfirmOpen(true)}
-        disabled={isSplitting}
+        disabled={isSplitting || isSplitUnsafe || pipelineRunning}
+        aria-describedby={showUnsafeReason ? "call-split-unsafe" : undefined}
       >
         {isSplitting ? t("notes.callSplit.splitting") : t("notes.callSplit.split")}
       </button>

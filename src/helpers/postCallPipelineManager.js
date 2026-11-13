@@ -6,6 +6,7 @@ const { retranscribeNoteTranscript } = require("./retranscribeNoteTranscript");
 const { i18nMain, SUPPORTED_UI_LANGUAGES } = require("./i18nMain");
 const { MainProcessInference } = require("./mainProcessInference");
 const { runNoteAction } = require("./noteActionRunner");
+const { markZeroForNote } = require("./recordingMarks");
 const {
   formatUserContextBlock,
   fitUserContextBlock,
@@ -42,6 +43,13 @@ const parseTranscriptSegments = (transcript) => {
   } catch {
     return null;
   }
+};
+
+const sameLineTexts = (before, after) => {
+  const left = parseTranscriptSegments(before);
+  const right = parseTranscriptSegments(after);
+  if (left === null || right === null) return before === after;
+  return left.length === right.length && left.every((line, i) => line?.text === right[i]?.text);
 };
 
 // STEP_ORDER.indexOf returns -1 for anything unrecognised, and -1 <= 0, so an
@@ -224,6 +232,7 @@ class PostCallPipelineManager {
     notesRegenerationScheduler = null,
     onNoteCreated = undefined,
     onNoteReindexed = undefined,
+    enqueueChildPipeline = undefined,
   }) {
     this._broadcast = broadcast;
     this._db = databaseManager;
@@ -234,6 +243,7 @@ class PostCallPipelineManager {
     this._notesRegenerationScheduler = notesRegenerationScheduler;
     this._onNoteCreated = onNoteCreated;
     this._onNoteReindexed = onNoteReindexed;
+    this._enqueueChildPipeline = enqueueChildPipeline;
     // Absent in the tests that construct this manager directly, and absent for
     // any caller with no local model available; both fall back to one call.
     this._resolveModelContext = resolveModelContext;
@@ -259,6 +269,7 @@ class PostCallPipelineManager {
     }
 
     if (fromIndex <= 1) {
+      await this._splitAtMarksStep(noteId);
       await this._detectWeldedCallsStep(noteId);
     }
 
@@ -463,6 +474,98 @@ class PostCallPipelineManager {
     }
   }
 
+  async _splitAtMarksStep(noteId) {
+    const stored = this._db.getRecordingMarks && this._db.getRecordingMarks(noteId);
+    const marks = stored?.at ?? [];
+    if (marks.length === 0) return;
+
+    try {
+      const { splitSafetyOf } = await import("./splitSafety.js");
+      const note = this._db.getNote(noteId);
+      const safety = splitSafetyOf(note);
+      if (!safety.ok) {
+        debugLogger.warn(
+          "Pipeline: recording marks kept, this note's timing cannot be cut safely",
+          { noteId, markCount: marks.length, reason: safety.reason },
+          "meeting"
+        );
+        return;
+      }
+
+      const zeroMs = markZeroForNote(note, stored.zeros);
+      if (zeroMs == null) {
+        debugLogger.warn(
+          "Pipeline: recording marks kept, the clock their offsets count from was not recorded",
+          { noteId, markCount: marks.length },
+          "meeting"
+        );
+        return;
+      }
+
+      const offsets = marks.map((at) => (at - zeroMs) / 1000);
+      const clockMs = Number.isFinite(note.transcript_origin_ms) ? note.transcript_origin_ms : null;
+      const { cutReportAt, cutPositionsForOffsets } = await import("./lineCut.js");
+      const { splitNoteCalls } = require("./noteCallSplit.js");
+      const cutsExpected = cutPositionsForOffsets(
+        parseTranscriptSegments(note.transcript) ?? [],
+        offsets,
+        clockMs
+      ).length;
+      const result = await splitNoteCalls({
+        databaseManager: this._db,
+        noteId,
+        reportFor: (segments) =>
+          cutReportAt(segments, cutPositionsForOffsets(segments, offsets, clockMs)),
+        onNoteCreated: (created) =>
+          this._announceMarkCut(noteId, () => this._onNoteCreated?.(created)),
+        onNoteChanged: (changed) =>
+          this._announceMarkCut(noteId, () => {
+            this._broadcast("note-updated", changed);
+            this._onNoteReindexed?.(changed);
+          }),
+      });
+
+      const childNoteIds = result.childNoteIds ?? [];
+      for (const childNoteId of childNoteIds) {
+        if (this._enqueueChildPipeline) this._enqueueChildPipeline(childNoteId);
+      }
+
+      if (childNoteIds.length === cutsExpected) {
+        this._db.clearRecordingMarks(noteId);
+      }
+      debugLogger.info(
+        "Pipeline: cut the recording at its marks",
+        {
+          noteId,
+          markCount: marks.length,
+          cutsExpected,
+          childCount: childNoteIds.length,
+          success: result.success,
+          reason: result.reason,
+        },
+        "meeting"
+      );
+    } catch (err) {
+      debugLogger.error(
+        "Pipeline step splitCalls failed cutting at marks",
+        { noteId, error: err.message },
+        "meeting"
+      );
+    }
+  }
+
+  _announceMarkCut(noteId, announce) {
+    try {
+      announce();
+    } catch (err) {
+      debugLogger.warn(
+        "Pipeline: announcing a cut at marks failed",
+        { noteId, error: err.message },
+        "meeting"
+      );
+    }
+  }
+
   /**
    * @param {number} noteId
    * @returns {Promise<number>} how many calls the recording appears to hold
@@ -575,7 +678,27 @@ class PostCallPipelineManager {
       return {};
     }
 
-    const previousTranscript = this._db.getNote(noteId)?.transcript;
+    const freshNote = this._db.getNote(noteId);
+    if (
+      isSliceOfSharedRecording(freshNote) ||
+      !sameLineTexts(note.transcript, freshNote?.transcript)
+    ) {
+      debugLogger.info(
+        "Re-transcription preserved: the note changed while it ran",
+        { noteId },
+        "meeting"
+      );
+      this._broadcast("post-call-pipeline-status", {
+        noteId,
+        step: "retranscribe",
+        status: "complete",
+        preserved: true,
+        reason: "changed-during-retranscribe",
+      });
+      return {};
+    }
+
+    const previousTranscript = freshNote.transcript;
     this._db.updateNote(noteId, {
       transcript: result.transcript,
       retranscribe_outcome: null,

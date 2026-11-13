@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Users, X } from "lucide-react";
+import { Check, Scissors, Users, X } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "../ui/popover";
 import { cn } from "../lib/utils";
 import type { TranscriptSegment } from "../../stores/meetingRecordingStore";
@@ -414,6 +414,8 @@ interface MeetingTranscriptChatProps {
   onDismissSuggestion?: (speakerId: string) => void;
   onAttachSpeakerEmail?: (profileId: number, email: string | null) => void;
   onToggleSelect?: (segmentId: string) => void;
+  onSplitAtLine?: (lineIndex: number) => void;
+  splitEarliestIndex?: number;
 }
 
 export function MeetingTranscriptChat({
@@ -439,6 +441,8 @@ export function MeetingTranscriptChat({
   onDismissSuggestion,
   onAttachSpeakerEmail,
   onToggleSelect,
+  onSplitAtLine,
+  splitEarliestIndex,
 }: MeetingTranscriptChatProps) {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -447,7 +451,7 @@ export function MeetingTranscriptChat({
   const [activeSpeakerFilter, setActiveSpeakerFilter] = useState<string | null>(null);
 
   const speakerCount = useMemo(() => {
-    const speakers = new Set(segments?.filter(s => s.speaker).map(s => s.speaker));
+    const speakers = new Set(segments?.filter((s) => s.speaker).map((s) => s.speaker));
     return speakers.size;
   }, [segments]);
 
@@ -514,13 +518,16 @@ export function MeetingTranscriptChat({
             isDiarizing={!!isDiarizing}
             speakerCount={speakerCount}
             showPanel={showSpeakerPanel}
-            onTogglePanel={() => setShowSpeakerPanel(prev => !prev)}
+            onTogglePanel={() => setShowSpeakerPanel((prev) => !prev)}
           />
         </div>
       )}
       <div
         ref={scrollRef}
-        className="h-full overflow-y-auto px-4 pt-3 pb-24 flex flex-col gap-1.5 agent-chat-scroll"
+        className={cn(
+          "h-full overflow-y-auto px-4 pt-3 flex flex-col gap-1.5 agent-chat-scroll",
+          "pb-[calc(var(--note-bottom-bar-height,5rem)+1rem)]"
+        )}
       >
         {segments.map((segment, i) => {
           const side = recordingSideOf(segment);
@@ -628,6 +635,24 @@ export function MeetingTranscriptChat({
                 >
                   {segment.text}
                 </div>
+                {onSplitAtLine && !isRecording && i !== splitEarliestIndex && (
+                  <button
+                    type="button"
+                    onClick={() => onSplitAtLine(i)}
+                    aria-label={t("notes.splitAtLine.splitHere")}
+                    title={t("notes.splitAtLine.splitHere")}
+                    className={cn(
+                      "absolute top-1.5 flex size-5 items-center justify-center rounded-md",
+                      "text-muted-foreground opacity-0 transition-opacity duration-150",
+                      "hover:bg-foreground/8 hover:text-foreground",
+                      "group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+                      "outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                      selfSide ? "-right-7" : "-left-7"
+                    )}
+                  >
+                    <Scissors size={12} aria-hidden="true" />
+                  </button>
+                )}
                 {selectable && (
                   <SelectCheckbox
                     isSelected={isSelected}
@@ -654,12 +679,7 @@ export function MeetingTranscriptChat({
         ].map(
           ({ text, source, speakerLabel }) =>
             text && (
-              <PartialBubble
-                key={source}
-                text={text}
-                source={source}
-                speakerLabel={speakerLabel}
-              />
+              <PartialBubble key={source} text={text} source={source} speakerLabel={speakerLabel} />
             )
         )}
       </div>

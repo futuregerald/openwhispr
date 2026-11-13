@@ -7,8 +7,8 @@ recorder deck (`design-demos/direction-approved.md`, local).
 
 | Phase | Scope | Status | Plan |
 |---|---|---|---|
-| 1 | Recordings stop on their own: 2-hour cap with a warning, call-end stop when a call was seen | in review | 2026-11-10-call-ending-phase1-auto-stop |
-| 2 | Recorder deck, NEXT (switch) and SPLIT at any line | not started | — |
+| 1 | Recordings stop on their own: 2-hour cap with a warning, call-end stop when a call was seen | done (1.39.0, #126; fixes in 1.39.1, #127) | 2026-11-10-call-ending-phase1-auto-stop |
+| 2 | Recorder deck, NEXT (switch) and SPLIT at any line | in review (1.40.0) | 2026-11-13-call-ending-phase2-deck-next-split |
 | 3 | JOIN (combine) and Separate again | not started | — |
 
 ## Strategy
@@ -47,8 +47,8 @@ recorder deck (`design-demos/direction-approved.md`, local).
 - On a finished note, choosing any transcript line and pressing SPLIT cuts the note there, after a preview with
   editable names. The detected gap is suggested.
 - On notes whose timing can't be split reliably, SPLIT is disabled with a reason (D4).
-- Acceptance: on a real-shaped fixture, cutting at a chosen line gives two notes whose lines, audio slices and
-  speakers partition the original, with nothing lost or duplicated. A recording with two NEXT markers becomes three
+- Acceptance: on a real-shaped fixture, cutting at a chosen line gives two notes whose lines and speakers partition
+  the original, with nothing lost or duplicated, and whose audio slices are disjoint and in order. A recording with two NEXT markers becomes three
   notes after the post-call pipeline.
 
 ### Phase 3: JOIN and Separate again

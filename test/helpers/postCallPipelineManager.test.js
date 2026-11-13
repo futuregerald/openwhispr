@@ -2649,6 +2649,17 @@ function splitFakeDb(seedNotes) {
       return { success: true };
     },
     _reindexTranscriptNow: () => {},
+    getRecordingMarks: (id) => {
+      const stored = rows.get(id)?.recording_marks;
+      return {
+        at: Array.isArray(stored?.at) ? [...stored.at] : [],
+        zeros: { system: null, mic: null, firstLine: null, ...(stored?.zeros ?? {}) },
+      };
+    },
+    clearRecordingMarks: (id) => {
+      if (rows.has(id)) rows.get(id).recording_marks = null;
+      return { success: true };
+    },
     getMeetingType: () => null,
     getMeetingTypes: () => [],
     getSpeakerMappings: () => [],
@@ -2873,4 +2884,386 @@ test("an unreadable transcript makes detection skip, not halt the pipeline", asy
   assert.deepEqual(statusesFor(mocks, 1, "splitCalls"), ["skipped"]);
   assert.equal(mocks.rows.size, 1);
   assert.deepEqual(statusesFor(mocks, 1, "notes"), ["running", "complete"]);
+});
+
+// ── Cutting at NEXT marks ────────────────────────────────────────────────────
+
+const MARK_EPOCH = 1_790_870_467_607;
+const ZERO_GAP_MS = 40_000;
+const marksAt = (offsetsSeconds, zeroMs, zeros = {}) => ({
+  at: offsetsSeconds.map((seconds) => zeroMs + seconds * 1000),
+  zeros: { system: null, mic: null, firstLine: null, ...zeros },
+});
+const retranscribedZeros = { system: MARK_EPOCH, mic: MARK_EPOCH + ZERO_GAP_MS };
+
+const markedMocks = (marks, { seed = {}, whisperSegments = singleCallWhisperSegments() } = {}) => {
+  const mocks = splitMocks(
+    [{ ...WELDED_SEED_NOTE, recording_marks: marks, ...seed }],
+    whisperSegments
+  );
+  mocks.enqueuedChildren = [];
+  return mocks;
+};
+
+const markedManager = (PostCallPipelineManager, mocks) =>
+  splitManager(PostCallPipelineManager, mocks, {
+    enqueueChildPipeline: (noteId) => mocks.enqueuedChildren.push(noteId),
+  });
+
+const lineCountOf = (mocks, id) => JSON.parse(mocks.rows.get(id).transcript).length;
+const childIdsOf = (mocks) => [...mocks.rows.keys()].filter((id) => id !== 1).sort((a, b) => a - b);
+const firstStampOf = (mocks, id) => JSON.parse(mocks.rows.get(id).transcript)[0].timestamp;
+
+const liveNote = (source, overrides = {}) => ({
+  transcript: JSON.stringify(
+    singleCallWhisperSegments().map((seg, index) => ({
+      id: `live-${index}`,
+      text: seg.text,
+      source,
+      timestamp: seg.start,
+    }))
+  ),
+  ...overrides,
+});
+
+test("two marks make three notes after the pipeline, partitioning every line", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks(marksAt([300, 700], MARK_EPOCH, retranscribedZeros));
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.size, 3);
+  const childIds = childIdsOf(mocks);
+  const all = [1, ...childIds].flatMap((id) => JSON.parse(mocks.rows.get(id).transcript));
+  assert.equal(all.length, SPLIT_SEGMENTS_PER_CALL * 2, "no line lost or duplicated");
+  assert.equal(new Set(all.map((line) => line.id)).size, all.length);
+
+  assert.equal(lineCountOf(mocks, 1), 12, "lines before the first mark at 300s");
+  assert.deepEqual(
+    childIds.map((id) => firstStampOf(mocks, id)).sort((a, b) => a - b),
+    [300, 700]
+  );
+  assert.deepEqual(
+    childIds.map((id) => lineCountOf(mocks, id)).sort((a, b) => a - b),
+    [16, 22]
+  );
+});
+
+test("the marks are cleared, the children are queued from classify, and the parent carries on", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks(marksAt([300, 700], MARK_EPOCH, retranscribedZeros));
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.get(1).recording_marks, null);
+  const childIds = childIdsOf(mocks);
+  assert.deepEqual(
+    [...mocks.enqueuedChildren].sort((a, b) => a - b),
+    childIds
+  );
+  for (const step of ["classify", "title", "notes"]) {
+    assert.deepEqual(statusesFor(mocks, 1, step), ["running", "complete"], `parent ${step}`);
+    for (const id of childIds) {
+      assert.deepEqual(statusesFor(mocks, id, step), [], "a child is run by its own queued job");
+    }
+  }
+});
+
+test("the parent and both children are announced, re-embedded and mirrored", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks(marksAt([300, 700], MARK_EPOCH, retranscribedZeros));
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.deepEqual(
+    mocks.created.map((note) => note.id).sort((a, b) => a - b),
+    childIdsOf(mocks)
+  );
+  assert.ok(
+    mocks.reindexed.some((note) => note.id === 1),
+    "the parent's vector row and mirror still hold the uncut transcript"
+  );
+  const parentLineCountsBroadcast = mocks.events
+    .filter((e) => e.channel === "note-updated" && e.id === 1)
+    .map((e) => JSON.parse(e.transcript).length);
+  assert.ok(
+    parentLineCountsBroadcast.includes(28),
+    "the renderer only learns of the parent's cut from note-updated, after each cut"
+  );
+});
+
+test("a rerun after the cut does not split again", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks(marksAt([300, 700], MARK_EPOCH, retranscribedZeros));
+
+  await withStubbedAudio(async () => {
+    const manager = markedManager(PostCallPipelineManager, mocks);
+    await manager.run(1);
+    await manager.run(1, { fromStep: "splitCalls" });
+  });
+
+  assert.equal(mocks.rows.size, 3);
+});
+
+test("a retranscribed mic-only note is cut from the mic file's start, not the system chunk's", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks(marksAt([300], MARK_EPOCH + ZERO_GAP_MS, retranscribedZeros), {
+    seed: { ...liveNote("mic"), system_audio_path: null, mic_audio_path: "/tmp/test.opus" },
+  });
+  const whisper = mocks.whisperManager.transcribeLocalWhisper;
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.ok(whisper, "retranscribe ran");
+  assert.equal(mocks.rows.size, 2);
+  assert.equal(firstStampOf(mocks, 2), 300);
+  assert.equal(lineCountOf(mocks, 1), 12);
+});
+
+test("a retranscribed system note is cut from the system file's start, not the mic file's", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks(marksAt([300], MARK_EPOCH, retranscribedZeros));
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.size, 2);
+  assert.equal(firstStampOf(mocks, 2), 300);
+});
+
+test("a live note with a clock is cut from that clock, not the system chunk's", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const clock = MARK_EPOCH + 7_000;
+  const mocks = markedMocks(marksAt([300], clock, retranscribedZeros), {
+    seed: {
+      ...liveNote("system"),
+      transcript_origin_ms: clock,
+      transcript_origin_source: "audio:system",
+    },
+  });
+
+  await withStubbedAudio(() =>
+    markedManager(PostCallPipelineManager, mocks).run(1, { fromStep: "splitCalls" })
+  );
+
+  assert.equal(mocks.rows.size, 2);
+  assert.equal(firstStampOf(mocks, 2), 300);
+});
+
+test("a live mic-only note is cut from its first line", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const firstLine = MARK_EPOCH + 11_000;
+  const mocks = markedMocks(marksAt([300], firstLine, { ...retranscribedZeros, firstLine }), {
+    seed: { ...liveNote("mic"), transcript_origin_source: null },
+  });
+
+  await withStubbedAudio(() =>
+    markedManager(PostCallPipelineManager, mocks).run(1, { fromStep: "splitCalls" })
+  );
+
+  assert.equal(mocks.rows.size, 2);
+  assert.equal(firstStampOf(mocks, 2), 300);
+});
+
+test("a mark pressed before the first system chunk is dropped and the others still land", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks(marksAt([-5, 300], MARK_EPOCH, retranscribedZeros));
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.size, 2);
+  assert.equal(firstStampOf(mocks, 2), 300);
+  assert.equal(mocks.rows.get(1).recording_marks, null, "every mark that could cut did");
+});
+
+test("marks whose zero was never recorded are kept and nothing is cut", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const marks = marksAt([300], MARK_EPOCH, { system: null, mic: null, firstLine: null });
+  const mocks = markedMocks(marks);
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.size, 1);
+  assert.deepEqual(mocks.rows.get(1).recording_marks, marks);
+  assert.deepEqual(statusesFor(mocks, 1, "notes"), ["running", "complete"]);
+});
+
+test("marks past the last line cut nothing and are still cleared", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks(marksAt([5000, 6000], MARK_EPOCH, retranscribedZeros));
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.size, 1);
+  assert.equal(mocks.rows.get(1).recording_marks, null);
+  assert.deepEqual(mocks.enqueuedChildren, []);
+  assert.deepEqual(mocks.created, []);
+});
+
+test("a note with no marks is not cut", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks(null);
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.size, 1);
+  assert.deepEqual(statusesFor(mocks, 1, "splitCalls"), ["skipped"]);
+});
+
+test("a note whose timing is unsafe keeps its marks and the pipeline still runs", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const marks = marksAt([300], MARK_EPOCH, retranscribedZeros);
+  const mocks = markedMocks(marks, { seed: { system_audio_path: null } });
+  mocks.rows.get(1).transcript = JSON.stringify(
+    [10, 20, 1790870467607, 1790870470000].map((timestamp, i) => ({
+      id: `m${i}`,
+      text: `invented ${i}`,
+      source: "system",
+      timestamp,
+    }))
+  );
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.size, 1);
+  assert.deepEqual(mocks.rows.get(1).recording_marks, marks);
+  assert.deepEqual(statusesFor(mocks, 1, "notes"), ["running", "complete"]);
+});
+
+test("a broadcast that throws does not stop the cut or the queueing of the child", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks(marksAt([300], MARK_EPOCH, retranscribedZeros));
+  const manager = splitManager(PostCallPipelineManager, mocks, {
+    onNoteCreated: () => {
+      throw new Error("the broadcast blew up");
+    },
+    enqueueChildPipeline: (noteId) => mocks.enqueuedChildren.push(noteId),
+  });
+
+  await withStubbedAudio(() => manager.run(1));
+
+  assert.equal(mocks.rows.size, 2);
+  assert.equal(mocks.enqueuedChildren.length, 1);
+  assert.equal(mocks.rows.get(1).recording_marks, null);
+  assert.deepEqual(statusesFor(mocks, 1, "notes"), ["running", "complete"]);
+});
+
+test("a failure part-way keeps the marks, queues what committed, and the parent's notes still run", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const marks = marksAt([300, 700], MARK_EPOCH, retranscribedZeros);
+  const mocks = markedMocks(marks);
+  const realSave = mocks.databaseManager.saveNote;
+  let saves = 0;
+  mocks.databaseManager.saveNote = (...args) => {
+    saves += 1;
+    if (saves === 2) throw new Error("disk full");
+    return realSave(...args);
+  };
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.size, 2, "only the first child committed");
+  assert.deepEqual(mocks.rows.get(1).recording_marks, marks, "kept so a retry can finish");
+  assert.equal(mocks.enqueuedChildren.length, 1, "the child that committed is still queued");
+  assert.deepEqual(statusesFor(mocks, 1, "notes"), ["running", "complete"]);
+});
+
+test("a cut that made fewer children than marks keeps the marks for a retry", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const noteCallSplit = require("../../src/helpers/noteCallSplit.js");
+  const realSplit = noteCallSplit.splitNoteCalls;
+  const marks = marksAt([300, 700], MARK_EPOCH, retranscribedZeros);
+  const mocks = markedMocks(marks);
+  noteCallSplit.splitNoteCalls = async () => ({
+    success: true,
+    parentNoteId: 1,
+    childNoteIds: [99],
+  });
+
+  try {
+    await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+  } finally {
+    noteCallSplit.splitNoteCalls = realSplit;
+  }
+
+  assert.deepEqual(mocks.rows.get(1).recording_marks, marks);
+  assert.deepEqual(mocks.enqueuedChildren, [99]);
+});
+
+// ── A split or edit while retranscribe is running ────────────────────────────
+
+const retranscribeRaceNote = () => ({
+  ...WELDED_SEED_NOTE,
+  transcript: asStoredTranscript(singleCallWhisperSegments()),
+});
+
+test("a note split while retranscribe runs is not overwritten with the whole recording", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const { splitNoteAtLine } = require("../../src/helpers/noteCallSplit.js");
+  const mocks = splitMocks([retranscribeRaceNote()], singleCallWhisperSegments());
+  const whisper = mocks.whisperManager.transcribeLocalWhisper;
+  mocks.whisperManager.transcribeLocalWhisper = async (...args) => {
+    const r = await splitNoteAtLine({
+      databaseManager: mocks.databaseManager,
+      noteId: 1,
+      lineIndex: 10,
+      firstTitle: "",
+      secondTitle: "",
+      onNoteCreated: () => {},
+    });
+    assert.equal(r.success, true);
+    return whisper(...args);
+  };
+
+  await withStubbedAudio(() => splitManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.size, 2);
+  const parentLines = JSON.parse(mocks.rows.get(1).transcript);
+  const childLines = JSON.parse(mocks.rows.get(2).transcript);
+  assert.equal(parentLines.length, 10);
+  assert.equal(parentLines.length + childLines.length, SPLIT_SEGMENTS_PER_CALL * 2);
+  assert.ok(parentLines.every((line) => line.id.startsWith("retranscribe-")));
+  const done = mocks.events.find(
+    (e) =>
+      e.channel === "post-call-pipeline-status" &&
+      e.step === "retranscribe" &&
+      e.status === "complete"
+  );
+  assert.equal(done?.preserved, true);
+  assert.equal(done?.reason, "changed-during-retranscribe");
+});
+
+test("a speaker renamed while retranscribe runs does not stop the better transcript landing", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = splitMocks([retranscribeRaceNote()], singleCallWhisperSegments());
+  const original = mocks.rows.get(1).transcript;
+  const renamed = JSON.stringify(
+    JSON.parse(original).map((line) => ({ ...line, speakerName: "Renamed" }))
+  );
+  const whisper = mocks.whisperManager.transcribeLocalWhisper;
+  mocks.whisperManager.transcribeLocalWhisper = async (...args) => {
+    mocks.rows.get(1).transcript = renamed;
+    return whisper(...args);
+  };
+
+  await withStubbedAudio(() => splitManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.notEqual(mocks.rows.get(1).transcript, renamed);
+  assert.equal(mocks.rows.get(1).transcript_origin_source, "unanchored");
+});
+
+test("a transcript rewritten while retranscribe runs is kept as it is", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = splitMocks([retranscribeRaceNote()], singleCallWhisperSegments());
+  const edited = JSON.stringify([
+    { id: "edited", text: "typed by hand", source: "system", timestamp: 0 },
+  ]);
+  const whisper = mocks.whisperManager.transcribeLocalWhisper;
+  mocks.whisperManager.transcribeLocalWhisper = async (...args) => {
+    mocks.rows.get(1).transcript = edited;
+    return whisper(...args);
+  };
+
+  await withStubbedAudio(() => splitManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.get(1).transcript, edited);
 });

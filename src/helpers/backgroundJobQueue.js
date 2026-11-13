@@ -112,6 +112,10 @@ class BackgroundJobQueue extends EventEmitter {
     return rows.length;
   }
 
+  hasActivePostCallJob(noteId) {
+    return this._store ? this._store.hasActivePostCallJob(noteId) : false;
+  }
+
   get length() {
     return this._queue.length;
   }

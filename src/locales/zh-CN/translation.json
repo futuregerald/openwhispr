@@ -2096,13 +2096,50 @@
       "failedUnanchored": "这段录音的时间戳与音频无法对应，拆分不安全。",
       "failedStale": "检查期间转写内容发生了变化。请重新打开笔记后再试。",
       "failedPartway": "中途出错了。部分通话可能已经成为独立的笔记，请重新打开笔记查看。",
-      "failedUnknown": "无法完成拆分。"
+      "failedPipelineRunning": "此录音的笔记仍在生成中，请在完成后重试。",
+      "failedUnknown": "无法完成拆分。",
+      "failedUnsafe": "此录音的时间信息无法可靠拆分，因此未作任何更改。"
     },
     "reprocessAll": {
       "label": "重新处理所有会议",
       "confirm": "重新处理所有会议？这将覆盖现有笔记。",
       "queued": "已将 {{count}} 个会议加入重新处理队列",
       "none": "没有可重新处理的已保存音频会议"
+    },
+    "recorderDeck": {
+      "label": "录音机",
+      "rec": "REC",
+      "elapsed": "录音时长",
+      "next": "下一段",
+      "nextHint": "标记下一通电话的开始位置。停止录音时，笔记会在此处拆分。",
+      "stop": "停止",
+      "tracks": "分段",
+      "refused": {
+        "no-recording": "当前没有正在录制的会议。",
+        "too-soon": "请等几秒再进行下一次标记。",
+        "limit-reached": "已达到分段上限（8 个标记）。",
+        "note-not-found": "此笔记已不存在。",
+        "invalid-time": "无法标记该时刻。",
+        "unknown": "无法添加标记。"
+      }
+    },
+    "splitAtLine": {
+      "title": "拆分为两条笔记",
+      "description": "后半部分会成为独立的笔记，拥有自己的记录和日期。已生成的笔记、发言人姓名和会议类型保留在前半部分。此操作无法撤销。",
+      "suggestion": "建议：在 {{at}} 处有 {{gap}} 的间隔",
+      "useThis": "使用此项",
+      "firstPart": "前半部分",
+      "secondPart": "后半部分",
+      "partSummary": "行数：{{lines}} · {{range}}",
+      "firstPlaceholder": "笔记标题",
+      "secondPlaceholder": "新通话——生成笔记后命名",
+      "startsWith": "后半部分从此处开始：“{{text}}”",
+      "failedInvalidLine": "该行不能作为新笔记的开头，请选择更靠后的行。",
+      "failedTranscriptChanged": "自你打开以来转录内容已更改。请重新打开笔记并再次选择该行。",
+      "outOfOrder": "部分行的时间顺序不一致，会归入其时间所属的部分。",
+      "commit": "拆分为两条笔记",
+      "splitHere": "在此拆分",
+      "unsafe": "此录音的时间信息无法可靠拆分"
     }
   },
   "dictionary": {
