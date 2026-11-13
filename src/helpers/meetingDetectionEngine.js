@@ -1,6 +1,7 @@
 const { BrowserWindow, shell } = require("electron");
 const debugLogger = require("./debugLogger");
 const { getMeetingJoinUrl } = require("./meetingJoinUrl");
+const { continuedNoteFields } = require("./recordingTarget");
 const health = require("./meetingDetectionHealth");
 const { resetAutomationDenied } = require("./browserMeetingUrlChecker");
 const { i18nMain } = require("./i18nMain");
@@ -117,7 +118,7 @@ class MeetingDetectionEngine {
     // opt-in auto-start. Fires even when muted; ignores idle meeting tabs.
     if (this.callStateDetector) {
       this.callStateDetector.on("call-active", (data) => this._handleCallActive(data));
-      this.callStateDetector.on("call-ended", () => this._handleCallEnded());
+      this.callStateDetector.on("call-ended", (data) => this._handleCallEnded(data));
     }
   }
 
@@ -184,14 +185,14 @@ class MeetingDetectionEngine {
       });
   }
 
-  _handleCallEnded() {
+  _handleCallEnded(data) {
     if (!this._meetingRecording || this._stoppingCurrentRecording()) return;
     debugLogger.info(
       "Call ended — requesting recording stop",
       {
         autoStarted: this._autoStarted,
         noteId: this._meetingRecording.noteId,
-        callObserved: this.callStateDetector?.hasObservedCall?.() ?? null,
+        callObserved: data?.callObserved ?? null,
       },
       "meeting"
     );
@@ -333,7 +334,7 @@ class MeetingDetectionEngine {
     this.windowManager?.dismissRecordingNotice?.();
 
     const suffix = i18nMain.t("recordingNotice.continuedSuffix", { defaultValue: "(continued)" });
-    const summary = `${source.title || "New note"} ${suffix}`;
+    const { title: summary, carried } = continuedNoteFields(source, suffix);
     debugLogger.info("Resuming after call ended", { fromNoteId: notice.noteId }, "meeting");
     let created;
     try {
@@ -348,10 +349,6 @@ class MeetingDetectionEngine {
     }
     if (!created) return false;
 
-    const carried = {};
-    for (const field of ["calendar_event_id", "participants", "meeting_type_id"]) {
-      if (source[field] != null) carried[field] = source[field];
-    }
     if (Object.keys(carried).length > 0) {
       const result = this.databaseManager.updateNote(created.id, carried);
       if (result?.success && result?.note) this.broadcastToWindows("note-updated", result.note);

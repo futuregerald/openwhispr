@@ -260,4 +260,4 @@ function splitNoteAtBoundary({
   };
 }
 
-module.exports = { splitNoteAtBoundary };
+module.exports = { splitNoteAtBoundary, formatUtcSqliteTimestamp };

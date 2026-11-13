@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.39.1] - 2026-11-13
+
+### Fixed
+
+- A meeting note now shows the date and time its call happened. A note you
+  created earlier and recorded into later used to keep the day you created it,
+  so a call could be filed days back in the list. The note now moves to the
+  moment recording started.
+- Pressing record on a note that already has a recording now starts a new note
+  called "(continued)", instead of adding the new call to the old one. Adding a
+  second call to a note used to shift the first call's lines to the wrong times,
+  and could replace some of them.
+- A note's timing is never rewritten by a later recording, so its lines stay
+  matched to its audio.
+
 ## [1.39.0] - 2026-11-10
 
 ### Added
