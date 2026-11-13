@@ -1573,7 +1573,9 @@ class DatabaseManager {
         params.push(folderId);
       }
       const where = `WHERE ${conditions.join(" AND ")}`;
-      const stmt = this.db.prepare(`SELECT * FROM notes ${where} ORDER BY created_at DESC LIMIT ?`);
+      const stmt = this.db.prepare(
+        `SELECT * FROM notes ${where} ORDER BY created_at DESC, id DESC LIMIT ?`
+      );
       params.push(limit);
       return stmt.all(...params);
     } catch (error) {

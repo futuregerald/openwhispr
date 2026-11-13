@@ -196,3 +196,42 @@ test("web-call evidence followed by no match ends the recording", async (t) => {
 
   assert.equal(ended.length, 1);
 });
+
+test("call-ended carries the evidence the call produced, captured before it is cleared", async (t) => {
+  const { detector } = createDetector(t, []);
+  const payloads = [];
+  detector.on("call-ended", (data) => payloads.push(data));
+  detector.setSelfRecording(true);
+  camera(detector, true);
+  camera(detector, false);
+
+  await poll(t, 2);
+
+  assert.equal(payloads.length, 1);
+  assert.equal(payloads[0].callObserved, true);
+});
+
+test("the engine logs the evidence from the call-ended event", (t) => {
+  const { EventEmitter } = require("node:events");
+  const debugLogger = require("../../src/helpers/debugLogger");
+  const MeetingDetectionEngine = require("../../src/helpers/meetingDetectionEngine");
+  const noop = () => {};
+  const idle = { on: noop, start: noop, stop: noop };
+  const callDetector = new EventEmitter();
+  const engine = new MeetingDetectionEngine(
+    {},
+    idle,
+    idle,
+    { notificationPrefs: {} },
+    {},
+    callDetector
+  );
+  engine._meetingRecording = { noteId: 7 };
+  engine.broadcastToWindows = noop;
+  const info = t.mock.method(debugLogger, "info", noop);
+
+  callDetector.emit("call-ended", { callObserved: true });
+
+  const logged = info.mock.calls.find((c) => c.arguments[0].startsWith("Call ended"));
+  assert.equal(logged.arguments[1].callObserved, true);
+});

@@ -57,6 +57,7 @@ import { parseTranscriptSegments } from "../../utils/parseTranscriptSegments";
 import { buildNoteActionInput } from "../../utils/noteActionInput";
 import { resolveExpectedSpeakerCount } from "../../utils/participants";
 import { useNotesListWidth } from "../../hooks/useNotesListWidth";
+import { noteHasRecording, continuedNoteFields } from "../../helpers/recordingTarget";
 import {
   useNotes,
   useActiveNoteId,
@@ -124,6 +125,7 @@ export default function PersonalNotesView({
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const enhancedSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const activeNoteRef = useRef<number | null>(null);
+  const linkedStartInFlightRef = useRef(false);
   const [syncedNoteId, setSyncedNoteIdState] = useState<number | null>(null);
   const localContentRef = useRef(localContent);
   const localTitleRef = useRef(localTitle);
@@ -303,9 +305,72 @@ export default function PersonalNotesView({
     });
   }, [activeNote?.calendar_event_id]);
 
+  const startRecordingIntoLinkedNote = useCallback(
+    async (source: (typeof notes)[number]) => {
+      const fields = continuedNoteFields(
+        source,
+        t("recordingNotice.continuedSuffix"),
+        t("notes.list.untitledNote")
+      );
+      const showFailure = () =>
+        toast({
+          title: t("notes.meeting.title"),
+          description: t("notes.upload.batchSaveFailed"),
+          variant: "destructive",
+        });
+      let created: (typeof notes)[number];
+      let carriedWritten = false;
+      try {
+        const result = await window.electronAPI.saveNote(
+          fields.title,
+          "",
+          fields.noteType,
+          null,
+          null,
+          fields.folderId
+        );
+        if (!result.success || !result.note) {
+          showFailure();
+          return;
+        }
+        created = result.note;
+        if (Object.keys(fields.carried).length > 0) {
+          const updated = await window.electronAPI.updateNote(created.id, fields.carried);
+          carriedWritten = Boolean(updated?.success);
+        }
+      } catch {
+        showFailure();
+        return;
+      }
+      const target = carriedWritten ? { ...created, ...fields.carried } : created;
+      setActiveNoteId(created.id);
+      loadFolders();
+      await storeStartRecording({
+        noteId: created.id,
+        noteTitle: created.title ?? null,
+        folderId: created.folder_id ?? null,
+        seedSegments: [],
+        diarizationEnabled:
+          target.diarization_enabled == null ? null : target.diarization_enabled === 1,
+        expectedCount: resolveExpectedSpeakerCount(target),
+      });
+    },
+    [loadFolders, t, toast]
+  );
+
   const startRecording = useCallback(async () => {
+    if (useMeetingRecordingStore.getState().isRecording || linkedStartInFlightRef.current) return;
     const noteId = activeNoteRef.current;
     const note = notes.find((n) => n.id === noteId);
+    if (note && noteHasRecording(note)) {
+      linkedStartInFlightRef.current = true;
+      try {
+        await startRecordingIntoLinkedNote(note);
+      } finally {
+        linkedStartInFlightRef.current = false;
+      }
+      return;
+    }
     const seedSegments = note?.transcript ? parseTranscriptSegments(note.transcript) : [];
     await storeStartRecording({
       noteId,
@@ -315,7 +380,7 @@ export default function PersonalNotesView({
       diarizationEnabled: note?.diarization_enabled == null ? null : note.diarization_enabled === 1,
       expectedCount: resolveExpectedSpeakerCount(note),
     });
-  }, [notes]);
+  }, [notes, startRecordingIntoLinkedNote]);
 
   const stopRecording = useCallback(async () => {
     await storeStopRecording();

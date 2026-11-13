@@ -85,11 +85,21 @@ export function addNote(note: NoteItem): void {
   useNoteStore.setState({ notes: [note, ...withoutDuplicate].slice(0, currentLimit) });
 }
 
+function sortNewestFirst(notes: NoteItem[]): NoteItem[] {
+  return [...notes].sort((a, b) => {
+    if (a.created_at !== b.created_at) return a.created_at < b.created_at ? 1 : -1;
+    return b.id - a.id;
+  });
+}
+
 export function updateNoteInStore(note: NoteItem): void {
   if (!note) return;
   const { notes } = useNoteStore.getState();
+  const previous = notes.find((existing) => existing.id === note.id);
+  const replaced = notes.map((existing) => (existing.id === note.id ? note : existing));
   useNoteStore.setState({
-    notes: notes.map((existing) => (existing.id === note.id ? note : existing)),
+    notes:
+      previous && previous.created_at !== note.created_at ? sortNewestFirst(replaced) : replaced,
   });
 }
 
@@ -115,6 +125,10 @@ export function setActiveNoteId(id: number | null): void {
 export function setActiveFolderId(id: number | null): void {
   if (useNoteStore.getState().activeFolderId === id) return;
   useNoteStore.setState({ activeFolderId: id });
+}
+
+export function getNotesValue(): NoteItem[] {
+  return useNoteStore.getState().notes;
 }
 
 export function getActiveNoteIdValue(): number | null {

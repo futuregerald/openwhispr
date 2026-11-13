@@ -21,6 +21,8 @@ const { resolveRetryStep } = require("./noteRetryStep");
 const meetingDetectionHealth = require("./meetingDetectionHealth");
 const { BYOK_API_KEYS } = require("../config/secretKeys");
 const { classifyAndLog } = require("./networkErrors");
+const { noteHasRecording } = require("./recordingTarget");
+const { formatUtcSqliteTimestamp } = require("./splitNoteAtBoundary");
 const GnomeShortcutManager = require("./gnomeShortcut");
 const HyprlandShortcutManager = require("./hyprlandShortcut");
 const AssemblyAiStreaming = require("./assemblyAiStreaming");
@@ -250,6 +252,7 @@ async function postMultipart(url, body, boundary, headers = {}) {
 }
 
 const EPOCH_MS_FLOOR = 1e9;
+const SAME_CLOCK_TOLERANCE_MS = 1000;
 
 function toRelativeSecondTimestamps(segments, audioStartedAt) {
   const startMs =
@@ -268,6 +271,19 @@ function toRelativeSecondTimestamps(segments, audioStartedAt) {
     ...segment,
     timestamp: toRelativeSeconds(segment.timestamp),
     startedAt: toRelativeSeconds(segment.startedAt),
+  }));
+}
+
+function rebaseSegmentsOntoClock(segments, fromOriginMs, toOriginMs) {
+  const rebase = (value) => {
+    if (value == null) return undefined;
+    const epochMs = value > EPOCH_MS_FLOOR ? value : Math.round(value * 1000) + fromOriginMs;
+    return (epochMs - toOriginMs) / 1000;
+  };
+  return segments.map((segment) => ({
+    ...segment,
+    timestamp: rebase(segment.timestamp),
+    startedAt: rebase(segment.startedAt),
   }));
 }
 
@@ -404,6 +420,24 @@ class IPCHandlers {
     setImmediate(() => this.broadcastToWindows("note-added", note));
     this._asyncVectorUpsert(note);
     this._asyncMirrorWrite(note);
+  }
+
+  _dateNoteAtFirstRecording(noteId, startedAtMs) {
+    if (noteId == null) return;
+    try {
+      const note = this.databaseManager.getNote(noteId);
+      if (!note || noteHasRecording(note)) return;
+      const result = this.databaseManager.setNoteCreatedAt(
+        noteId,
+        formatUtcSqliteTimestamp(startedAtMs)
+      );
+      if (result?.success) this._notifyNoteChanged(result.note);
+    } catch (error) {
+      debugLogger.warn("Could not date the note at recording start", {
+        noteId,
+        error: error.message,
+      });
+    }
   }
 
   _notifyNoteChanged(note) {
@@ -5823,6 +5857,7 @@ class IPCHandlers {
           debugLogger.info("Meeting transcription start superseded by a stop", {}, "meeting");
           return false;
         }
+        this._dateNoteAtFirstRecording(options.noteId, meetingStartedAt);
         this.meetingDetectionEngine?.meetingRecordingStarted({ noteId: options.noteId ?? null });
         return true;
       };
@@ -8530,13 +8565,32 @@ class IPCHandlers {
       } = require("./transcriptSpeakerState");
 
       const persisted = this.databaseManager.getNote(noteId);
+      const storedOrigin = Number.isSafeInteger(persisted?.transcript_origin_ms)
+        ? persisted.transcript_origin_ms
+        : null;
       const existing = toRelativeSecondTimestamps(
         parseTranscriptSegments(persisted?.transcript ?? "", (message, error) =>
           debugLogger.warn(message, { error: error?.message, noteId })
         ),
-        audioStartedAt
+        storedOrigin ?? audioStartedAt
       );
-      const incoming = segments.map((segment, index) => ({
+      const hasNewOrigin = Number.isFinite(audioStartedAt) && audioStartedAt > EPOCH_MS_FLOOR;
+      const sharesStoredClock =
+        storedOrigin == null ||
+        !hasNewOrigin ||
+        Math.abs(storedOrigin - audioStartedAt) <= SAME_CLOCK_TOLERANCE_MS;
+      if (!sharesStoredClock) {
+        debugLogger.warn("Recording started off the note's clock; lines moved onto it", {
+          noteId,
+          storedOrigin,
+          audioStartedAt,
+        });
+      }
+      const incoming = (
+        sharesStoredClock
+          ? segments
+          : rebaseSegmentsOntoClock(segments, audioStartedAt, storedOrigin)
+      ).map((segment, index) => ({
         ...segment,
         id: segment.id || `diarized-${index}`,
       }));
@@ -8544,7 +8598,7 @@ class IPCHandlers {
 
       this._updateNoteAndNotify(noteId, {
         transcript: serializeTranscriptSegments(merged),
-        ...(Number.isFinite(audioStartedAt) && audioStartedAt > EPOCH_MS_FLOOR
+        ...(storedOrigin == null && hasNewOrigin
           ? {
               transcript_origin_ms: audioStartedAt,
               transcript_origin_source: "audio:system",

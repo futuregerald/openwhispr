@@ -5,7 +5,7 @@
  * device-in-use transitions (i.e. "you're actually in a call"). Debounces the
  * signal, optionally confirms via a browser meeting-URL check, and emits:
  *   - "call-active"  { devices: {camera, microphone}, urlMatch }
- *   - "call-ended"
+ *   - "call-ended"   { callObserved }
  *
  * This is a stronger "in a call" signal than audio energy: it fires even when
  * you're muted (the call still holds the mic/camera device), and it does NOT
@@ -221,7 +221,7 @@ class CallStateDetector extends EventEmitter {
         this._deactivateTimer = setTimeout(() => {
           this._deactivateTimer = null;
           this._callActive = false;
-          this.emit("call-ended");
+          this.emit("call-ended", { callObserved: this._callObserved });
         }, DEACTIVATE_DEBOUNCE_MS);
       }
     }
@@ -331,12 +331,13 @@ class CallStateDetector extends EventEmitter {
     this._endMisses += 1;
     if (this._endMisses >= END_MISS_THRESHOLD) {
       this._stopEndPoll();
+      const callObserved = this._callObserved;
       this._callActive = false;
       this._selfRecording = false;
       this._callUsedCamera = false;
       this._callObserved = false;
       this._urlMatchStreak = 0;
-      this.emit("call-ended");
+      this.emit("call-ended", { callObserved });
     }
   }
 
