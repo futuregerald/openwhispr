@@ -7,6 +7,7 @@ const { normalizeUserContext } = require("./userContextBlock.js");
 const { lockTranscriptSpeaker } = require("./transcriptSpeakerState.js");
 const { buildNoteSearchQuery } = require("./noteSearch");
 const peopleResolver = require("./peopleResolver");
+const { normalizeMarkZeros } = require("./recordingMarks.js");
 const { resolveDateRange } = require("./searchDateRange");
 const { MODEL_ID: SPEAKER_MODEL_ID, l2Normalize } = require("./speakerEmbeddings");
 const { MAX_CALL_SPLITS } = require("./noteCallSplit.js");
@@ -47,7 +48,7 @@ const MAX_TRANSCRIPT_PAGE = 500;
 const MAX_SEGMENT_SEARCH_LIMIT = 50;
 const MAX_SEGMENT_CONTEXT = 2;
 const MAX_SEGMENT_TEXT_CHARS = 500;
-const MIN_RECORDING_MARK_GAP_SECONDS = 10;
+const MIN_RECORDING_MARK_GAP_MS = 10_000;
 
 const TRANSCRIPT_INDEX_TICK_MS = 5000;
 const TRANSCRIPT_INDEX_BATCH = 3;
@@ -1911,38 +1912,56 @@ class DatabaseManager {
 
   getRecordingMarks(noteId) {
     const row = this.db.prepare("SELECT recording_marks FROM notes WHERE id = ?").get(noteId);
-    if (!row || typeof row.recording_marks !== "string") return [];
+    let stored = null;
     try {
-      const parsed = JSON.parse(row.recording_marks);
-      return Array.isArray(parsed) ? parsed.filter((mark) => Number.isFinite(mark)) : [];
+      stored = typeof row?.recording_marks === "string" ? JSON.parse(row.recording_marks) : null;
     } catch {
-      return [];
+      stored = null;
     }
+    const at = Array.isArray(stored?.at) ? stored.at.filter((mark) => Number.isFinite(mark)) : [];
+    return { at, zeros: normalizeMarkZeros(stored?.zeros) };
   }
 
-  addRecordingMark(noteId, offsetSeconds) {
+  _writeRecordingMarks(noteId, marks) {
+    this.db
+      .prepare("UPDATE notes SET recording_marks = ? WHERE id = ?")
+      .run(JSON.stringify(marks), noteId);
+  }
+
+  addRecordingMark(noteId, atMs) {
     try {
       if (!this.db) throw new Error("Database not initialized");
       if (!this.db.prepare("SELECT 1 FROM notes WHERE id = ?").get(noteId)) {
         return { success: false, reason: "note-not-found" };
       }
-      if (!Number.isFinite(offsetSeconds) || offsetSeconds < 0) {
-        return { success: false, reason: "invalid-offset" };
+      if (!Number.isFinite(atMs) || atMs <= 0) {
+        return { success: false, reason: "invalid-time" };
       }
-      const marks = this.getRecordingMarks(noteId);
-      if (marks.length >= MAX_CALL_SPLITS) {
-        return { success: false, reason: "limit-reached", marks };
+      const { at, zeros } = this.getRecordingMarks(noteId);
+      if (at.length >= MAX_CALL_SPLITS) {
+        return { success: false, reason: "limit-reached", marks: at };
       }
-      if (marks.some((mark) => Math.abs(mark - offsetSeconds) < MIN_RECORDING_MARK_GAP_SECONDS)) {
-        return { success: false, reason: "too-soon", marks };
+      if (at.some((mark) => Math.abs(mark - atMs) < MIN_RECORDING_MARK_GAP_MS)) {
+        return { success: false, reason: "too-soon", marks: at };
       }
-      const next = [...marks, offsetSeconds].sort((left, right) => left - right);
-      this.db
-        .prepare("UPDATE notes SET recording_marks = ? WHERE id = ?")
-        .run(JSON.stringify(next), noteId);
+      const next = [...at, atMs].sort((left, right) => left - right);
+      this._writeRecordingMarks(noteId, { at: next, zeros });
       return { success: true, marks: next };
     } catch (error) {
       debugLogger.error("Error adding recording mark", { error: error.message }, "notes");
+      throw error;
+    }
+  }
+
+  setRecordingMarkZeros(noteId, zeros) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      const { at } = this.getRecordingMarks(noteId);
+      if (at.length === 0) return { success: false, reason: "no-marks" };
+      this._writeRecordingMarks(noteId, { at, zeros: normalizeMarkZeros(zeros) });
+      return { success: true };
+    } catch (error) {
+      debugLogger.error("Error storing recording mark zeros", { error: error.message }, "notes");
       throw error;
     }
   }

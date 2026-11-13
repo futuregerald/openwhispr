@@ -4,7 +4,8 @@ export type SplitSafetyReason =
   | "missing-timestamps"
   | "mixed-units"
   | "negative-offset"
-  | "clock-overwritten";
+  | "clock-overwritten"
+  | "pending";
 
 export type SplitSafety = { ok: boolean; reason?: SplitSafetyReason };
 

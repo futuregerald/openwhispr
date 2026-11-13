@@ -2096,6 +2096,7 @@
       "failedUnanchored": "Die Zeitstempel dieser Aufnahme passen nicht zur Audiodatei, ein Teilen wäre nicht sicher.",
       "failedStale": "Das Transkript hat sich während der Prüfung geändert. Öffne die Notiz erneut und versuche es noch einmal.",
       "failedPartway": "Mitten im Vorgang ist etwas schiefgegangen. Einige Anrufe sind möglicherweise schon eigene Notizen – öffne die Notiz erneut, um nachzusehen.",
+      "failedPipelineRunning": "Für diese Aufnahme werden noch Notizen erstellt. Versuche es erneut, wenn das abgeschlossen ist.",
       "failedUnknown": "Das Teilen konnte nicht abgeschlossen werden.",
       "failedUnsafe": "Die Zeitangaben dieser Aufnahme lassen sich nicht zuverlässig teilen, daher wurde nichts geändert."
     },
@@ -2115,11 +2116,10 @@
       "tracks": "Titel",
       "refused": {
         "no-recording": "Es läuft keine Besprechungsaufnahme.",
-        "no-audio-yet": "Warte, bis Audio eintrifft, bevor du markierst.",
         "too-soon": "Warte ein paar Sekunden bis zur nächsten Markierung.",
         "limit-reached": "Titellimit erreicht (8 Markierungen).",
         "note-not-found": "Diese Notiz existiert nicht mehr.",
-        "invalid-offset": "Dieser Zeitpunkt konnte nicht markiert werden.",
+        "invalid-time": "Dieser Zeitpunkt konnte nicht markiert werden.",
         "unknown": "Die Markierung konnte nicht hinzugefügt werden."
       }
     },
@@ -2135,6 +2135,8 @@
       "secondPlaceholder": "Neuer Anruf – wird nach der Notizerstellung benannt",
       "startsWith": "Der zweite Teil beginnt mit: „{{text}}“",
       "failedInvalidLine": "Diese Zeile kann keine neue Notiz beginnen. Wähle eine spätere Zeile.",
+      "failedTranscriptChanged": "Das Transkript hat sich geändert, seit du es geöffnet hast. Öffne die Notiz erneut und wähle die Zeile noch einmal.",
+      "outOfOrder": "Einige Zeilen sind zeitlich nicht in der richtigen Reihenfolge und kommen in den Teil, zu dem ihre Zeit gehört.",
       "commit": "In zwei Notizen teilen",
       "splitHere": "Hier teilen",
       "unsafe": "Die Zeitangaben dieser Aufnahme lassen sich nicht zuverlässig teilen"

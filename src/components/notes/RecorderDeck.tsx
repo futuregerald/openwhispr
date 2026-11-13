@@ -18,7 +18,7 @@ const KEY_BASE = cn(
 export default function RecorderDeck({ onStop }: { onStop: () => void }) {
   const { t, i18n } = useTranslation();
   const startedAt = useMeetingRecordingStore((s) => s.recordingStartedAt);
-  const markerTimes = useMeetingRecordingStore((s) => s.markerTimes);
+  const markers = useMeetingRecordingStore((s) => s.markers);
   const isMarking = useMeetingRecordingStore((s) => s.isMarking);
   const markerRefusal = useMeetingRecordingStore((s) => s.markerRefusal);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -28,11 +28,11 @@ export default function RecorderDeck({ onStop }: { onStop: () => void }) {
     return () => clearInterval(id);
   }, []);
 
-  const tracks = deckTracks(startedAt, markerTimes);
+  const tracks = deckTracks(startedAt, markers);
   const nextKey = markerKeyState({
     isMarking,
-    markCount: markerTimes.length,
-    lastMarkAtMs: markerTimes.length > 0 ? markerTimes[markerTimes.length - 1] : null,
+    markCount: markers.length,
+    lastMarkAtMs: markers.length > 0 ? markers[markers.length - 1] : null,
     nowMs,
   });
   const nextDisabled = !nextKey.enabled || startedAt == null;

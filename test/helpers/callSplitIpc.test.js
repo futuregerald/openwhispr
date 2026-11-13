@@ -785,3 +785,79 @@ test("a split at a line keeps the audio paths and dates the new note from its fi
   const parent = databaseManager.getNote(noteId);
   assert.ok(parent.slice_end_s <= child.slice_start_s);
 });
+
+// ── Splits are refused while the note's pipeline is queued or running ───────
+
+const queuePipelineJob = (
+  handlers,
+  noteId,
+  { status = "pending", key = `post-call-${noteId}` } = {}
+) => {
+  const row = handlers._jobStore.insert(key, "post-call-pipeline", { noteId });
+  if (status === "running") handlers._jobStore.markRunning(row.id);
+  if (status === "failed") handlers._jobStore.markFailed(row.id, new Error("boom"));
+  return row;
+};
+
+for (const status of ["pending", "running"]) {
+  test(`a split at a line is refused while the note's pipeline is ${status}`, async () => {
+    const { handlers, databaseManager, enqueued } = setup();
+    const noteId = seedNote(databaseManager, { segments: singleCallSegments() });
+    const before = databaseManager.getNote(noteId).transcript;
+    queuePipelineJob(handlers, noteId, { status, key: `post-call-retry-${noteId}` });
+
+    const result = await invoke("split-note-at-line", noteId, 10, {});
+
+    assert.deepEqual(result, { success: false, reason: "pipeline-running" });
+    assert.equal(databaseManager.getNote(noteId).transcript, before);
+    assert.deepEqual(enqueued, []);
+  });
+
+  test(`a call split is refused while the note's pipeline is ${status}`, async () => {
+    const { handlers, databaseManager } = setup();
+    const noteId = seedNote(databaseManager, { segments: weldedSegments(2) });
+    const before = databaseManager.getNote(noteId).transcript;
+    queuePipelineJob(handlers, noteId, { status });
+
+    const result = await invoke("split-note-calls", noteId);
+
+    assert.deepEqual(result, { success: false, reason: "pipeline-running" });
+    assert.equal(databaseManager.getNote(noteId).transcript, before);
+  });
+}
+
+test("another note's pipeline, a failed job and a regenerate job do not block a split", async () => {
+  const { handlers, databaseManager } = setup();
+  const noteId = seedNote(databaseManager, { segments: singleCallSegments() });
+  const otherId = seedNote(databaseManager, { segments: singleCallSegments() });
+  queuePipelineJob(handlers, otherId);
+  queuePipelineJob(handlers, noteId, { status: "failed" });
+  handlers._jobStore.insert(`regenerate-notes-${noteId}`, "regenerate-notes", { noteId });
+
+  const result = await invoke("split-note-at-line", noteId, 10, {});
+
+  assert.equal(result.success, true);
+});
+
+test("a split at a line is refused when the stored line is no longer the one the user chose", async () => {
+  const { databaseManager, enqueued } = setup();
+  const segments = singleCallSegments();
+  const noteId = seedNote(databaseManager, { segments });
+  const before = databaseManager.getNote(noteId).transcript;
+
+  const result = await invoke("split-note-at-line", noteId, 10, {}, "words that were edited away");
+
+  assert.deepEqual(result, { success: false, reason: "transcript-changed" });
+  assert.equal(databaseManager.getNote(noteId).transcript, before);
+  assert.deepEqual(enqueued, []);
+});
+
+test("a split at a line goes ahead when the stored line still reads as the user saw it", async () => {
+  const { databaseManager } = setup();
+  const segments = singleCallSegments();
+  const noteId = seedNote(databaseManager, { segments });
+
+  const result = await invoke("split-note-at-line", noteId, 10, {}, segments[10].text);
+
+  assert.equal(result.success, true);
+});

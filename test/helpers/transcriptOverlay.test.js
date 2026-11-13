@@ -43,3 +43,21 @@ test("a non-array overlay never matches a stored array", async () => {
   const { overlayStillMatches } = await load();
   assert.equal(overlayStillMatches(JSON.stringify(lines(2)), null), false);
 });
+
+test("the same number of lines with different text does not match", async () => {
+  const { overlayStillMatches } = await load();
+  const stored = lines(4);
+  const overlay = lines(4).map((line, i) => (i === 2 ? { ...line, text: "another line" } : line));
+  assert.equal(overlayStillMatches(JSON.stringify(stored), overlay), false);
+});
+
+test("the same text with different speakers still matches", async () => {
+  const { overlayStillMatches } = await load();
+  const stored = lines(3).map((line) => ({ ...line, speaker: "speaker_0" }));
+  const overlay = lines(3).map((line, i) => ({
+    ...line,
+    speaker: `speaker_${i}`,
+    speakerName: "Ana",
+  }));
+  assert.equal(overlayStillMatches(JSON.stringify(stored), overlay), true);
+});

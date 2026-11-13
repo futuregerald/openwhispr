@@ -64,83 +64,92 @@ test("NEXT is disabled for 10 seconds after a mark and enabled at 10 seconds", a
   assert.deepEqual(at(11_000), { enabled: true, reason: null });
 });
 
-test("a successful mark replaces the marks and records the press time", async () => {
+test("a successful mark replaces the marks with what main reports", async () => {
   const { recordMarkerResult } = await load();
-  const next = recordMarkerResult({ marks: [], times: [] }, { success: true, marks: [12.5] }, 777);
-  assert.deepEqual(next, { marks: [12.5], times: [777], refusal: null });
-  const again = recordMarkerResult(next, { success: true, marks: [12.5, 40] }, 888);
-  assert.deepEqual(again, { marks: [12.5, 40], times: [777, 888], refusal: null });
+  const next = recordMarkerResult({ marks: [] }, { success: true, marks: [1_790_000_012_500] });
+  assert.deepEqual(next, { marks: [1_790_000_012_500], refusal: null });
+  const again = recordMarkerResult(next, {
+    success: true,
+    marks: [1_790_000_012_500, 1_790_000_040_000],
+  });
+  assert.deepEqual(again.marks, [1_790_000_012_500, 1_790_000_040_000]);
 });
 
 test("a refused mark keeps the book and reports the reason", async () => {
   const { recordMarkerResult } = await load();
-  const book = { marks: [12.5], times: [777] };
-  assert.deepEqual(recordMarkerResult(book, { success: false, reason: "too-soon" }, 900), {
-    marks: [12.5],
-    times: [777],
+  const book = { marks: [12_500] };
+  assert.deepEqual(recordMarkerResult(book, { success: false, reason: "too-soon" }), {
+    marks: [12_500],
     refusal: "too-soon",
   });
 });
 
 test("a failed call with no reason is reported as unknown", async () => {
   const { recordMarkerResult } = await load();
-  assert.equal(recordMarkerResult({ marks: [], times: [] }, undefined, 1).refusal, "unknown");
-  assert.equal(
-    recordMarkerResult({ marks: [], times: [] }, { success: false }, 1).refusal,
-    "unknown"
-  );
+  assert.equal(recordMarkerResult({ marks: [] }, undefined).refusal, "unknown");
+  assert.equal(recordMarkerResult({ marks: [] }, { success: false }).refusal, "unknown");
 });
 
-test("press times stay aligned when main reports a different number of marks than the book", async () => {
-  const { recordMarkerResult } = await load();
-  const shrunk = recordMarkerResult(
-    { marks: [1, 2, 3], times: [10, 20, 30] },
-    { success: true, marks: [1, 2] },
-    40
-  );
-  assert.equal(shrunk.times.length, shrunk.marks.length);
-  const grown = recordMarkerResult({ marks: [], times: [] }, { success: true, marks: [1, 2] }, 50);
-  assert.deepEqual(grown.times, [50, 50]);
-});
+let nextHandle = 1;
 
 const makeHarness = (overrides = {}) => {
   let state = {
     isRecording: true,
+    recordingNoteId: 7,
     isMarking: false,
     markers: [],
-    markerTimes: [],
     markerRefusal: null,
     ...overrides,
   };
+  const scheduled = [];
   return {
     getState: () => state,
     setState: (patch) => {
       state = { ...state, ...patch };
     },
-    nowMs: () => 4242,
+    scheduled,
+    schedule: (fn, ms) => {
+      const entry = { fn, ms, handle: nextHandle };
+      nextHandle += 1;
+      scheduled.push(entry);
+      return entry.handle;
+    },
+    cancel: (handle) => {
+      const entry = scheduled.find((candidate) => candidate.handle === handle);
+      if (entry) entry.cancelled = true;
+    },
   };
 };
 
-test("pressMarker records the marks and the press time on success", async () => {
+const pressWith = async (pressMarker, h, requestMark, extra = {}) =>
+  pressMarker({
+    getState: h.getState,
+    setState: h.setState,
+    schedule: h.schedule,
+    cancel: h.cancel,
+    requestMark,
+    ...extra,
+  });
+
+test("pressMarker records the marks main reports on success", async () => {
   const { pressMarker } = await load();
   const h = makeHarness();
-  await pressMarker({ ...h, requestMark: async () => ({ success: true, marks: [31.5] }) });
+  await pressWith(pressMarker, h, async () => ({ success: true, marks: [31_500] }));
   assert.deepEqual(h.getState(), {
     isRecording: true,
+    recordingNoteId: 7,
     isMarking: false,
-    markers: [31.5],
-    markerTimes: [4242],
+    markers: [31_500],
     markerRefusal: null,
   });
 });
 
 test("pressMarker keeps the marks and surfaces the reason when main refuses", async () => {
   const { pressMarker } = await load();
-  const h = makeHarness({ markers: [5], markerTimes: [2000] });
-  await pressMarker({ ...h, requestMark: async () => ({ success: false, reason: "too-soon" }) });
+  const h = makeHarness({ markers: [5] });
+  await pressWith(pressMarker, h, async () => ({ success: false, reason: "too-soon" }));
   const state = h.getState();
   assert.deepEqual(state.markers, [5]);
-  assert.deepEqual(state.markerTimes, [2000]);
   assert.equal(state.markerRefusal, "too-soon");
   assert.equal(state.isMarking, false);
 });
@@ -152,8 +161,8 @@ test("pressMarker does nothing when not recording or when a press is in flight",
     calls += 1;
     return { success: true, marks: [1] };
   };
-  await pressMarker({ ...makeHarness({ isRecording: false }), requestMark });
-  await pressMarker({ ...makeHarness({ isMarking: true }), requestMark });
+  await pressWith(pressMarker, makeHarness({ isRecording: false }), requestMark);
+  await pressWith(pressMarker, makeHarness({ isMarking: true }), requestMark);
   assert.equal(calls, 0);
 });
 
@@ -161,12 +170,9 @@ test("pressMarker marks the press in flight while waiting", async () => {
   const { pressMarker } = await load();
   const h = makeHarness();
   let seenWhileWaiting;
-  await pressMarker({
-    ...h,
-    requestMark: async () => {
-      seenWhileWaiting = h.getState().isMarking;
-      return { success: true, marks: [1] };
-    },
+  await pressWith(pressMarker, h, async () => {
+    seenWhileWaiting = h.getState().isMarking;
+    return { success: true, marks: [1] };
   });
   assert.equal(seenWhileWaiting, true);
 });
@@ -175,15 +181,18 @@ test("pressMarker clears the in-flight flag and reports unknown when the call th
   const { pressMarker } = await load();
   const h = makeHarness();
   let reported;
-  await pressMarker({
-    ...h,
-    requestMark: async () => {
+  await pressWith(
+    pressMarker,
+    h,
+    async () => {
       throw new Error("boom");
     },
-    onError: (error) => {
-      reported = error.message;
-    },
-  });
+    {
+      onError: (error) => {
+        reported = error.message;
+      },
+    }
+  );
   assert.equal(reported, "boom");
   assert.equal(h.getState().isMarking, false);
   assert.equal(h.getState().markerRefusal, "unknown");
@@ -192,13 +201,55 @@ test("pressMarker clears the in-flight flag and reports unknown when the call th
 test("pressMarker discards a result that arrives after the recording stopped", async () => {
   const { pressMarker } = await load();
   const h = makeHarness();
-  await pressMarker({
-    ...h,
-    requestMark: async () => {
-      h.setState({ isRecording: false });
-      return { success: true, marks: [9] };
-    },
+  await pressWith(pressMarker, h, async () => {
+    h.setState({ isRecording: false });
+    return { success: true, marks: [9] };
   });
   assert.deepEqual(h.getState().markers, []);
   assert.equal(h.getState().isMarking, false);
+});
+
+test("pressMarker discards a result that arrives after a different recording started", async () => {
+  const { pressMarker } = await load();
+  const h = makeHarness();
+  await pressWith(pressMarker, h, async () => {
+    h.setState({ recordingNoteId: 8, markers: [], isMarking: false });
+    return { success: true, marks: [1_790_000_000_000] };
+  });
+  assert.deepEqual(h.getState().markers, [], "the other note's marks are not shown on this one");
+  assert.equal(h.getState().markerRefusal, null);
+});
+
+test("a refusal clears itself after five seconds", async () => {
+  const { pressMarker, REFUSAL_VISIBLE_MS } = await load();
+  const h = makeHarness();
+  await pressWith(pressMarker, h, async () => ({ success: false, reason: "too-soon" }));
+  assert.equal(h.scheduled.length, 1);
+  assert.equal(h.scheduled[0].ms, 5000);
+  assert.equal(REFUSAL_VISIBLE_MS, 5000);
+  assert.equal(h.getState().markerRefusal, "too-soon");
+
+  h.scheduled[0].fn();
+  assert.equal(h.getState().markerRefusal, null);
+});
+
+test("the next press cancels the pending clear and a successful press clears the refusal", async () => {
+  const { pressMarker } = await load();
+  const h = makeHarness();
+  await pressWith(pressMarker, h, async () => ({ success: false, reason: "too-soon" }));
+  await pressWith(pressMarker, h, async () => ({ success: true, marks: [1_790_000_000_000] }));
+
+  assert.equal(h.scheduled[0].cancelled, true);
+  assert.equal(h.getState().markerRefusal, null);
+  assert.equal(h.scheduled.length, 1, "a success schedules nothing");
+});
+
+test("a stale clear does not wipe a newer refusal", async () => {
+  const { pressMarker } = await load();
+  const h = makeHarness();
+  await pressWith(pressMarker, h, async () => ({ success: false, reason: "too-soon" }));
+  const stale = h.scheduled[0].fn;
+  await pressWith(pressMarker, h, async () => ({ success: false, reason: "limit-reached" }));
+  stale();
+  assert.equal(h.getState().markerRefusal, "limit-reached");
 });

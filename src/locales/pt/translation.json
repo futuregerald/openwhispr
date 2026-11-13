@@ -2096,6 +2096,7 @@
       "failedUnanchored": "As marcações de tempo desta gravação não correspondem ao áudio, por isso dividi-la não é seguro.",
       "failedStale": "A transcrição mudou durante a verificação. Reabra a nota e tente novamente.",
       "failedPartway": "Algo falhou a meio. Algumas chamadas podem já ser notas separadas — reabra a nota para ver.",
+      "failedPipelineRunning": "As notas desta gravação ainda estão sendo geradas. Tente de novo quando terminar.",
       "failedUnknown": "Não foi possível concluir a divisão.",
       "failedUnsafe": "A marcação de tempo desta gravação não permite dividi-la com segurança, então nada foi alterado."
     },
@@ -2115,11 +2116,10 @@
       "tracks": "Faixas",
       "refused": {
         "no-recording": "Nenhuma reunião está sendo gravada.",
-        "no-audio-yet": "Aguarde o áudio começar antes de marcar.",
         "too-soon": "Aguarde alguns segundos antes da próxima marca.",
         "limit-reached": "Limite de faixas atingido (8 marcas).",
         "note-not-found": "Esta nota não existe mais.",
-        "invalid-offset": "Não foi possível marcar esse momento.",
+        "invalid-time": "Não foi possível marcar esse momento.",
         "unknown": "Não foi possível adicionar a marca."
       }
     },
@@ -2135,6 +2135,8 @@
       "secondPlaceholder": "Nova chamada — nomeada após a geração das notas",
       "startsWith": "A segunda parte começa com: “{{text}}”",
       "failedInvalidLine": "Essa linha não pode iniciar uma nova nota. Escolha uma linha posterior.",
+      "failedTranscriptChanged": "A transcrição mudou desde que você abriu. Reabra a nota e escolha a linha novamente.",
+      "outOfOrder": "Algumas linhas estão fora de ordem de tempo e vão para a parte a que seu horário pertence.",
       "commit": "Dividir em duas notas",
       "splitHere": "Dividir aqui",
       "unsafe": "A marcação de tempo desta gravação não permite dividi-la com segurança"

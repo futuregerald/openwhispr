@@ -2096,6 +2096,7 @@
       "failedUnanchored": "這段錄音的時間戳記與音訊無法對應，拆分並不安全。",
       "failedStale": "檢查期間轉錄內容已變更。請重新開啟筆記後再試。",
       "failedPartway": "中途出錯了。部分通話可能已成為獨立的筆記，請重新開啟筆記查看。",
+      "failedPipelineRunning": "此錄音的筆記仍在產生中，請在完成後重試。",
       "failedUnknown": "無法完成拆分。",
       "failedUnsafe": "此錄音的時間資訊無法可靠拆分，因此未做任何變更。"
     },
@@ -2115,11 +2116,10 @@
       "tracks": "分段",
       "refused": {
         "no-recording": "目前沒有正在錄製的會議。",
-        "no-audio-yet": "請等音訊開始後再標記。",
         "too-soon": "請等幾秒再進行下一次標記。",
         "limit-reached": "已達分段上限（8 個標記）。",
         "note-not-found": "此筆記已不存在。",
-        "invalid-offset": "無法標記該時刻。",
+        "invalid-time": "無法標記該時刻。",
         "unknown": "無法新增標記。"
       }
     },
@@ -2135,6 +2135,8 @@
       "secondPlaceholder": "新通話——產生筆記後命名",
       "startsWith": "後半部分從此處開始：「{{text}}」",
       "failedInvalidLine": "該行不能作為新筆記的開頭，請選擇更後面的行。",
+      "failedTranscriptChanged": "自你開啟以來逐字稿內容已變更。請重新開啟筆記並再次選擇該行。",
+      "outOfOrder": "部分行的時間順序不一致，會歸入其時間所屬的部分。",
       "commit": "拆分為兩則筆記",
       "splitHere": "在此拆分",
       "unsafe": "此錄音的時間資訊無法可靠拆分"

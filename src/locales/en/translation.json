@@ -2174,6 +2174,7 @@
       "failedUnanchored": "This recording's timestamps cannot be matched to its audio, so splitting it is not safe.",
       "failedStale": "The transcript changed while this was being checked. Reopen the note and try again.",
       "failedPartway": "Something went wrong partway through. Some calls may already be separate notes — reopen the note to see where it got to.",
+      "failedPipelineRunning": "Notes are still being generated for this recording. Try again when that finishes.",
       "failedUnknown": "The split could not be completed.",
       "failedUnsafe": "This recording's timing can't be split reliably, so nothing was changed."
     },
@@ -2193,11 +2194,10 @@
       "tracks": "Tracks",
       "refused": {
         "no-recording": "No meeting is recording.",
-        "no-audio-yet": "Wait for audio to start before marking.",
         "too-soon": "Wait a few seconds before the next mark.",
         "limit-reached": "Track limit reached (8 marks).",
         "note-not-found": "This note no longer exists.",
-        "invalid-offset": "That moment could not be marked.",
+        "invalid-time": "That moment could not be marked.",
         "unknown": "The mark could not be added."
       }
     },
@@ -2213,6 +2213,8 @@
       "secondPlaceholder": "New call — named after notes are generated",
       "startsWith": "Second part starts: “{{text}}”",
       "failedInvalidLine": "That line can't start a new note. Pick a later line.",
+      "failedTranscriptChanged": "The transcript changed since you opened this. Reopen the note and choose the line again.",
+      "outOfOrder": "Some lines are out of time order and go to the part their time belongs to.",
       "commit": "Split into two notes",
       "splitHere": "Split here",
       "unsafe": "This recording's timing can't be split reliably"

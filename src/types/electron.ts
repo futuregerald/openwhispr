@@ -499,7 +499,8 @@ declare global {
       splitNoteAtLine?: (
         noteId: number,
         lineIndex: number,
-        titles?: { firstTitle?: string; secondTitle?: string }
+        titles?: { firstTitle?: string; secondTitle?: string },
+        expectedText?: string
       ) => Promise<{
         success: boolean;
         parentNoteId?: number;
@@ -1531,7 +1532,7 @@ declare global {
       meetingAddMarker?: () => Promise<{
         success: boolean;
         marks?: number[];
-        reason?: "no-recording" | "no-audio-yet" | "too-soon" | "limit-reached" | "invalid-offset";
+        reason?: "no-recording" | "too-soon" | "limit-reached" | "invalid-time" | "note-not-found";
       }>;
       meetingTranscriptionCancel?: () => Promise<{
         success: boolean;

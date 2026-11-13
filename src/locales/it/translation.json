@@ -2096,6 +2096,7 @@
       "failedUnanchored": "Le marcature temporali di questa registrazione non corrispondono al suo audio, quindi dividerla non è sicuro.",
       "failedStale": "La trascrizione è cambiata durante il controllo. Riapri la nota e riprova.",
       "failedPartway": "Qualcosa è andato storto a metà. Alcune chiamate potrebbero essere già note separate: riapri la nota per vedere.",
+      "failedPipelineRunning": "Le note di questa registrazione sono ancora in generazione. Riprova quando ha finito.",
       "failedUnknown": "Non è stato possibile completare la divisione.",
       "failedUnsafe": "La temporizzazione di questa registrazione non consente una divisione affidabile, quindi non è stato modificato nulla."
     },
@@ -2115,11 +2116,10 @@
       "tracks": "Tracce",
       "refused": {
         "no-recording": "Nessuna riunione è in registrazione.",
-        "no-audio-yet": "Attendi che parta l'audio prima di segnare.",
         "too-soon": "Attendi qualche secondo prima del segno successivo.",
         "limit-reached": "Limite di tracce raggiunto (8 segni).",
         "note-not-found": "Questa nota non esiste più.",
-        "invalid-offset": "Non è stato possibile segnare quel momento.",
+        "invalid-time": "Non è stato possibile segnare quel momento.",
         "unknown": "Non è stato possibile aggiungere il segno."
       }
     },
@@ -2135,6 +2135,8 @@
       "secondPlaceholder": "Nuova chiamata — verrà nominata dopo la generazione delle note",
       "startsWith": "La seconda parte inizia con: «{{text}}»",
       "failedInvalidLine": "Quella riga non può iniziare una nuova nota. Scegli una riga successiva.",
+      "failedTranscriptChanged": "La trascrizione è cambiata da quando l'hai aperta. Riapri la nota e scegli di nuovo la riga.",
+      "outOfOrder": "Alcune righe non sono in ordine cronologico e vanno nella parte a cui appartiene il loro orario.",
       "commit": "Dividi in due note",
       "splitHere": "Dividi qui",
       "unsafe": "La temporizzazione di questa registrazione non consente una divisione affidabile"

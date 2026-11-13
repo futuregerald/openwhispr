@@ -30,19 +30,30 @@ export function markerKeyState({ isMarking, markCount, lastMarkAtMs, nowMs }) {
   return { enabled: true, reason: null };
 }
 
-export function recordMarkerResult(book, result, nowMs) {
+export function recordMarkerResult(book, result) {
   if (!result || result.success !== true || !Array.isArray(result.marks)) {
-    return { marks: book.marks, times: book.times, refusal: result?.reason ?? "unknown" };
+    return { marks: book.marks, refusal: result?.reason ?? "unknown" };
   }
-  const marks = result.marks;
-  const times = book.times.slice(0, marks.length);
-  while (times.length < marks.length) times.push(nowMs);
-  return { marks, times, refusal: null };
+  return { marks: result.marks, refusal: null };
 }
 
-export async function pressMarker({ getState, setState, requestMark, nowMs, onError }) {
+export const REFUSAL_VISIBLE_MS = 5000;
+
+let pendingRefusalClear = null;
+
+export async function pressMarker({
+  getState,
+  setState,
+  requestMark,
+  onError,
+  schedule = setTimeout,
+  cancel = clearTimeout,
+}) {
   const before = getState();
   if (!before.isRecording || before.isMarking) return;
+  const noteIdAtPress = before.recordingNoteId;
+  if (pendingRefusalClear !== null) cancel(pendingRefusalClear);
+  pendingRefusalClear = null;
   setState({ isMarking: true, markerRefusal: null });
   let result;
   try {
@@ -55,15 +66,13 @@ export async function pressMarker({ getState, setState, requestMark, nowMs, onEr
     setState({ isMarking: false });
     return;
   }
-  const next = recordMarkerResult(
-    { marks: current.markers, times: current.markerTimes },
-    result,
-    nowMs()
-  );
-  setState({
-    markers: next.marks,
-    markerTimes: next.times,
-    markerRefusal: next.refusal,
-    isMarking: false,
-  });
+  if (current.recordingNoteId !== noteIdAtPress) return;
+  const next = recordMarkerResult({ marks: current.markers }, result);
+  setState({ markers: next.marks, markerRefusal: next.refusal, isMarking: false });
+  if (next.refusal !== null) {
+    pendingRefusalClear = schedule(() => {
+      pendingRefusalClear = null;
+      if (getState().markerRefusal === next.refusal) setState({ markerRefusal: null });
+    }, REFUSAL_VISIBLE_MS);
+  }
 }

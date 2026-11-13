@@ -295,7 +295,7 @@ test("acceptance: a cut at a chosen line of a real-shaped note partitions it", a
   assert.equal(created.length, 1);
 });
 
-test("acceptance: two cuts at once cannot be applied as one boundary, so the loop applies them last-first", async () => {
+test("a report with two cuts is applied one boundary at a time, last cut first", async () => {
   const { cutReportAt } = await loadModule();
   const db = createDb();
   const { noteId, segments } = seedRealShapedNote(db);

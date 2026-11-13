@@ -195,6 +195,10 @@ export default function NoteEditor({
   const [pendingReprocess, setPendingReprocess] = useState(false);
   const notePipeline = usePostCallPipelineStore((s) => selectPipelineForNote(s, note.id));
   const isReprocessing = notePipeline?.currentStatus === "running";
+  const isPipelineBusy =
+    notePipeline != null &&
+    notePipeline.currentStep !== "pipeline" &&
+    notePipeline.currentStatus !== "error";
 
   // Re-transcription declines rather than replacing a transcript it cannot fully
   // reproduce. The reason is persisted on the note, so the notice survives a pipeline
@@ -300,6 +304,12 @@ export default function NoteEditor({
     [diarizedSegments, note.transcript]
   );
 
+  useEffect(() => {
+    if (diarizedSegments && !overlayStillMatches(note.transcript, diarizedSegments)) {
+      setDiarizedSegments(null);
+    }
+  }, [diarizedSegments, note.transcript]);
+
   const displaySegments = useMemo<TranscriptSegment[]>(() => {
     if (isRecording) return meetingSegments ?? [];
     if (overlaySegments && overlaySegments.length > 0) return overlaySegments;
@@ -310,8 +320,8 @@ export default function NoteEditor({
   const hasChatSegments = displaySegments.length > 0;
 
   const lineSplit = useMemo(
-    () => lineSplitState(note, displaySegments, { isRecording }),
-    [note, displaySegments, isRecording]
+    () => lineSplitState(note, displaySegments, { isRecording, pipelineRunning: isPipelineBusy }),
+    [note, displaySegments, isRecording, isPipelineBusy]
   );
   const [splitLineIndex, setSplitLineIndex] = useState<number | null>(null);
 
@@ -788,7 +798,7 @@ export default function NoteEditor({
   return (
     <div className="flex h-full min-h-0">
       <div className="flex-1 min-w-0 flex flex-col">
-        <CallSplitBanner note={note} />
+        <CallSplitBanner note={note} pipelineRunning={isPipelineBusy} />
         {preservedTranscriptKey && (
           <div className="mx-5 mt-3 rounded-md border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-[11px] leading-relaxed text-foreground/70">
             <span className="font-medium text-foreground/80">{t("pipeline.preserved.title")}</span>{" "}

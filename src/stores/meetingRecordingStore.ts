@@ -77,7 +77,6 @@ interface MeetingRecordingState {
   windowWidth: number;
   recordingStartedAt: number | null;
   markers: number[];
-  markerTimes: number[];
   isMarking: boolean;
   markerRefusal: string | null;
 }
@@ -463,7 +462,6 @@ export const useMeetingRecordingStore = create<MeetingRecordingState>()(() => ({
   windowWidth: typeof window !== "undefined" ? window.innerWidth : SIDE_PANEL_BREAKPOINT_PX,
   recordingStartedAt: null,
   markers: [],
-  markerTimes: [],
   isMarking: false,
   markerRefusal: null,
 }));
@@ -773,7 +771,6 @@ export async function startRecording(args: StartRecordingArgs): Promise<void> {
     error: null,
     recordingStartedAt: null,
     markers: [],
-    markerTimes: [],
     isMarking: false,
     markerRefusal: null,
   });
@@ -1221,7 +1218,6 @@ export function addMarker(): Promise<void> {
     getState: () => useMeetingRecordingStore.getState(),
     setState: (patch) => useMeetingRecordingStore.setState(patch),
     requestMark: async () => window.electronAPI?.meetingAddMarker?.(),
-    nowMs: Date.now,
     onError: (error) =>
       logger.error("Meeting marker failed", { error: (error as Error).message }, "meeting"),
   });

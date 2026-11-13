@@ -175,7 +175,62 @@ test("failure reasons map to catalogue keys, unknown ones to the generic key", a
   assert.equal(splitFailureKey("empty-piece"), "notes.callSplit.failedStale");
   assert.equal(splitFailureKey("unresolvable-slice-bounds"), "notes.callSplit.failedUnanchored");
   assert.equal(splitFailureKey("transcript-does-not-match-report"), "notes.callSplit.failedStale");
+  assert.equal(splitFailureKey("pipeline-running"), "notes.callSplit.failedPipelineRunning");
+  assert.equal(splitFailureKey("transcript-changed"), "notes.splitAtLine.failedTranscriptChanged");
   assert.equal(splitFailureKey("split-failed"), "notes.callSplit.failedUnknown");
   assert.equal(splitFailureKey("something-new"), "notes.callSplit.failedUnknown");
   assert.equal(splitFailureKey(undefined), "notes.callSplit.failedUnknown");
+});
+
+test("nothing is offered while the note's post-call pipeline is running", async () => {
+  const { lineSplitState } = await load();
+  const segments = twoCalls();
+  const note = noteOf(segments);
+  assert.equal(
+    lineSplitState(note, segments, { isRecording: false, pipelineRunning: true }).kind,
+    "hidden"
+  );
+  assert.equal(
+    lineSplitState(note, segments, { isRecording: false, pipelineRunning: false }).kind,
+    "available"
+  );
+});
+
+test("a transcript still waiting for its clock offers nothing and no reason line", async () => {
+  const { lineSplitState } = await load();
+  const base = 1_700_000_000_000;
+  const segments = [line("A", "one", base), line("B", "two", base + 4000)];
+  const state = lineSplitState(noteOf(segments, { transcript_origin_ms: null }), segments, {
+    isRecording: false,
+  });
+  assert.deepEqual(state, { kind: "hidden" });
+});
+
+test("a cut whose lines are in time order is not flagged", async () => {
+  const { splitPreview } = await load();
+  assert.equal(splitPreview(twoCalls(), 30, null).linesOutOfOrder, false);
+});
+
+test("a line shown above the chosen line but stamped later is flagged", async () => {
+  const { splitPreview } = await load();
+  const segments = [
+    line("A", "one", 0),
+    line("B", "two", 50),
+    line("A", "three", 10),
+    line("B", "four", 20),
+    line("A", "five", 30),
+  ];
+  assert.equal(splitPreview(segments, 3, null).linesOutOfOrder, true);
+});
+
+test("a line shown below the chosen line but stamped earlier is flagged", async () => {
+  const { splitPreview } = await load();
+  const segments = [
+    line("A", "one", 0),
+    line("B", "two", 20),
+    line("A", "three", 30),
+    line("B", "four", 10),
+    line("A", "five", 40),
+  ];
+  assert.equal(splitPreview(segments, 2, null).linesOutOfOrder, true);
 });

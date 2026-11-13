@@ -365,8 +365,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getNoteRetrySteps: (noteIds) => ipcRenderer.invoke("get-note-retry-steps", noteIds),
   scanNoteCallBoundaries: (noteId) => ipcRenderer.invoke("scan-note-call-boundaries", noteId),
   splitNoteCalls: (noteId) => ipcRenderer.invoke("split-note-calls", noteId),
-  splitNoteAtLine: (noteId, lineIndex, titles) =>
-    ipcRenderer.invoke("split-note-at-line", noteId, lineIndex, titles),
+  splitNoteAtLine: (noteId, lineIndex, titles, expectedText) =>
+    ipcRenderer.invoke("split-note-at-line", noteId, lineIndex, titles, expectedText),
   dismissNoteCallSplit: (noteId) => ipcRenderer.invoke("dismiss-note-call-split", noteId),
   reprocessAllMeetings: () => ipcRenderer.invoke("reprocess-all-meetings"),
   regenerateNotes: (noteId, meetingTypeId) =>

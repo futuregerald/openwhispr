@@ -113,6 +113,7 @@ async function splitNoteAtLine({
   lineIndex,
   firstTitle,
   secondTitle,
+  expectedText,
   onNoteCreated,
   onNoteChanged,
 }) {
@@ -127,6 +128,9 @@ async function splitNoteAtLine({
   const { cutReportAt, timePositionOfIndex } = await import("./lineCut.js");
   const position = timePositionOfIndex(segments, lineIndex);
   if (position < 1) return { success: false, reason: "invalid-line" };
+  if (typeof expectedText === "string" && segments[lineIndex]?.text !== expectedText) {
+    return { success: false, reason: "transcript-changed" };
+  }
 
   let result;
   try {

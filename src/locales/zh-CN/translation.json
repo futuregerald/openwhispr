@@ -2096,6 +2096,7 @@
       "failedUnanchored": "这段录音的时间戳与音频无法对应，拆分不安全。",
       "failedStale": "检查期间转写内容发生了变化。请重新打开笔记后再试。",
       "failedPartway": "中途出错了。部分通话可能已经成为独立的笔记，请重新打开笔记查看。",
+      "failedPipelineRunning": "此录音的笔记仍在生成中，请在完成后重试。",
       "failedUnknown": "无法完成拆分。",
       "failedUnsafe": "此录音的时间信息无法可靠拆分，因此未作任何更改。"
     },
@@ -2115,11 +2116,10 @@
       "tracks": "分段",
       "refused": {
         "no-recording": "当前没有正在录制的会议。",
-        "no-audio-yet": "请等音频开始后再标记。",
         "too-soon": "请等几秒再进行下一次标记。",
         "limit-reached": "已达到分段上限（8 个标记）。",
         "note-not-found": "此笔记已不存在。",
-        "invalid-offset": "无法标记该时刻。",
+        "invalid-time": "无法标记该时刻。",
         "unknown": "无法添加标记。"
       }
     },
@@ -2135,6 +2135,8 @@
       "secondPlaceholder": "新通话——生成笔记后命名",
       "startsWith": "后半部分从此处开始：“{{text}}”",
       "failedInvalidLine": "该行不能作为新笔记的开头，请选择更靠后的行。",
+      "failedTranscriptChanged": "自你打开以来转录内容已更改。请重新打开笔记并再次选择该行。",
+      "outOfOrder": "部分行的时间顺序不一致，会归入其时间所属的部分。",
       "commit": "拆分为两条笔记",
       "splitHere": "在此拆分",
       "unsafe": "此录音的时间信息无法可靠拆分"

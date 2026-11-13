@@ -47,8 +47,8 @@ recorder deck (`design-demos/direction-approved.md`, local).
 - On a finished note, choosing any transcript line and pressing SPLIT cuts the note there, after a preview with
   editable names. The detected gap is suggested.
 - On notes whose timing can't be split reliably, SPLIT is disabled with a reason (D4).
-- Acceptance: on a real-shaped fixture, cutting at a chosen line gives two notes whose lines, audio slices and
-  speakers partition the original, with nothing lost or duplicated. A recording with two NEXT markers becomes three
+- Acceptance: on a real-shaped fixture, cutting at a chosen line gives two notes whose lines and speakers partition
+  the original, with nothing lost or duplicated, and whose audio slices are disjoint and in order. A recording with two NEXT markers becomes three
   notes after the post-call pipeline.
 
 ### Phase 3: JOIN and Separate again

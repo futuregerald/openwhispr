@@ -2136,6 +2136,7 @@
       "failedUnanchored": "Les horodatages de cet enregistrement ne correspondent pas à son audio : le diviser n'est pas sûr.",
       "failedStale": "La transcription a changé pendant la vérification. Réouvrez la note et réessayez.",
       "failedPartway": "Quelque chose a échoué en cours de route. Certains appels sont peut-être déjà des notes distinctes — réouvrez la note pour voir.",
+      "failedPipelineRunning": "Les notes de cet enregistrement sont encore en cours de génération. Réessayez quand ce sera terminé.",
       "failedUnknown": "La division n'a pas pu aboutir.",
       "failedUnsafe": "Le minutage de cet enregistrement ne permet pas de le scinder de façon fiable ; rien n'a été modifié."
     },
@@ -2155,11 +2156,10 @@
       "tracks": "Pistes",
       "refused": {
         "no-recording": "Aucune réunion n'est en cours d'enregistrement.",
-        "no-audio-yet": "Attendez que l'audio démarre avant de marquer.",
         "too-soon": "Attendez quelques secondes avant le repère suivant.",
         "limit-reached": "Limite de pistes atteinte (8 repères).",
         "note-not-found": "Cette note n'existe plus.",
-        "invalid-offset": "Ce moment n'a pas pu être marqué.",
+        "invalid-time": "Ce moment n'a pas pu être marqué.",
         "unknown": "Le repère n'a pas pu être ajouté."
       }
     },
@@ -2175,6 +2175,8 @@
       "secondPlaceholder": "Nouvel appel — nommé après la génération des notes",
       "startsWith": "La deuxième partie commence par : « {{text}} »",
       "failedInvalidLine": "Cette ligne ne peut pas démarrer une nouvelle note. Choisissez une ligne plus tardive.",
+      "failedTranscriptChanged": "La transcription a changé depuis l'ouverture. Rouvrez la note et choisissez de nouveau la ligne.",
+      "outOfOrder": "Certaines lignes ne sont pas dans l'ordre chronologique et vont dans la partie à laquelle leur horaire appartient.",
       "commit": "Scinder en deux notes",
       "splitHere": "Scinder ici",
       "unsafe": "Le minutage de cet enregistrement ne permet pas de le scinder de façon fiable"

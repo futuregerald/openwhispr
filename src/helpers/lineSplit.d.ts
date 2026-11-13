@@ -6,7 +6,7 @@ export type SplitPart = {
   endSeconds: number;
 };
 
-export type SplitPreview = { first: SplitPart; second: SplitPart };
+export type SplitPreview = { first: SplitPart; second: SplitPart; linesOutOfOrder: boolean };
 
 export type LineSplitState =
   | { kind: "hidden" }
@@ -31,7 +31,7 @@ export function lineSplitState(
     updated_at?: string | null;
   } | null,
   displayedSegments: readonly TimedSegment[],
-  options: { isRecording: boolean }
+  options: { isRecording: boolean; pipelineRunning?: boolean }
 ): LineSplitState;
 
 export function splitPreview(

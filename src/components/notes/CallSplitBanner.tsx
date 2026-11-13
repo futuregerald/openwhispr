@@ -7,7 +7,13 @@ import type { NoteItem } from "../../types/electron";
 import { splitSafetyOf } from "../../helpers/splitSafety";
 import { splitFailureKey } from "../../helpers/lineSplit";
 
-export default function CallSplitBanner({ note }: { note: NoteItem }) {
+export default function CallSplitBanner({
+  note,
+  pipelineRunning,
+}: {
+  note: NoteItem;
+  pipelineRunning: boolean;
+}) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [callCount, setCallCount] = useState(1);
@@ -60,7 +66,9 @@ export default function CallSplitBanner({ note }: { note: NoteItem }) {
     }
   }, [note.id, t, toast]);
 
-  const isSplitUnsafe = !splitSafetyOf(note).ok;
+  const safety = splitSafetyOf(note);
+  const isSplitUnsafe = !safety.ok;
+  const showUnsafeReason = isSplitUnsafe && safety.reason !== "pending";
 
   if (isDismissed || callCount < 2) return null;
 
@@ -69,7 +77,7 @@ export default function CallSplitBanner({ note }: { note: NoteItem }) {
       <Scissors size={12} className="shrink-0 text-blue-500/70" />
       <span className="flex-1">
         {t("notes.callSplit.message", { count: callCount })}
-        {isSplitUnsafe && (
+        {showUnsafeReason && (
           <span id="call-split-unsafe" className="block text-foreground/50">
             {t("notes.splitAtLine.unsafe")}
           </span>
@@ -78,8 +86,8 @@ export default function CallSplitBanner({ note }: { note: NoteItem }) {
       <button
         className="shrink-0 h-6 px-2 rounded-md bg-foreground/5 hover:bg-foreground/10 text-foreground/70 disabled:opacity-40 disabled:pointer-events-none"
         onClick={() => setConfirmOpen(true)}
-        disabled={isSplitting || isSplitUnsafe}
-        aria-describedby={isSplitUnsafe ? "call-split-unsafe" : undefined}
+        disabled={isSplitting || isSplitUnsafe || pipelineRunning}
+        aria-describedby={showUnsafeReason ? "call-split-unsafe" : undefined}
       >
         {isSplitting ? t("notes.callSplit.splitting") : t("notes.callSplit.split")}
       </button>

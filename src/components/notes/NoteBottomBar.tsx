@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Mic, ArrowUp, Square, Loader2 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { formatMmSs } from "../../utils/formatDuration";
+import { publishBottomBarHeight } from "../../helpers/bottomBarHeight";
 
 const BAR_COUNT = 5;
 
@@ -92,6 +93,8 @@ export default function NoteBottomBar({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isExpanded, hasText]);
+
+  useEffect(() => publishBottomBarHeight(containerRef.current), []);
 
   return (
     <div

@@ -13,6 +13,8 @@ const FAILURE_KEY_BY_REASON = {
   "report-refused": "notes.callSplit.failedStale",
   "empty-piece": "notes.callSplit.failedStale",
   "split-failed-partway": "notes.callSplit.failedPartway",
+  "pipeline-running": "notes.callSplit.failedPipelineRunning",
+  "transcript-changed": "notes.splitAtLine.failedTranscriptChanged",
 };
 
 export function splitFailureKey(reason) {
@@ -41,9 +43,10 @@ const earliestIndexOf = (segments) => {
   return best;
 };
 
-export function lineSplitState(note, displayedSegments, { isRecording }) {
+export function lineSplitState(note, displayedSegments, { isRecording, pipelineRunning = false }) {
   if (
     isRecording ||
+    pipelineRunning ||
     !note ||
     typeof note.transcript !== "string" ||
     note.transcript.trim() === ""
@@ -52,7 +55,7 @@ export function lineSplitState(note, displayedSegments, { isRecording }) {
   }
   const safety = splitSafetyOf(note);
   if (!safety.ok) {
-    return safety.reason === "too-short"
+    return safety.reason === "too-short" || safety.reason === "pending"
       ? { kind: "hidden" }
       : { kind: "unsafe", reason: safety.reason };
   }
@@ -87,6 +90,9 @@ export function splitPreview(segments, lineIndex, clockMs) {
   return {
     first: partOf(first, report.unit, clockMs, first.startsAt),
     second: partOf(second, report.unit, clockMs, first.startsAt),
+    linesOutOfOrder:
+      first.indices.some((index) => index >= lineIndex) ||
+      second.indices.some((index) => index < lineIndex),
   };
 }
 

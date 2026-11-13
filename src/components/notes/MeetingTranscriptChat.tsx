@@ -526,7 +526,7 @@ export function MeetingTranscriptChat({
         ref={scrollRef}
         className={cn(
           "h-full overflow-y-auto px-4 pt-3 flex flex-col gap-1.5 agent-chat-scroll",
-          isRecording ? "pb-52" : "pb-24"
+          "pb-[calc(var(--note-bottom-bar-height,5rem)+1rem)]"
         )}
       >
         {segments.map((segment, i) => {

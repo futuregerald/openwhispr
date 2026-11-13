@@ -118,3 +118,11 @@ test("epoch-ms lines are not judged by the relative clock rule", async () => {
   });
   assert.deepEqual(splitSafetyOf(note), { ok: true });
 });
+
+test("an all-epoch transcript with no clock is pending, not ok", async () => {
+  const { splitSafetyOf } = await loadModule();
+  const note = noteOf([EPOCH_BASE_MS, EPOCH_BASE_MS + 5000, EPOCH_BASE_MS + 9000], {
+    transcript_origin_ms: null,
+  });
+  assert.deepEqual(splitSafetyOf(note), { ok: false, reason: "pending" });
+});

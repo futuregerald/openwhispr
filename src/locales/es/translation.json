@@ -2096,6 +2096,7 @@
       "failedUnanchored": "Las marcas de tiempo de esta grabación no coinciden con su audio, así que dividirla no es seguro.",
       "failedStale": "La transcripción cambió mientras se comprobaba. Vuelve a abrir la nota e inténtalo de nuevo.",
       "failedPartway": "Algo falló a mitad del proceso. Puede que algunas llamadas ya sean notas separadas: vuelve a abrir la nota para verlo.",
+      "failedPipelineRunning": "Todavía se están generando notas para esta grabación. Inténtalo de nuevo cuando termine.",
       "failedUnknown": "No se pudo completar la división.",
       "failedUnsafe": "La sincronización de esta grabación no permite dividirla de forma fiable, así que no se cambió nada."
     },
@@ -2115,11 +2116,10 @@
       "tracks": "Pistas",
       "refused": {
         "no-recording": "No hay ninguna reunión grabándose.",
-        "no-audio-yet": "Espera a que empiece el audio antes de marcar.",
         "too-soon": "Espera unos segundos antes de la siguiente marca.",
         "limit-reached": "Se alcanzó el límite de pistas (8 marcas).",
         "note-not-found": "Esta nota ya no existe.",
-        "invalid-offset": "No se pudo marcar ese momento.",
+        "invalid-time": "No se pudo marcar ese momento.",
         "unknown": "No se pudo añadir la marca."
       }
     },
@@ -2135,6 +2135,8 @@
       "secondPlaceholder": "Llamada nueva: se nombra tras generar las notas",
       "startsWith": "La segunda parte empieza con: «{{text}}»",
       "failedInvalidLine": "Esa línea no puede iniciar una nota nueva. Elige una línea posterior.",
+      "failedTranscriptChanged": "La transcripción cambió desde que abriste esto. Vuelve a abrir la nota y elige la línea otra vez.",
+      "outOfOrder": "Algunas líneas están fuera de orden temporal y van a la parte que les corresponde por su hora.",
       "commit": "Dividir en dos notas",
       "splitHere": "Dividir aquí",
       "unsafe": "La sincronización de esta grabación no permite dividirla de forma fiable"

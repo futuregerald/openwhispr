@@ -74,10 +74,12 @@ export default function SplitAtLineDialog({
   const handleCommit = async () => {
     setIsCommitting(true);
     try {
-      const result = await window.electronAPI?.splitNoteAtLine?.(noteId, lineIndex, {
-        firstTitle,
-        secondTitle,
-      });
+      const result = await window.electronAPI?.splitNoteAtLine?.(
+        noteId,
+        lineIndex,
+        { firstTitle, secondTitle },
+        segments[lineIndex]?.text
+      );
       if (result?.success) {
         toast({ title: t("notes.callSplit.done", { count: 2 }) });
         onOpenChange(false);
@@ -167,6 +169,9 @@ export default function SplitAtLineDialog({
             <p className="line-clamp-2 text-xs text-muted-foreground">
               {t("notes.splitAtLine.startsWith", { text: segments[lineIndex]?.text ?? "" })}
             </p>
+            {preview.linesOutOfOrder && (
+              <p className="text-xs text-muted-foreground">{t("notes.splitAtLine.outOfOrder")}</p>
+            )}
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">

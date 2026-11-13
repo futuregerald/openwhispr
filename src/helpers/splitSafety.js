@@ -31,7 +31,9 @@ export function splitSafetyOf(note) {
 
   const epochCount = stamps.filter((stamp) => stamp > EPOCH_MS_FLOOR).length;
   if (epochCount > 0 && epochCount < stamps.length) return unsafe("mixed-units");
-  if (epochCount === stamps.length) return { ok: true };
+  if (epochCount === stamps.length) {
+    return Number.isFinite(note.transcript_origin_ms) ? { ok: true } : unsafe("pending");
+  }
 
   if (stamps.some((stamp) => stamp < 0)) return unsafe("negative-offset");
 
