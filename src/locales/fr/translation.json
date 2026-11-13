@@ -2136,13 +2136,48 @@
       "failedUnanchored": "Les horodatages de cet enregistrement ne correspondent pas à son audio : le diviser n'est pas sûr.",
       "failedStale": "La transcription a changé pendant la vérification. Réouvrez la note et réessayez.",
       "failedPartway": "Quelque chose a échoué en cours de route. Certains appels sont peut-être déjà des notes distinctes — réouvrez la note pour voir.",
-      "failedUnknown": "La division n'a pas pu aboutir."
+      "failedUnknown": "La division n'a pas pu aboutir.",
+      "failedUnsafe": "Le minutage de cet enregistrement ne permet pas de le scinder de façon fiable ; rien n'a été modifié."
     },
     "reprocessAll": {
       "label": "Retraiter toutes les réunions",
       "confirm": "Retraiter toutes les réunions ? Cela écrase les notes existantes.",
       "queued": "{{count}} réunions mises en file pour retraitement",
       "none": "Aucune réunion avec audio enregistré à retraiter"
+    },
+    "recorderDeck": {
+      "label": "Enregistreur",
+      "rec": "REC",
+      "elapsed": "Durée d'enregistrement",
+      "next": "Suivant",
+      "nextHint": "Marquez où commence l'appel suivant. La note sera coupée ici à l'arrêt.",
+      "stop": "Arrêter",
+      "tracks": "Pistes",
+      "refused": {
+        "no-recording": "Aucune réunion n'est en cours d'enregistrement.",
+        "no-audio-yet": "Attendez que l'audio démarre avant de marquer.",
+        "too-soon": "Attendez quelques secondes avant le repère suivant.",
+        "limit-reached": "Limite de pistes atteinte (8 repères).",
+        "note-not-found": "Cette note n'existe plus.",
+        "invalid-offset": "Ce moment n'a pas pu être marqué.",
+        "unknown": "Le repère n'a pas pu être ajouté."
+      }
+    },
+    "splitAtLine": {
+      "title": "Scinder en deux notes",
+      "description": "La deuxième partie devient une note à part entière, avec ses propres notes et sa date. Les notes générées, les noms des intervenants et le type de réunion restent avec la première partie. Cette action est irréversible.",
+      "suggestion": "Suggestion : une pause de {{gap}} à {{at}}",
+      "useThis": "Utiliser",
+      "firstPart": "Première partie",
+      "secondPart": "Deuxième partie",
+      "partSummary": "Lignes : {{lines}} · {{range}}",
+      "firstPlaceholder": "Titre de la note",
+      "secondPlaceholder": "Nouvel appel — nommé après la génération des notes",
+      "startsWith": "La deuxième partie commence par : « {{text}} »",
+      "failedInvalidLine": "Cette ligne ne peut pas démarrer une nouvelle note. Choisissez une ligne plus tardive.",
+      "commit": "Scinder en deux notes",
+      "splitHere": "Scinder ici",
+      "unsafe": "Le minutage de cet enregistrement ne permet pas de le scinder de façon fiable"
     }
   },
   "dictionary": {

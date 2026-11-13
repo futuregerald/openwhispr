@@ -38,6 +38,10 @@ import type { NoteItem, FolderItem } from "../../types/electron";
 import type { ActionProcessingState } from "../../hooks/useActionProcessing";
 import ActionProcessingOverlay from "./ActionProcessingOverlay";
 import NoteBottomBar from "./NoteBottomBar";
+import RecorderDeck from "./RecorderDeck";
+import { overlayStillMatches } from "../../helpers/transcriptOverlay";
+import { lineSplitState } from "../../helpers/lineSplit";
+import SplitAtLineDialog from "./SplitAtLineDialog";
 import EmbeddedChat, { type EmbeddedChatMode } from "./EmbeddedChat";
 import { useEmbeddedChat } from "../../hooks/useEmbeddedChat";
 import { normalizeDbDate } from "../../utils/dateFormatting";
@@ -288,14 +292,28 @@ export default function NoteEditor({
     [folders, folderSearch]
   );
 
+  const overlaySegments = useMemo(
+    () =>
+      diarizedSegments && overlayStillMatches(note.transcript, diarizedSegments)
+        ? diarizedSegments
+        : null,
+    [diarizedSegments, note.transcript]
+  );
+
   const displaySegments = useMemo<TranscriptSegment[]>(() => {
     if (isRecording) return meetingSegments ?? [];
-    if (diarizedSegments && diarizedSegments.length > 0) return diarizedSegments;
+    if (overlaySegments && overlaySegments.length > 0) return overlaySegments;
     if (meetingSegments && meetingSegments.length > 0) return meetingSegments;
     return parseTranscriptSegments(note.transcript || "");
-  }, [diarizedSegments, isRecording, meetingSegments, note.transcript]);
+  }, [overlaySegments, isRecording, meetingSegments, note.transcript]);
 
   const hasChatSegments = displaySegments.length > 0;
+
+  const lineSplit = useMemo(
+    () => lineSplitState(note, displaySegments, { isRecording }),
+    [note, displaySegments, isRecording]
+  );
+  const [splitLineIndex, setSplitLineIndex] = useState<number | null>(null);
 
   const knownSpeakers = useMemo(() => {
     const seen = new Set<string>();
@@ -505,6 +523,13 @@ export default function NoteEditor({
 
   const persistDisplaySegments = useCallback(
     async (nextSegments: TranscriptSegment[], updateOverlay = true) => {
+      if (!overlayStillMatches(note.transcript, nextSegments)) {
+        logger.notice("Transcript write refused: the stored transcript changed under the editor", {
+          noteId: note.id,
+          segmentCount: nextSegments.length,
+        });
+        return;
+      }
       if (updateOverlay) {
         setDiarizedSegments(nextSegments);
       }
@@ -512,7 +537,7 @@ export default function NoteEditor({
         transcript: serializeTranscriptSegments(nextSegments),
       });
     },
-    [note.id]
+    [note.id, note.transcript]
   );
 
   // Kept on the same side as rename: splitting them lets one overwrite the other, because
@@ -535,11 +560,11 @@ export default function NoteEditor({
         for (const id of targetIds) delete next[id];
         return next;
       });
-      await persistDisplaySegments(nextSegments, !!diarizedSegments || !isRecording);
+      await persistDisplaySegments(nextSegments, !!overlaySegments || !isRecording);
       await window.electronAPI?.scheduleNotesRegeneration?.(note.id);
     },
     [
-      diarizedSegments,
+      overlaySegments,
       displaySegments,
       isRecording,
       note.id,
@@ -581,12 +606,12 @@ export default function NoteEditor({
             })
           : s
       );
-      await persistDisplaySegments(currentSegments, !!diarizedSegments || !isRecording);
+      await persistDisplaySegments(currentSegments, !!overlaySegments || !isRecording);
 
       refreshSpeakerProfiles();
     },
     [
-      diarizedSegments,
+      overlaySegments,
       displaySegments,
       isRecording,
       note.id,
@@ -623,9 +648,9 @@ export default function NoteEditor({
             })
           : s
       );
-      await persistDisplaySegments(currentSegments, !!diarizedSegments || !isRecording);
+      await persistDisplaySegments(currentSegments, !!overlaySegments || !isRecording);
     },
-    [displaySegments, diarizedSegments, isRecording, persistDisplaySegments]
+    [displaySegments, overlaySegments, isRecording, persistDisplaySegments]
   );
 
   const [selectedSegmentIds, setSelectedSegmentIds] = useState<Set<string>>(new Set());
@@ -1095,6 +1120,12 @@ export default function NoteEditor({
           </div>
         </div>
 
+        {viewMode === "transcript" && lineSplit.kind === "unsafe" && (
+          <p className="px-5 pt-2 text-[11px] text-muted-foreground/70">
+            {t("notes.splitAtLine.unsafe")}
+          </p>
+        )}
+
         <div className="flex-1 relative min-h-0">
           <div
             className="h-full overflow-y-auto"
@@ -1125,6 +1156,10 @@ export default function NoteEditor({
                 onAttachSpeakerEmail={handleAttachSpeakerEmail}
                 selectedSegmentIds={!isRecording ? selectedSegmentIds : undefined}
                 onToggleSelect={!isRecording ? handleToggleSelect : undefined}
+                onSplitAtLine={lineSplit.kind === "available" ? setSplitLineIndex : undefined}
+                splitEarliestIndex={
+                  lineSplit.kind === "available" ? lineSplit.earliestIndex : undefined
+                }
               />
             ) : viewMode === "transcript" && hasMeetingTranscript ? (
               <RichTextEditor value={effectiveTranscript} disabled />
@@ -1177,6 +1212,7 @@ export default function NoteEditor({
             onInputFocus={handleChatInputFocus}
             actionPicker={isRecording ? undefined : actionPicker}
             hideInput={chatMode !== "hidden"}
+            deck={isRecording ? <RecorderDeck onStop={onStopRecording} /> : undefined}
           />
           {chatMode === "floating" && (
             <EmbeddedChat
@@ -1206,6 +1242,20 @@ export default function NoteEditor({
           activeConversationId={embeddedChat.activeConversationId}
           onSwitchConversation={embeddedChat.switchConversation}
           onNewChat={embeddedChat.startNewChat}
+        />
+      )}
+      {splitLineIndex != null && lineSplit.kind === "available" && (
+        <SplitAtLineDialog
+          key={splitLineIndex}
+          open
+          onOpenChange={(next) => {
+            if (!next) setSplitLineIndex(null);
+          }}
+          noteId={note.id}
+          noteTitle={note.title}
+          segments={displaySegments}
+          clockMs={note.transcript_origin_ms ?? null}
+          initialLineIndex={splitLineIndex}
         />
       )}
       <MeetingTypeEditor

@@ -2096,13 +2096,48 @@
       "failedUnanchored": "As marcações de tempo desta gravação não correspondem ao áudio, por isso dividi-la não é seguro.",
       "failedStale": "A transcrição mudou durante a verificação. Reabra a nota e tente novamente.",
       "failedPartway": "Algo falhou a meio. Algumas chamadas podem já ser notas separadas — reabra a nota para ver.",
-      "failedUnknown": "Não foi possível concluir a divisão."
+      "failedUnknown": "Não foi possível concluir a divisão.",
+      "failedUnsafe": "A marcação de tempo desta gravação não permite dividi-la com segurança, então nada foi alterado."
     },
     "reprocessAll": {
       "label": "Reprocessar todas as reuniões",
       "confirm": "Reprocessar todas as reuniões? Isso sobrescreve as notas existentes.",
       "queued": "{{count}} reuniões na fila para reprocessamento",
       "none": "Nenhuma reunião com áudio salvo para reprocessar"
+    },
+    "recorderDeck": {
+      "label": "Gravador",
+      "rec": "REC",
+      "elapsed": "Tempo de gravação",
+      "next": "Próximo",
+      "nextHint": "Marque onde a próxima chamada começa. A nota é dividida aqui quando você parar.",
+      "stop": "Parar",
+      "tracks": "Faixas",
+      "refused": {
+        "no-recording": "Nenhuma reunião está sendo gravada.",
+        "no-audio-yet": "Aguarde o áudio começar antes de marcar.",
+        "too-soon": "Aguarde alguns segundos antes da próxima marca.",
+        "limit-reached": "Limite de faixas atingido (8 marcas).",
+        "note-not-found": "Esta nota não existe mais.",
+        "invalid-offset": "Não foi possível marcar esse momento.",
+        "unknown": "Não foi possível adicionar a marca."
+      }
+    },
+    "splitAtLine": {
+      "title": "Dividir em duas notas",
+      "description": "A segunda parte vira uma nota própria, com suas próprias anotações e data. As notas geradas, os nomes dos falantes e o tipo de reunião ficam com a primeira parte. Isso não pode ser desfeito.",
+      "suggestion": "Sugestão: uma pausa de {{gap}} em {{at}}",
+      "useThis": "Usar esta",
+      "firstPart": "Primeira parte",
+      "secondPart": "Segunda parte",
+      "partSummary": "Linhas: {{lines}} · {{range}}",
+      "firstPlaceholder": "Título da nota",
+      "secondPlaceholder": "Nova chamada — nomeada após a geração das notas",
+      "startsWith": "A segunda parte começa com: “{{text}}”",
+      "failedInvalidLine": "Essa linha não pode iniciar uma nova nota. Escolha uma linha posterior.",
+      "commit": "Dividir em duas notas",
+      "splitHere": "Dividir aqui",
+      "unsafe": "A marcação de tempo desta gravação não permite dividi-la com segurança"
     }
   },
   "dictionary": {

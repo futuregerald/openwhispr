@@ -52,6 +52,7 @@
   --font-family-sans:
     "Noto Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
     sans-serif;
+  --font-family-readout: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /* Opacities */
   --opacity-subtle: 0.1;

@@ -2174,13 +2174,48 @@
       "failedUnanchored": "This recording's timestamps cannot be matched to its audio, so splitting it is not safe.",
       "failedStale": "The transcript changed while this was being checked. Reopen the note and try again.",
       "failedPartway": "Something went wrong partway through. Some calls may already be separate notes — reopen the note to see where it got to.",
-      "failedUnknown": "The split could not be completed."
+      "failedUnknown": "The split could not be completed.",
+      "failedUnsafe": "This recording's timing can't be split reliably, so nothing was changed."
     },
     "reprocessAll": {
       "label": "Reprocess all meetings",
       "confirm": "Reprocess all meetings? This overwrites existing notes.",
       "queued": "Queued {{count}} meetings for reprocessing",
       "none": "No meetings with saved audio to reprocess"
+    },
+    "recorderDeck": {
+      "label": "Recorder",
+      "rec": "REC",
+      "elapsed": "Recording time",
+      "next": "Next",
+      "nextHint": "Mark where the next call starts. The note is split here when you stop.",
+      "stop": "Stop",
+      "tracks": "Tracks",
+      "refused": {
+        "no-recording": "No meeting is recording.",
+        "no-audio-yet": "Wait for audio to start before marking.",
+        "too-soon": "Wait a few seconds before the next mark.",
+        "limit-reached": "Track limit reached (8 marks).",
+        "note-not-found": "This note no longer exists.",
+        "invalid-offset": "That moment could not be marked.",
+        "unknown": "The mark could not be added."
+      }
+    },
+    "splitAtLine": {
+      "title": "Split into two notes",
+      "description": "The second part becomes its own note, with its own notes and date. The generated notes, speaker names and meeting type stay with the first part. This cannot be undone.",
+      "suggestion": "Suggested: a {{gap}} gap at {{at}}",
+      "useThis": "Use this",
+      "firstPart": "First part",
+      "secondPart": "Second part",
+      "partSummary": "Lines: {{lines}} · {{range}}",
+      "firstPlaceholder": "Note title",
+      "secondPlaceholder": "New call — named after notes are generated",
+      "startsWith": "Second part starts: “{{text}}”",
+      "failedInvalidLine": "That line can't start a new note. Pick a later line.",
+      "commit": "Split into two notes",
+      "splitHere": "Split here",
+      "unsafe": "This recording's timing can't be split reliably"
     }
   },
   "dictionary": {

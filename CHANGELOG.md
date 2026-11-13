@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.40.0] - 2026-11-13
+
+### Added
+
+- While a meeting records, a recorder deck sits under the note: a REC light,
+  the elapsed time, **NEXT** and **STOP**, and a numbered list of tracks.
+  Press **NEXT** when one call ends and the next begins. Recording carries on
+  without a gap, and when you stop, each track becomes its own note with its
+  own title and notes, keeping the speaker names you gave.
+- You can split any finished meeting note at a line you choose. Hover a line
+  (or tab to it) and press the scissors. A preview shows both parts with their
+  times, lets you name them, and suggests the likely break if the app found a
+  gap between calls.
+- Notes whose timing can't be cut cleanly (some older recordings) say so
+  instead of offering a split that would go wrong.
+
+### Fixed
+
+- A long recording now saves its transcript every 30 seconds while you talk.
+  Before, the save only ran after 30 seconds of silence, so a crash mid-call
+  could lose much more of the transcript.
+- A note that was split while open in the editor no longer gets the removed
+  lines written back to it when you rename a speaker.
+
 ## [1.39.1] - 2026-11-13
 
 ### Fixed

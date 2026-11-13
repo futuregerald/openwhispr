@@ -2096,13 +2096,48 @@
       "failedUnanchored": "Le marcature temporali di questa registrazione non corrispondono al suo audio, quindi dividerla non è sicuro.",
       "failedStale": "La trascrizione è cambiata durante il controllo. Riapri la nota e riprova.",
       "failedPartway": "Qualcosa è andato storto a metà. Alcune chiamate potrebbero essere già note separate: riapri la nota per vedere.",
-      "failedUnknown": "Non è stato possibile completare la divisione."
+      "failedUnknown": "Non è stato possibile completare la divisione.",
+      "failedUnsafe": "La temporizzazione di questa registrazione non consente una divisione affidabile, quindi non è stato modificato nulla."
     },
     "reprocessAll": {
       "label": "Rielabora tutte le riunioni",
       "confirm": "Rielaborare tutte le riunioni? Le note esistenti verranno sovrascritte.",
       "queued": "{{count}} riunioni in coda per la rielaborazione",
       "none": "Nessuna riunione con audio salvato da rielaborare"
+    },
+    "recorderDeck": {
+      "label": "Registratore",
+      "rec": "REC",
+      "elapsed": "Durata registrazione",
+      "next": "Avanti",
+      "nextHint": "Segna dove inizia la chiamata successiva. La nota viene divisa qui quando fermi la registrazione.",
+      "stop": "Stop",
+      "tracks": "Tracce",
+      "refused": {
+        "no-recording": "Nessuna riunione è in registrazione.",
+        "no-audio-yet": "Attendi che parta l'audio prima di segnare.",
+        "too-soon": "Attendi qualche secondo prima del segno successivo.",
+        "limit-reached": "Limite di tracce raggiunto (8 segni).",
+        "note-not-found": "Questa nota non esiste più.",
+        "invalid-offset": "Non è stato possibile segnare quel momento.",
+        "unknown": "Non è stato possibile aggiungere il segno."
+      }
+    },
+    "splitAtLine": {
+      "title": "Dividi in due note",
+      "description": "La seconda parte diventa una nota a sé, con le proprie note e la propria data. Le note generate, i nomi dei relatori e il tipo di riunione restano con la prima parte. L'operazione non può essere annullata.",
+      "suggestion": "Suggerimento: una pausa di {{gap}} alle {{at}}",
+      "useThis": "Usa questo",
+      "firstPart": "Prima parte",
+      "secondPart": "Seconda parte",
+      "partSummary": "Righe: {{lines}} · {{range}}",
+      "firstPlaceholder": "Titolo della nota",
+      "secondPlaceholder": "Nuova chiamata — verrà nominata dopo la generazione delle note",
+      "startsWith": "La seconda parte inizia con: «{{text}}»",
+      "failedInvalidLine": "Quella riga non può iniziare una nuova nota. Scegli una riga successiva.",
+      "commit": "Dividi in due note",
+      "splitHere": "Dividi qui",
+      "unsafe": "La temporizzazione di questa registrazione non consente una divisione affidabile"
     }
   },
   "dictionary": {

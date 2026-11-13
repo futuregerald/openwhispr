@@ -1,0 +1,8 @@
+/* IBM Plex Mono — locally bundled (500, latin, OFL; see IBMPlexMono-OFL.txt) */
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./IBMPlexMono-500-latin.woff2") format("woff2");
+}

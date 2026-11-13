@@ -7,8 +7,8 @@ recorder deck (`design-demos/direction-approved.md`, local).
 
 | Phase | Scope | Status | Plan |
 |---|---|---|---|
-| 1 | Recordings stop on their own: 2-hour cap with a warning, call-end stop when a call was seen | in review | 2026-11-10-call-ending-phase1-auto-stop |
-| 2 | Recorder deck, NEXT (switch) and SPLIT at any line | not started | — |
+| 1 | Recordings stop on their own: 2-hour cap with a warning, call-end stop when a call was seen | done (1.39.0, #126; fixes in 1.39.1, #127) | 2026-11-10-call-ending-phase1-auto-stop |
+| 2 | Recorder deck, NEXT (switch) and SPLIT at any line | in review (1.40.0) | 2026-11-13-call-ending-phase2-deck-next-split |
 | 3 | JOIN (combine) and Separate again | not started | — |
 
 ## Strategy

@@ -22,6 +22,7 @@ import {
   type TranscriptSpeakerLockSource,
   type TranscriptSpeakerStatus,
 } from "../helpers/transcriptSpeakerState";
+import { pressMarker } from "../helpers/recorderDeck";
 
 export interface TranscriptSegment {
   id: string;
@@ -74,6 +75,11 @@ interface MeetingRecordingState {
   error: string | null;
   currentMicLevel: number;
   windowWidth: number;
+  recordingStartedAt: number | null;
+  markers: number[];
+  markerTimes: number[];
+  isMarking: boolean;
+  markerRefusal: string | null;
 }
 
 const MEETING_AUDIO_BUFFER_SIZE = 800;
@@ -455,6 +461,11 @@ export const useMeetingRecordingStore = create<MeetingRecordingState>()(() => ({
   error: null,
   currentMicLevel: 0,
   windowWidth: typeof window !== "undefined" ? window.innerWidth : SIDE_PANEL_BREAKPOINT_PX,
+  recordingStartedAt: null,
+  markers: [],
+  markerTimes: [],
+  isMarking: false,
+  markerRefusal: null,
 }));
 
 export const getMicAnalyser = (): AnalyserNode | null => micAnalyser;
@@ -760,6 +771,11 @@ export async function startRecording(args: StartRecordingArgs): Promise<void> {
     systemPartialSpeakerName: null,
     diarizationSessionId: null,
     error: null,
+    recordingStartedAt: null,
+    markers: [],
+    markerTimes: [],
+    isMarking: false,
+    markerRefusal: null,
   });
 
   isRecordingFlag = true;
@@ -1160,6 +1176,7 @@ export async function startRecording(args: StartRecordingArgs): Promise<void> {
 
     isStartingFlag = false;
     socketReady = true;
+    useMeetingRecordingStore.setState({ recordingStartedAt: Date.now() });
 
     for (const chunk of pendingMicChunks) {
       window.electronAPI?.meetingTranscriptionSend?.(chunk, "mic");
@@ -1199,6 +1216,17 @@ export async function startRecording(args: StartRecordingArgs): Promise<void> {
   }
 }
 
+export function addMarker(): Promise<void> {
+  return pressMarker({
+    getState: () => useMeetingRecordingStore.getState(),
+    setState: (patch) => useMeetingRecordingStore.setState(patch),
+    requestMark: async () => window.electronAPI?.meetingAddMarker?.(),
+    nowMs: Date.now,
+    onError: (error) =>
+      logger.error("Meeting marker failed", { error: (error as Error).message }, "meeting"),
+  });
+}
+
 export interface StopRecordingResult {
   diarizationSessionId: string | null;
 }
@@ -1210,7 +1238,12 @@ export async function stopRecording(): Promise<StopRecordingResult> {
 
   isRecordingFlag = false;
   isStartingFlag = false;
-  useMeetingRecordingStore.setState({ isRecording: false, isTranscribing: false });
+  useMeetingRecordingStore.setState({
+    isRecording: false,
+    isTranscribing: false,
+    recordingStartedAt: null,
+    isMarking: false,
+  });
 
   await cleanup();
 
