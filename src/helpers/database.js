@@ -9,6 +9,7 @@ const { buildNoteSearchQuery } = require("./noteSearch");
 const peopleResolver = require("./peopleResolver");
 const { resolveDateRange } = require("./searchDateRange");
 const { MODEL_ID: SPEAKER_MODEL_ID, l2Normalize } = require("./speakerEmbeddings");
+const { MAX_CALL_SPLITS } = require("./noteCallSplit.js");
 const { app } = require("electron");
 
 // Server-enforced trigger cap (openwhispr-api); enforced here so one oversized
@@ -46,6 +47,7 @@ const MAX_TRANSCRIPT_PAGE = 500;
 const MAX_SEGMENT_SEARCH_LIMIT = 50;
 const MAX_SEGMENT_CONTEXT = 2;
 const MAX_SEGMENT_TEXT_CHARS = 500;
+const MIN_RECORDING_MARK_GAP_SECONDS = 10;
 
 const TRANSCRIPT_INDEX_TICK_MS = 5000;
 const TRANSCRIPT_INDEX_BATCH = 3;
@@ -732,6 +734,11 @@ class DatabaseManager {
       }
       try {
         this.db.exec("ALTER TABLE notes ADD COLUMN call_split_dismissed INTEGER");
+      } catch (err) {
+        if (!err.message.includes("duplicate column")) throw err;
+      }
+      try {
+        this.db.exec("ALTER TABLE notes ADD COLUMN recording_marks TEXT");
       } catch (err) {
         if (!err.message.includes("duplicate column")) throw err;
       }
@@ -1898,6 +1905,55 @@ class DatabaseManager {
       return { success: true, note };
     } catch (error) {
       debugLogger.error("Error updating note", { error: error.message }, "notes");
+      throw error;
+    }
+  }
+
+  getRecordingMarks(noteId) {
+    const row = this.db.prepare("SELECT recording_marks FROM notes WHERE id = ?").get(noteId);
+    if (!row || typeof row.recording_marks !== "string") return [];
+    try {
+      const parsed = JSON.parse(row.recording_marks);
+      return Array.isArray(parsed) ? parsed.filter((mark) => Number.isFinite(mark)) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  addRecordingMark(noteId, offsetSeconds) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      if (!this.db.prepare("SELECT 1 FROM notes WHERE id = ?").get(noteId)) {
+        return { success: false, reason: "note-not-found" };
+      }
+      if (!Number.isFinite(offsetSeconds) || offsetSeconds < 0) {
+        return { success: false, reason: "invalid-offset" };
+      }
+      const marks = this.getRecordingMarks(noteId);
+      if (marks.length >= MAX_CALL_SPLITS) {
+        return { success: false, reason: "limit-reached", marks };
+      }
+      if (marks.some((mark) => Math.abs(mark - offsetSeconds) < MIN_RECORDING_MARK_GAP_SECONDS)) {
+        return { success: false, reason: "too-soon", marks };
+      }
+      const next = [...marks, offsetSeconds].sort((left, right) => left - right);
+      this.db
+        .prepare("UPDATE notes SET recording_marks = ? WHERE id = ?")
+        .run(JSON.stringify(next), noteId);
+      return { success: true, marks: next };
+    } catch (error) {
+      debugLogger.error("Error adding recording mark", { error: error.message }, "notes");
+      throw error;
+    }
+  }
+
+  clearRecordingMarks(noteId) {
+    try {
+      if (!this.db) throw new Error("Database not initialized");
+      this.db.prepare("UPDATE notes SET recording_marks = NULL WHERE id = ?").run(noteId);
+      return { success: true };
+    } catch (error) {
+      debugLogger.error("Error clearing recording marks", { error: error.message }, "notes");
       throw error;
     }
   }

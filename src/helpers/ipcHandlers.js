@@ -22,6 +22,7 @@ const meetingDetectionHealth = require("./meetingDetectionHealth");
 const { BYOK_API_KEYS } = require("../config/secretKeys");
 const { classifyAndLog } = require("./networkErrors");
 const { noteHasRecording } = require("./recordingTarget");
+const { markZeroMs } = require("./recordingMarks");
 const { formatUtcSqliteTimestamp } = require("./splitNoteAtBoundary");
 const GnomeShortcutManager = require("./gnomeShortcut");
 const HyprlandShortcutManager = require("./hyprlandShortcut");
@@ -445,6 +446,14 @@ class IPCHandlers {
     setImmediate(() => this.broadcastToWindows("note-updated", note));
     this._asyncVectorUpsert(note);
     this._asyncMirrorWrite(note);
+  }
+
+  _addRecordingMarker({ noteId, systemStartedAt, firstLocalLineTimestamp, now = Date.now() }) {
+    if (noteId == null) return { success: false, reason: "no-recording" };
+    const zeroMs = markZeroMs({ systemStartedAt, firstLocalLineTimestamp });
+    if (zeroMs == null) return { success: false, reason: "no-audio-yet" };
+    const offsetSeconds = Math.max(0, now - zeroMs) / 1000;
+    return this.databaseManager.addRecordingMark(noteId, offsetSeconds);
   }
 
   // A note write that skips this loses the `note-updated` broadcast, and the renderer's
@@ -3988,6 +3997,12 @@ class IPCHandlers {
         this._asyncVectorUpsert(note);
         this._asyncMirrorWrite(note);
       },
+      enqueueChildPipeline: (childNoteId) =>
+        this.backgroundJobQueue.enqueueKind(
+          `post-call-retry-${childNoteId}`,
+          JOB_KINDS.POST_CALL_PIPELINE,
+          { noteId: childNoteId, fromStep: "classify" }
+        ),
     });
 
     const { digestGeneratedNotes } = require("./generatedNotesDigest");
@@ -6162,6 +6177,14 @@ class IPCHandlers {
       sendMeetingAudio(audioBuffer, source);
     });
 
+    ipcMain.handle("meeting-add-marker", async () => {
+      return this._addRecordingMarker({
+        noteId: meetingNoteId,
+        systemStartedAt: meetingDiarizationStartedAt,
+        firstLocalLineTimestamp: meetingDiarizationSegments[0]?.timestamp ?? null,
+      });
+    });
+
     ipcMain.handle("meeting-transcription-stop", async (_event, options = {}) => {
       meetingStopGeneration += 1;
       this.meetingDetectionEngine?.endMeetingSession("meeting-transcription-stop");
@@ -7515,6 +7538,33 @@ class IPCHandlers {
         { noteId: result.parentNoteId }
       );
       for (const id of childNoteIds) {
+        this.backgroundJobQueue.enqueueKind(`post-call-retry-${id}`, JOB_KINDS.POST_CALL_PIPELINE, {
+          noteId: id,
+          fromStep: "classify",
+        });
+      }
+      return result;
+    });
+
+    ipcMain.handle("split-note-at-line", async (_event, noteId, lineIndex, titles = {}) => {
+      const { splitNoteAtLine } = require("./noteCallSplit.js");
+      const result = await splitNoteAtLine({
+        databaseManager: this.databaseManager,
+        noteId,
+        lineIndex,
+        firstTitle: titles?.firstTitle,
+        secondTitle: titles?.secondTitle,
+        onNoteCreated: (note) => this._notifyNoteCreated(note),
+        onNoteChanged: (note) => this._notifyNoteChanged(note),
+      });
+      if (!result.success) return result;
+
+      this.backgroundJobQueue.enqueueKind(
+        `regenerate-notes-${result.parentNoteId}`,
+        JOB_KINDS.REGENERATE_NOTES,
+        { noteId: result.parentNoteId }
+      );
+      for (const id of result.childNoteIds) {
         this.backgroundJobQueue.enqueueKind(`post-call-retry-${id}`, JOB_KINDS.POST_CALL_PIPELINE, {
           noteId: id,
           fromStep: "classify",

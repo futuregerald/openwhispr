@@ -365,6 +365,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getNoteRetrySteps: (noteIds) => ipcRenderer.invoke("get-note-retry-steps", noteIds),
   scanNoteCallBoundaries: (noteId) => ipcRenderer.invoke("scan-note-call-boundaries", noteId),
   splitNoteCalls: (noteId) => ipcRenderer.invoke("split-note-calls", noteId),
+  splitNoteAtLine: (noteId, lineIndex, titles) =>
+    ipcRenderer.invoke("split-note-at-line", noteId, lineIndex, titles),
   dismissNoteCallSplit: (noteId) => ipcRenderer.invoke("dismiss-note-call-split", noteId),
   reprocessAllMeetings: () => ipcRenderer.invoke("reprocess-all-meetings"),
   regenerateNotes: (noteId, meetingTypeId) =>
@@ -620,6 +622,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   meetingTranscriptionSend: (buffer, source) =>
     ipcRenderer.send("meeting-transcription-send", buffer, source),
   meetingTranscriptionStop: (options) => ipcRenderer.invoke("meeting-transcription-stop", options),
+  meetingAddMarker: () => ipcRenderer.invoke("meeting-add-marker"),
   meetingTranscriptionCancel: () => ipcRenderer.invoke("meeting-transcription-cancel"),
   onMeetingTranscriptionSegment: registerListener(
     "meeting-transcription-segment",

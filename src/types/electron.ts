@@ -102,6 +102,7 @@ export interface NoteItem {
   slice_start_s?: number | null;
   slice_end_s?: number | null;
   call_split_dismissed?: number | null;
+  recording_marks?: string | null;
 }
 
 export interface FolderItem {
@@ -493,6 +494,18 @@ declare global {
         parentNoteId?: number;
         childNoteIds?: number[];
         reason?: string;
+        error?: string;
+      }>;
+      splitNoteAtLine?: (
+        noteId: number,
+        lineIndex: number,
+        titles?: { firstTitle?: string; secondTitle?: string }
+      ) => Promise<{
+        success: boolean;
+        parentNoteId?: number;
+        childNoteIds?: number[];
+        reason?: string;
+        safetyReason?: string;
         error?: string;
       }>;
       dismissNoteCallSplit?: (noteId: number) => Promise<{ success: boolean; error?: string }>;
@@ -1514,6 +1527,11 @@ declare global {
         transcript?: string;
         diarizationSessionId?: string;
         error?: string;
+      }>;
+      meetingAddMarker?: () => Promise<{
+        success: boolean;
+        marks?: number[];
+        reason?: "no-recording" | "no-audio-yet" | "too-soon" | "limit-reached" | "invalid-offset";
       }>;
       meetingTranscriptionCancel?: () => Promise<{
         success: boolean;

@@ -8,9 +8,11 @@ import {
   useMeetingRecordingStore,
 } from "../stores/meetingRecordingStore";
 import { serializeTranscriptSegments } from "../helpers/transcriptSpeakerState";
+import { startTranscriptAutosave } from "../helpers/transcriptAutosave";
 
 const EMA_PREV = 0.5;
 const EMA_NEXT = 0.5;
+const AUTOSAVE_INTERVAL_MS = 30_000;
 
 export default function MeetingRecordingMount(): null {
   const { t } = useTranslation();
@@ -54,17 +56,18 @@ export default function MeetingRecordingMount(): null {
   }, [isRecording, realtimeTranscript, realtimeSegments, recordingNoteId]);
 
   useEffect(() => {
-    if (!isRecording) return;
+    if (!isRecording || !recordingNoteId) return;
 
-    const interval = setInterval(() => {
-      if (!recordingNoteId || realtimeSegments.length === 0) return;
-      window.electronAPI.updateNote(recordingNoteId, {
-        transcript: serializeTranscriptSegments(realtimeSegments),
-      });
-    }, 30_000);
-
-    return () => clearInterval(interval);
-  }, [isRecording, realtimeSegments, recordingNoteId]);
+    return startTranscriptAutosave({
+      intervalMs: AUTOSAVE_INTERVAL_MS,
+      read: () => useMeetingRecordingStore.getState().segments,
+      write: (segments) => {
+        window.electronAPI.updateNote(recordingNoteId, {
+          transcript: serializeTranscriptSegments(segments),
+        });
+      },
+    });
+  }, [isRecording, recordingNoteId]);
 
   useEffect(() => {
     if (!error) return;

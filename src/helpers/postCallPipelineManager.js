@@ -224,6 +224,7 @@ class PostCallPipelineManager {
     notesRegenerationScheduler = null,
     onNoteCreated = undefined,
     onNoteReindexed = undefined,
+    enqueueChildPipeline = undefined,
   }) {
     this._broadcast = broadcast;
     this._db = databaseManager;
@@ -234,6 +235,7 @@ class PostCallPipelineManager {
     this._notesRegenerationScheduler = notesRegenerationScheduler;
     this._onNoteCreated = onNoteCreated;
     this._onNoteReindexed = onNoteReindexed;
+    this._enqueueChildPipeline = enqueueChildPipeline;
     // Absent in the tests that construct this manager directly, and absent for
     // any caller with no local model available; both fall back to one call.
     this._resolveModelContext = resolveModelContext;
@@ -259,6 +261,7 @@ class PostCallPipelineManager {
     }
 
     if (fromIndex <= 1) {
+      await this._splitAtMarksStep(noteId);
       await this._detectWeldedCallsStep(noteId);
     }
 
@@ -460,6 +463,76 @@ class PostCallPipelineManager {
       debugLogger.error(`Pipeline step ${step} failed`, { noteId, error: err.message }, "meeting");
       this._emitStatus(noteId, step, "error", err.message);
       return { error: err.message };
+    }
+  }
+
+  async _splitAtMarksStep(noteId) {
+    const marks = (this._db.getRecordingMarks && this._db.getRecordingMarks(noteId)) || [];
+    if (marks.length === 0) return;
+
+    try {
+      const { splitSafetyOf } = await import("./splitSafety.js");
+      const safety = splitSafetyOf(this._db.getNote(noteId));
+      if (!safety.ok) {
+        debugLogger.warn(
+          "Pipeline: recording marks kept, this note's timing cannot be cut safely",
+          { noteId, markCount: marks.length, reason: safety.reason },
+          "meeting"
+        );
+        return;
+      }
+
+      const { cutReportAt, cutPositionsForOffsets } = await import("./lineCut.js");
+      const { splitNoteCalls } = require("./noteCallSplit.js");
+      const result = await splitNoteCalls({
+        databaseManager: this._db,
+        noteId,
+        reportFor: (segments) => cutReportAt(segments, cutPositionsForOffsets(segments, marks)),
+        onNoteCreated: (note) => this._announceMarkCut(noteId, () => this._onNoteCreated?.(note)),
+        onNoteChanged: (note) =>
+          this._announceMarkCut(noteId, () => {
+            this._broadcast("note-updated", note);
+            this._onNoteReindexed?.(note);
+          }),
+      });
+
+      const childNoteIds = result.childNoteIds ?? [];
+      for (const childNoteId of childNoteIds) {
+        if (this._enqueueChildPipeline) this._enqueueChildPipeline(childNoteId);
+      }
+
+      if (result.success || result.reason === "no-boundary") {
+        this._db.clearRecordingMarks(noteId);
+      }
+      debugLogger.info(
+        "Pipeline: cut the recording at its marks",
+        {
+          noteId,
+          markCount: marks.length,
+          childCount: childNoteIds.length,
+          success: result.success,
+          reason: result.reason,
+        },
+        "meeting"
+      );
+    } catch (err) {
+      debugLogger.error(
+        "Pipeline step splitCalls failed cutting at marks",
+        { noteId, error: err.message },
+        "meeting"
+      );
+    }
+  }
+
+  _announceMarkCut(noteId, announce) {
+    try {
+      announce();
+    } catch (err) {
+      debugLogger.warn(
+        "Pipeline: announcing a cut at marks failed",
+        { noteId, error: err.message },
+        "meeting"
+      );
     }
   }
 

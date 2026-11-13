@@ -546,3 +546,242 @@ test("the halves that did commit still get their own notes scheduled", async () 
     "the parent is left with notes describing a transcript it no longer has"
   );
 });
+
+// ── A caller-supplied cut source (NEXT marks) ────────────────────────────────
+
+test("the split loop cuts where reportFor says, re-reading the shrunken parent each time", async () => {
+  const { splitNoteCalls } = require("../../src/helpers/noteCallSplit.js");
+  const { cutReportAt, cutPositionsForOffsets } = await import("../../src/helpers/lineCut.js");
+  const { databaseManager } = setup();
+  const noteId = seedNote(databaseManager, { segments: singleCallSegments() });
+  const marks = [8 * SPACING_SECONDS, 16 * SPACING_SECONDS];
+  const seenLengths = [];
+
+  const result = await splitNoteCalls({
+    databaseManager,
+    noteId,
+    onNoteCreated: () => {},
+    reportFor: (segments) => {
+      seenLengths.push(segments.length);
+      return cutReportAt(segments, cutPositionsForOffsets(segments, marks));
+    },
+  });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(seenLengths, [25, 16, 8], "each attempt must see the transcript as it now is");
+  assert.equal(result.childNoteIds.length, 2);
+  const lengths = [noteId, ...result.childNoteIds].map(
+    (id) => JSON.parse(databaseManager.getNote(id).transcript).length
+  );
+  assert.deepEqual(lengths, [8, 8, 9]);
+  const firstStamps = result.childNoteIds.map(
+    (id) => JSON.parse(databaseManager.getNote(id).transcript)[0].timestamp
+  );
+  assert.deepEqual(
+    firstStamps,
+    [8 * SPACING_SECONDS, 16 * SPACING_SECONDS],
+    "children in time order"
+  );
+});
+
+test("a reportFor that finds nothing to cut leaves the note alone", async () => {
+  const { splitNoteCalls } = require("../../src/helpers/noteCallSplit.js");
+  const { cutReportAt } = await import("../../src/helpers/lineCut.js");
+  const { databaseManager } = setup();
+  const noteId = seedNote(databaseManager, { segments: weldedSegments() });
+  const before = databaseManager.getNote(noteId).transcript;
+
+  const result = await splitNoteCalls({
+    databaseManager,
+    noteId,
+    onNoteCreated: () => {},
+    reportFor: (segments) => cutReportAt(segments, []),
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.reason, "no-boundary");
+  assert.deepEqual(result.childNoteIds, []);
+  assert.equal(databaseManager.getNote(noteId).transcript, before);
+});
+
+// ── Splitting at a chosen line ───────────────────────────────────────────────
+
+test("splitting at a line partitions the transcript at that line and schedules both notes", async () => {
+  const { databaseManager, broadcasts, vectorUpserts, enqueued } = setup();
+  const segments = singleCallSegments();
+  const noteId = seedNote(databaseManager, { segments });
+
+  const result = await invoke("split-note-at-line", noteId, 10, {});
+
+  assert.equal(result.success, true);
+  assert.equal(result.parentNoteId, noteId);
+  assert.equal(result.childNoteIds.length, 1);
+  const childId = result.childNoteIds[0];
+
+  const parent = JSON.parse(databaseManager.getNote(noteId).transcript);
+  const child = JSON.parse(databaseManager.getNote(childId).transcript);
+  assert.deepEqual(
+    parent.map((s) => s.id),
+    segments.slice(0, 10).map((s) => s.id)
+  );
+  assert.deepEqual(
+    child.map((s) => s.id),
+    segments.slice(10).map((s) => s.id)
+  );
+  assert.equal(databaseManager.getNote(childId).split_parent_note_id, noteId);
+
+  await flushBroadcasts();
+  assert.deepEqual(
+    broadcasts.filter((b) => b.channel === "note-added").map((b) => b.payload.id),
+    [childId]
+  );
+  assert.ok(broadcasts.some((b) => b.channel === "note-updated" && b.payload.id === noteId));
+  assert.ok(vectorUpserts.includes(noteId) && vectorUpserts.includes(childId));
+
+  assert.deepEqual(
+    enqueued.map((job) => ({ kind: job.kind, ...job.payload })).sort((a, b) => a.noteId - b.noteId),
+    [
+      { kind: "regenerate-notes", noteId },
+      { kind: "post-call-pipeline", noteId: childId, fromStep: "classify" },
+    ]
+  );
+});
+
+test("the line index is a position in the stored array, whatever order the array is in", async () => {
+  const { databaseManager } = setup();
+  const stamps = [30, 0, 20, 10];
+  const segments = stamps.map((timestamp, i) => ({
+    id: `s${i}`,
+    text: `invented ${i}`,
+    source: "system",
+    speaker: "speaker_0",
+    timestamp,
+  }));
+  const noteId = seedNote(databaseManager, { segments });
+
+  const result = await invoke("split-note-at-line", noteId, 2, {});
+
+  assert.equal(result.success, true);
+  const parentIds = JSON.parse(databaseManager.getNote(noteId).transcript).map((s) => s.id);
+  const childIds = JSON.parse(databaseManager.getNote(result.childNoteIds[0]).transcript).map(
+    (s) => s.id
+  );
+  assert.deepEqual(parentIds, ["s1", "s3"], "lines before ts 20 in time");
+  assert.deepEqual(childIds, ["s2", "s0"]);
+});
+
+test("the second name titles the new note and the first renames the original", async () => {
+  const { databaseManager } = setup();
+  const noteId = seedNote(databaseManager, { segments: singleCallSegments(), title: "Team sync" });
+
+  const result = await invoke("split-note-at-line", noteId, 10, {
+    firstTitle: "  Planning  ",
+    secondTitle: "Retro",
+  });
+
+  assert.equal(databaseManager.getNote(noteId).title, "Planning");
+  assert.equal(databaseManager.getNote(result.childNoteIds[0]).title, "Retro");
+});
+
+test("blank names leave the original title alone and the new note untitled", async () => {
+  const { databaseManager } = setup();
+  const noteId = seedNote(databaseManager, { segments: singleCallSegments(), title: "Team sync" });
+
+  const result = await invoke("split-note-at-line", noteId, 10, {
+    firstTitle: "   ",
+    secondTitle: "",
+  });
+
+  assert.equal(databaseManager.getNote(noteId).title, "Team sync");
+  assert.equal(databaseManager.getNote(result.childNoteIds[0]).title, "");
+
+  const second = seedNote(databaseManager, { segments: singleCallSegments(), title: "Other" });
+  await invoke("split-note-at-line", second, 5);
+  assert.equal(databaseManager.getNote(second).title, "Other");
+});
+
+test("a line that is not a valid cut is refused and nothing is written", async () => {
+  const { databaseManager, broadcasts, enqueued } = setup();
+  const noteId = seedNote(databaseManager, { segments: singleCallSegments() });
+  const before = databaseManager.getNote(noteId).transcript;
+
+  for (const lineIndex of [0, -1, 25, 999, 1.5, "3", null, undefined, NaN]) {
+    const result = await invoke("split-note-at-line", noteId, lineIndex, {});
+    assert.equal(result.success, false, String(lineIndex));
+    assert.equal(result.reason, "invalid-line", String(lineIndex));
+  }
+  assert.equal(databaseManager.getNote(noteId).transcript, before);
+  assert.deepEqual(enqueued, []);
+  await flushBroadcasts();
+  assert.deepEqual(
+    broadcasts.filter((b) => b.channel === "note-added"),
+    []
+  );
+});
+
+test("the earliest line in time is not a valid cut even when it is not first in the array", async () => {
+  const { databaseManager } = setup();
+  const segments = [30, 0, 20, 10].map((timestamp, i) => ({
+    id: `s${i}`,
+    text: `invented ${i}`,
+    source: "system",
+    speaker: "speaker_0",
+    timestamp,
+  }));
+  const noteId = seedNote(databaseManager, { segments });
+
+  const result = await invoke("split-note-at-line", noteId, 1, {});
+  assert.equal(result.success, false);
+  assert.equal(result.reason, "invalid-line");
+});
+
+test("a note whose timing cannot be cut safely is refused with the reason", async () => {
+  const { databaseManager, enqueued } = setup();
+  const base = 1790870467607;
+  const mixed = [4.5, 10.5, 14.3, base + 2000, base + 9000].map((timestamp, i) => ({
+    id: `s${i}`,
+    text: `invented ${i}`,
+    source: "system",
+    speaker: "speaker_0",
+    timestamp,
+  }));
+  const mixedId = seedNote(databaseManager, { segments: mixed });
+
+  const result = await invoke("split-note-at-line", mixedId, 2, {});
+
+  assert.equal(result.success, false);
+  assert.equal(result.reason, "unsafe-timing");
+  assert.equal(result.safetyReason, "mixed-units");
+  assert.deepEqual(JSON.parse(databaseManager.getNote(mixedId).transcript), mixed);
+  assert.deepEqual(enqueued, []);
+
+  const plainId = databaseManager.saveNote("Plain", "", "meeting", null, null, null).note.id;
+  databaseManager.updateNote(plainId, { transcript: "just some words" });
+  const plain = await invoke("split-note-at-line", plainId, 1, {});
+  assert.equal(plain.reason, "unsafe-timing");
+  assert.equal(plain.safetyReason, "plain-text");
+});
+
+test("splitting at a line of a note that does not exist reports it", async () => {
+  setup();
+  const result = await invoke("split-note-at-line", 9999, 3, {});
+  assert.equal(result.success, false);
+  assert.equal(result.reason, "note-not-found");
+});
+
+test("a split at a line keeps the audio paths and dates the new note from its first line", async () => {
+  const { databaseManager } = setup();
+  const noteId = seedNote(databaseManager, {
+    segments: singleCallSegments(),
+    audioPath: "/tmp/openwhispr-test/system.opus",
+  });
+  databaseManager.setNoteCreatedAt(noteId, "2026-10-02 09:00:00");
+
+  const result = await invoke("split-note-at-line", noteId, 10, {});
+
+  const child = databaseManager.getNote(result.childNoteIds[0]);
+  assert.equal(child.system_audio_path, "/tmp/openwhispr-test/system.opus");
+  assert.equal(child.created_at, "2026-10-02 09:04:10");
+  const parent = databaseManager.getNote(noteId);
+  assert.ok(parent.slice_end_s <= child.slice_start_s);
+});

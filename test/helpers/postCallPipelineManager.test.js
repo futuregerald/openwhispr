@@ -2649,6 +2649,14 @@ function splitFakeDb(seedNotes) {
       return { success: true };
     },
     _reindexTranscriptNow: () => {},
+    getRecordingMarks: (id) => {
+      const marks = rows.get(id)?.recording_marks;
+      return Array.isArray(marks) ? [...marks] : [];
+    },
+    clearRecordingMarks: (id) => {
+      if (rows.has(id)) rows.get(id).recording_marks = null;
+      return { success: true };
+    },
     getMeetingType: () => null,
     getMeetingTypes: () => [],
     getSpeakerMappings: () => [],
@@ -2872,5 +2880,196 @@ test("an unreadable transcript makes detection skip, not halt the pipeline", asy
 
   assert.deepEqual(statusesFor(mocks, 1, "splitCalls"), ["skipped"]);
   assert.equal(mocks.rows.size, 1);
+  assert.deepEqual(statusesFor(mocks, 1, "notes"), ["running", "complete"]);
+});
+
+// ── Cutting at NEXT marks ────────────────────────────────────────────────────
+
+const markedMocks = (marks, { seed = {}, whisperSegments = singleCallWhisperSegments() } = {}) => {
+  const mocks = splitMocks(
+    [{ ...WELDED_SEED_NOTE, recording_marks: marks, ...seed }],
+    whisperSegments
+  );
+  mocks.enqueuedChildren = [];
+  return mocks;
+};
+
+const markedManager = (PostCallPipelineManager, mocks) =>
+  splitManager(PostCallPipelineManager, mocks, {
+    enqueueChildPipeline: (noteId) => mocks.enqueuedChildren.push(noteId),
+  });
+
+const lineCountOf = (mocks, id) => JSON.parse(mocks.rows.get(id).transcript).length;
+
+test("two marks make three notes after the pipeline, partitioning every line", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks([300, 700]);
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.size, 3);
+  const childIds = [...mocks.rows.keys()].filter((id) => id !== 1);
+  const all = [1, ...childIds].flatMap((id) => JSON.parse(mocks.rows.get(id).transcript));
+  assert.equal(all.length, SPLIT_SEGMENTS_PER_CALL * 2, "no line lost or duplicated");
+  assert.equal(new Set(all.map((line) => line.id)).size, all.length);
+
+  assert.equal(lineCountOf(mocks, 1), 12, "lines before the first mark at 300s");
+  assert.deepEqual(
+    childIds
+      .map((id) => JSON.parse(mocks.rows.get(id).transcript)[0].timestamp)
+      .sort((a, b) => a - b),
+    [300, 700]
+  );
+  assert.deepEqual(
+    childIds.map((id) => lineCountOf(mocks, id)).sort((a, b) => a - b),
+    [16, 22]
+  );
+});
+
+test("the marks are cleared, the children are queued from classify, and the parent carries on", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks([300, 700]);
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.get(1).recording_marks, null);
+  const childIds = [...mocks.rows.keys()].filter((id) => id !== 1).sort((a, b) => a - b);
+  assert.deepEqual(
+    [...mocks.enqueuedChildren].sort((a, b) => a - b),
+    childIds
+  );
+  for (const step of ["classify", "title", "notes"]) {
+    assert.deepEqual(statusesFor(mocks, 1, step), ["running", "complete"], `parent ${step}`);
+    for (const id of childIds) {
+      assert.deepEqual(statusesFor(mocks, id, step), [], "a child is run by its own queued job");
+    }
+  }
+});
+
+test("the parent and both children are announced, re-embedded and mirrored", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks([300, 700]);
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  const childIds = [...mocks.rows.keys()].filter((id) => id !== 1);
+  assert.deepEqual(
+    mocks.created.map((note) => note.id).sort((a, b) => a - b),
+    childIds.sort((a, b) => a - b)
+  );
+  assert.ok(
+    mocks.reindexed.some((note) => note.id === 1),
+    "the parent's vector row and mirror still hold the uncut transcript"
+  );
+  const parentLineCountsBroadcast = mocks.events
+    .filter((e) => e.channel === "note-updated" && e.id === 1)
+    .map((e) => JSON.parse(e.transcript).length);
+  assert.ok(
+    parentLineCountsBroadcast.includes(28),
+    "the renderer only learns of the parent's cut from note-updated, after each cut"
+  );
+});
+
+test("a rerun after the cut does not split again", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks([300, 700]);
+
+  await withStubbedAudio(async () => {
+    const manager = markedManager(PostCallPipelineManager, mocks);
+    await manager.run(1);
+    await manager.run(1, { fromStep: "splitCalls" });
+  });
+
+  assert.equal(mocks.rows.size, 3);
+});
+
+test("cutting by marks does not depend on the clock retranscribe wipes", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks([300, 700], {
+    seed: { transcript_origin_ms: 1790870467607, transcript_origin_source: "audio:system" },
+  });
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.get(1).transcript_origin_ms, null, "retranscribe unanchors the note");
+  assert.equal(mocks.rows.size, 3);
+  assert.equal(lineCountOf(mocks, 1), 12);
+});
+
+test("marks past the last line cut nothing and are still cleared", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks([5000, 6000]);
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.size, 1);
+  assert.equal(mocks.rows.get(1).recording_marks, null);
+  assert.deepEqual(mocks.enqueuedChildren, []);
+  assert.deepEqual(mocks.created, []);
+});
+
+test("a note with no marks is not cut", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks(null);
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.size, 1);
+  assert.deepEqual(statusesFor(mocks, 1, "splitCalls"), ["skipped"]);
+});
+
+test("a note whose timing is unsafe keeps its marks and the pipeline still runs", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks([300], { seed: { system_audio_path: null } });
+  mocks.rows.get(1).transcript = JSON.stringify(
+    [10, 20, 1790870467607, 1790870470000].map((timestamp, i) => ({
+      id: `m${i}`,
+      text: `invented ${i}`,
+      source: "system",
+      timestamp,
+    }))
+  );
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.size, 1);
+  assert.deepEqual(mocks.rows.get(1).recording_marks, [300]);
+  assert.deepEqual(statusesFor(mocks, 1, "notes"), ["running", "complete"]);
+});
+
+test("a broadcast that throws does not stop the cut or the queueing of the child", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks([300]);
+  const manager = splitManager(PostCallPipelineManager, mocks, {
+    onNoteCreated: () => {
+      throw new Error("the broadcast blew up");
+    },
+    enqueueChildPipeline: (noteId) => mocks.enqueuedChildren.push(noteId),
+  });
+
+  await withStubbedAudio(() => manager.run(1));
+
+  assert.equal(mocks.rows.size, 2);
+  assert.equal(mocks.enqueuedChildren.length, 1);
+  assert.equal(mocks.rows.get(1).recording_marks, null);
+  assert.deepEqual(statusesFor(mocks, 1, "notes"), ["running", "complete"]);
+});
+
+test("a failure part-way keeps the marks, queues what committed, and the parent's notes still run", async () => {
+  const { PostCallPipelineManager } = await import("../../src/helpers/postCallPipelineManager.js");
+  const mocks = markedMocks([300, 700]);
+  const realSave = mocks.databaseManager.saveNote;
+  let saves = 0;
+  mocks.databaseManager.saveNote = (...args) => {
+    saves += 1;
+    if (saves === 2) throw new Error("disk full");
+    return realSave(...args);
+  };
+
+  await withStubbedAudio(() => markedManager(PostCallPipelineManager, mocks).run(1));
+
+  assert.equal(mocks.rows.size, 2, "only the first child committed");
+  assert.deepEqual(mocks.rows.get(1).recording_marks, [300, 700], "kept so a retry can finish");
+  assert.equal(mocks.enqueuedChildren.length, 1, "the child that committed is still queued");
   assert.deepEqual(statusesFor(mocks, 1, "notes"), ["running", "complete"]);
 });
